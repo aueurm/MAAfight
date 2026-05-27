@@ -1,0 +1,40 @@
+node_modules/
+dist/
+cache/
+*.log
+
+# 外部数据（运行时下载）
+enemy_database.json
+levels_index.json
+level_*.json
+
+# 构建产物
+bundle.esm.js
+bundle_esm.js
+
+# 测试产物
+coverage/
+test-output.json
+test-results/
+
+# 数据目录
+data/
+
+# 环境配置
+.env
+.env.*
+!.env.example
+
+# 临时文件
+*.tmp
+*.bak
+*.swp
+*~
+
+# 开发杂物
+map_ark_nights_preview.html
+
+# IDE / 编辑��
+.vscode/
+.idea/
+*.tsbuildinfo
