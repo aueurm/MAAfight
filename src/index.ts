@@ -8,7 +8,7 @@ import { validateScript } from "./battle/ScriptValidator";
 import { exportToCopilotFormat } from "./battle/ScriptExporter";
 import { listStages, searchStages, listByCategory, resolveStage } from "./loader/levelIndex";
 import { OperatorBox } from "./player/OperatorBox";
-import type { MapData, BattleScript, PRTSLevelData } from "./types";
+import type { MapData, BattleScript, PRTSLevelData, StageIndexEntry } from "./types";
 
 const CACHE_DIR = process.env.MAAFIGHT_CACHE_DIR || path.resolve(__dirname, "..", "cache", "levels");
 const DATA_URL = process.env.MAAFIGHT_DATA_URL || "https://map.ark-nights.com";
@@ -134,6 +134,7 @@ async function cmdGenerate(args: Args): Promise<void> {
 
   let prtsData: PRTSLevelData;
   let stageId: string;
+  let resolved: StageIndexEntry | null = null;
 
   if (args.data) {
     if (!fs.existsSync(args.data)) {
@@ -144,12 +145,15 @@ async function cmdGenerate(args: Args): Promise<void> {
     prtsData = JSON.parse(raw) as PRTSLevelData;
     stageId = args.stage || path.basename(args.data, ".json");
   } else {
-    prtsData = await loader.load(args.stage!, { noCache: args.noCache });
-    stageId = args.stage!;
+    const inputStage = args.stage!;
+    resolved = resolveStage(inputStage);
+    prtsData = await loader.load(inputStage, { noCache: args.noCache });
+    stageId = resolved ? resolved.stageId : inputStage;
   }
 
   await loader.loadEnemyDatabase();
-  const mapData = adapter.adapt(prtsData, stageId);
+  const displayName = resolved?.code || resolved?.name;
+  const mapData = adapter.adapt(prtsData, stageId, displayName);
   const analysis = analyzeBattle(mapData);
 
   let config = {};
@@ -195,17 +199,19 @@ function cmdList(args: Args): void {
 
   // Table header
   const stageIdW = Math.max(8, ...stages.map(s => s.stageId.length));
+  const codeW = Math.max(4, ...stages.map(s => (s.code || "").length));
   const catW = Math.max(8, ...stages.map(s => s.category.length));
-  const pathW = Math.max(8, ...stages.map(s => s.filePath.length));
+  const pathW = Math.min(50, Math.max(8, ...stages.map(s => s.filePath.length)));
 
   console.log(
-    "  " + padEnd("stageId", stageIdW) + "  " + padEnd("category", catW) + "  " + padEnd("filePath", pathW)
+    "  " + padEnd("stageId", stageIdW) + "  " + padEnd("code", codeW) + "  " + padEnd("category", catW) + "  " + padEnd("filePath", pathW)
   );
-  console.log("  " + "─".repeat(stageIdW + catW + pathW + 6));
+  console.log("  " + "─".repeat(stageIdW + codeW + catW + Math.min(pathW, 50) + 8));
 
   for (const s of stages) {
     console.log(
       "  " + padEnd(s.stageId, stageIdW) + "  " +
+      padEnd(s.code || "", codeW) + "  " +
       padEnd(s.category, catW) + "  " +
       s.filePath
     );
@@ -225,6 +231,7 @@ async function cmdAnalyze(args: Args): Promise<void> {
 
   let prtsData: PRTSLevelData;
   let stageId: string;
+  let resolved: StageIndexEntry | null = null;
 
   if (args.data) {
     if (!fs.existsSync(args.data)) {
@@ -235,12 +242,15 @@ async function cmdAnalyze(args: Args): Promise<void> {
     prtsData = JSON.parse(raw) as PRTSLevelData;
     stageId = args.stage || path.basename(args.data, ".json");
   } else {
-    prtsData = await loader.load(args.stage!, { noCache: args.noCache });
-    stageId = args.stage!;
+    const inputStage = args.stage!;
+    resolved = resolveStage(inputStage);
+    prtsData = await loader.load(inputStage, { noCache: args.noCache });
+    stageId = resolved ? resolved.stageId : inputStage;
   }
 
   await loader.loadEnemyDatabase();
-  const mapData = adapter.adapt(prtsData, stageId);
+  const displayName = resolved?.code || resolved?.name;
+  const mapData = adapter.adapt(prtsData, stageId, displayName);
   const analysis = analyzeBattle(mapData);
 
   if (args.operators && fs.existsSync(args.operators)) {
@@ -294,8 +304,10 @@ async function cmdInfo(args: Args): Promise<void> {
     stageId = args.stage || path.basename(args.data, ".json");
   } else {
     const loader = new PRTSMapLoader(CACHE_DIR, DATA_URL);
-    prtsData = await loader.load(args.stage!, { noCache: args.noCache });
-    stageId = args.stage!;
+    const inputStage = args.stage!;
+    const resolved = resolveStage(inputStage);
+    stageId = resolved ? resolved.stageId : inputStage;
+    prtsData = await loader.load(inputStage, { noCache: args.noCache });
   }
 
   const mapSize = `${prtsData.mapData.map.length} × ${prtsData.mapData.map[0]?.length || 0}`;
@@ -311,6 +323,8 @@ async function cmdInfo(args: Args): Promise<void> {
   const indexEntry = args.data ? null : resolveStage(stageId);
 
   console.log(`  Stage:        ${stageId}`);
+  if (indexEntry?.code) console.log(`  Code:         ${indexEntry.code}`);
+  if (indexEntry?.name) console.log(`  Name:         ${indexEntry.name}`);
   console.log(`  Category:     ${indexEntry?.category || (args.data ? "local" : "unknown")}`);
   console.log(`  Map Size:     ${mapSize}`);
   console.log(`  Deployable:   ${deployable.length} (${melee} melee, ${ranged} ranged)`);

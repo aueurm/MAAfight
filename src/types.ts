@@ -429,4 +429,6 @@ export interface StageIndexEntry {
   filePath: string;
   category: string;
   code?: string;
+  name?: string;
+  levelId?: string;
 }

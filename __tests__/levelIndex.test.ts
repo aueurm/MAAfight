@@ -15,7 +15,12 @@ describe("levelIndex", () => {
   it("searchStages finds by stageId", () => {
     const results = searchStages("CE");
     expect(results.length).toBeGreaterThan(0);
-    expect(results.every(r => r.stageId.toUpperCase().includes("CE") || r.filePath.toUpperCase().includes("CE"))).toBe(true);
+    expect(results.every(r =>
+      r.stageId.toUpperCase().includes("CE") ||
+      r.filePath.toUpperCase().includes("CE") ||
+      (r.code && r.code.toUpperCase().includes("CE")) ||
+      (r.name && r.name.toUpperCase().includes("CE"))
+    )).toBe(true);
   });
 
   it("searchStages is case insensitive", () => {

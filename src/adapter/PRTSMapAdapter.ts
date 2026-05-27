@@ -241,7 +241,7 @@ function inferDeploymentOrder(
 export class PRTSMapAdapter {
   constructor(private loader: PRTSMapLoader) {}
 
-  adapt(prtsData: PRTSLevelData, stageId: string): MapData {
+  adapt(prtsData: PRTSLevelData, stageId: string, displayName?: string): MapData {
     const { tiles, deploymentPoints } = adaptTiles(prtsData);
     const { routes, strategicPoints } = adaptRoutes(prtsData);
     const waves = adaptWaves(prtsData);
@@ -284,7 +284,7 @@ export class PRTSMapAdapter {
 
     return {
       stageId,
-      name: stageId,
+      name: displayName || stageId,
       tiles,
       deploymentPoints,
       strategicPoints,
