@@ -235,18 +235,22 @@ export function analyzeBattle(mapData: MapData): TacticalAnalysis {
   else if (stats.normalCount > 8) compositionType = "swarm";
   else if (stats.eliteCount > 2) compositionType = "mixed";
 
-  const vanguardCount = Math.min(2, Math.max(1, Math.ceil(stats.totalCount / 10)));
-  let medicCount = stats.bossCount > 0 ? 2 : stats.eliteCount > 0 ? 2 : 1;
-  let tankCount = chokepointCount > 0 ? Math.min(3, chokepointCount + 1) : 1;
-  let sniperCount = compositionType === "swarm" ? 2 : stats.eliteCount > 0 ? 2 : 1;
+  const vanguardCount = Math.min(2, Math.max(1, Math.ceil(stats.totalCount / 12)));
+  let guardCount = compositionType === "boss_rush" ? 2 : 1;
+  let medicCount = stats.bossCount > 0 ? 2 : 1;
+  let tankCount = chokepointCount > 0 ? Math.min(2, Math.max(1, chokepointCount)) : 1;
+  let sniperCount = compositionType === "swarm" ? 2 : 1;
   const avgDEF = stats.totalCount > 0 ? stats.totalDEF / stats.totalCount : 0;
   let casterCount = avgDEF > 300 ? 1 : 0;
+  let specialistCount = 0;
   const specialRequirements: string[] = [];
 
   if (stats.bossCount > 0) {
     specialRequirements.push("Boss counter operator required");
     tankCount = Math.max(tankCount, 2);
     medicCount = 2;
+    guardCount = Math.max(guardCount, 2);
+    specialistCount = Math.max(specialistCount, 1);
   }
   if (compositionType === "swarm") {
     specialRequirements.push("AOE operators recommended for swarm control");
@@ -258,8 +262,25 @@ export function analyzeBattle(mapData: MapData): TacticalAnalysis {
     medicCount = Math.max(medicCount, 2);
   }
 
-  const expectedCost = vanguardCount * 10 + medicCount * 12 + tankCount * 15 +
-    sniperCount * 15 + casterCount * 18;
+  // Cap to 12 operators, trim from least-essential roles
+  const supportCount = 0;
+  let totalCount = vanguardCount + guardCount + tankCount + sniperCount + casterCount + medicCount + specialistCount + supportCount;
+  const trimOrder = ["specialistCount", "casterCount", "sniperCount", "guardCount"];
+  // Build a mutable reference object for trimming
+  const counts: Record<string, number> = { vanguardCount, guardCount, tankCount, sniperCount, casterCount, medicCount, specialistCount, supportCount };
+  for (const key of trimOrder) {
+    if (totalCount <= 12) break;
+    const trim = Math.min(counts[key], totalCount - 12);
+    counts[key] -= trim;
+    totalCount -= trim;
+  }
+  guardCount = counts.guardCount;
+  casterCount = counts.casterCount;
+  sniperCount = counts.sniperCount;
+  specialistCount = counts.specialistCount;
+
+  const expectedCost = vanguardCount * 10 + guardCount * 16 + tankCount * 15 +
+    sniperCount * 15 + casterCount * 18 + medicCount * 12 + specialistCount * 12;
 
   const difficultyRating = rateDifficulty(stats, chokepointCount);
 
@@ -323,8 +344,8 @@ export function analyzeBattle(mapData: MapData): TacticalAnalysis {
       averageDEF: stats.totalCount > 0 ? Math.round(stats.totalDEF / stats.totalCount) : 0,
     },
     requirements: {
-      vanguardCount, medicCount, tankCount, sniperCount, casterCount,
-      supportCount: 0, specialRequirements, expectedCost, difficultyRating,
+      vanguardCount, guardCount, medicCount, tankCount, sniperCount, casterCount,
+      supportCount, specialistCount, specialRequirements, expectedCost, difficultyRating,
     },
     keyTimings,
     threatPriorities: [

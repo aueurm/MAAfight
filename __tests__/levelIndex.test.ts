@@ -6,6 +6,14 @@ describe("levelIndex", () => {
     expect(entry).not.toBeNull();
     expect(entry!.stageId).toBe("a001_01");
     expect(entry!.category).toBe("activity");
+    expect(entry!.code).toBe("GT-1");
+  });
+
+  it("resolveStage returns the same entry by visible game code", () => {
+    const entry = resolveStage("GT-1");
+    expect(entry).not.toBeNull();
+    expect(entry!.stageId).toBe("a001_01");
+    expect(entry!.code).toBe("GT-1");
   });
 
   it("resolveStage returns null for unknown stage", () => {

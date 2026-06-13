@@ -8,8 +8,8 @@ import { validateScript } from "../src/battle/ScriptValidator";
 import { exportToCopilotFormat } from "../src/battle/ScriptExporter";
 import type { PRTSLevelData, MapData } from "../src/types";
 
-const LEVEL_PATH = path.resolve(__dirname, "..", "level_a001_01.json");
-const ENEMY_DB_PATH = path.resolve(__dirname, "..", "enemy_database.json");
+const LEVEL_PATH = path.resolve(__dirname, "..", "cache", "levels", "activities", "a001", "level_a001_01.json");
+const ENEMY_DB_PATH = path.resolve(__dirname, "..", "cache", "enemy_database.json");
 
 function loadLevelData(): PRTSLevelData {
   const raw = fs.readFileSync(LEVEL_PATH, "utf-8");

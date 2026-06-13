@@ -16,6 +16,16 @@ bundle_esm.js
 coverage/
 test-output.json
 test-results/
+benchmark-results/
+
+# 生成脚本
+output/
+
+# 测试数据（玩家导出等私密数据）
+test-data/
+
+# 本地用户配置（干员库等私密数据）
+.maafight/
 
 # 数据目录
 data/
@@ -32,10 +42,10 @@ data/
 *.swp
 *~
 
-# 开发杂物
+# 开发杂项
 map_ark_nights_preview.html
 
-# IDE / 编辑��
+# IDE / 编辑器
 .vscode/
 .idea/
 *.tsbuildinfo

@@ -35,6 +35,24 @@ node dist/index.js generate --stage a001_01 --output script.json --pretty
 
 ## 命令
 
+### init — 初始化玩家干员库
+
+```bash
+maafight init --operators Arknights_OperBox_Export.json
+maafight init --operators-stdin
+```
+
+初始化会在当前目录写入 `.maafight/config.json` 和 `.maafight/operators.json`。`operators.json` 只保存 MAA 识别结果里 `own: true` 的干员。
+
+### operators info — 查看玩家干员库统计
+
+```bash
+maafight operators info
+maafight operators info --operators Arknights_OperBox_Export.json
+```
+
+输出 owned 总数、高星数量和各职业可用干员数，用来确认初始化是否成功。
+
 ### generate — 生成作战脚本
 
 ```bash
@@ -42,12 +60,15 @@ maafight generate --stage <关卡ID> [--output <路径>] [--pretty] [--no-cache]
 maafight generate --data <本地JSON> [--stage <名称>] [--output <路径>]
 maafight generate --stage a001_01 --output script.json --pretty
 maafight generate --data ./level_OF-3.json --stage OF-3 --output of3.json
+maafight generate --stage GT-1 --explain
 maafight generate --stage main_03-08 --operators my_operators.json
 ```
 
 `--data` 接受本地 PRTS.Map 格式的关卡 JSON 文件，绕过索引查找——适用于 PRTS.Map 未收录的早期活动（OF、MT、GT 等）。`--stage` 在此模式下设置输出脚本的关卡名称（可选，默认取文件名）。
 
-`--operators` 可指定 MAA 干员导出 JSON，用你的真实练度匹配干员。
+初始化后，`generate` 会默认加载 `.maafight/operators.json`，只从你拥有的干员中选择。若没有初始化，生成行为保持原来的默认干员池逻辑。`--operators` 可作为临时覆盖，不会改写本地配置。
+
+如果某个职业没有可用干员，脚本会少生成对应部署；使用 `--explain` 时会在 `Operator gaps` 中提示缺口。
 
 ### analyze — 不生成脚本，只分析关卡
 
@@ -157,11 +178,15 @@ maafight info --stage <找到的ID>    # 确认关卡详情
 
 ## 干员练度接入
 
-如果你有 MAA 导出的干员数据，可以让 MAAfight 根据你的真实练度匹配干员：
+如果你有 MAA 导出的干员数据，可以先初始化本地干员库：
 
 ```bash
-maafight generate --stage a001_01 --operators my_operators.json
+maafight init --operators Arknights_OperBox_Export.json
+maafight operators info
+maafight generate --stage GT-1 --explain
 ```
+
+之后 `generate` 会自动加载 `.maafight/operators.json`。需要临时覆盖时仍可使用 `--operators <path>`。
 
 干员导出格式见 [docs/maa-operator-export.md](docs/maa-operator-export.md)。
 
@@ -170,7 +195,7 @@ maafight generate --stage a001_01 --operators my_operators.json
 ```bash
 npm install
 npm run build          # TypeScript 编译
-npx jest --coverage    # 86 测试 + 覆盖率
+npx jest --coverage    # 108 测试 + 覆盖率
 bash scripts/test-pipeline.sh   # 10 关实测脚本
 ```
 

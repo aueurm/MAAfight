@@ -1,6 +1,7 @@
 import { generateScript } from "../src/battle/ScriptGenerator";
 import { analyzeBattle } from "../src/battle/BattleAnalyzer";
 import type { MapData, PlayerOperator } from "../src/types";
+import { OPERATOR_POOLS } from "../src/shared/operatorDB";
 
 function makeMapData(overrides: Partial<MapData> = {}): MapData {
   return {
@@ -227,7 +228,7 @@ describe("generateScript", () => {
     expect(waitActions.length).toBe(0);
   });
 
-  it("should skip unknown roles in deploymentOrder", () => {
+  it("should skip unknown roles and fallback-deploy remaining operators", () => {
     const mapData = makeMapData({
       deploymentOrder: [
         { position: { row: 1, col: 2 }, role: "unknown_role", priority: 100 },
@@ -237,8 +238,8 @@ describe("generateScript", () => {
     const analysis = analyzeBattle(mapData);
     const script = generateScript("test-01", mapData, analysis);
     const deployActions = script.actions.filter(a => a.type === "Deploy");
-    // Only the vanguard role should produce deployments
-    expect(deployActions.length).toBe(1);
+    // Unknown role skipped, then fallback deploys remaining operators to unused slots
+    expect(deployActions.length).toBeGreaterThanOrEqual(1);
   });
 
   it("should prefer owned operators when player data is provided", () => {
@@ -257,20 +258,25 @@ describe("generateScript", () => {
     expect(deployAction!.name).toBe("克洛斯");
   });
 
-  it("should fallback to default pool when player data has no matching role", () => {
+  it("should not use unowned operators — only owned are deployed", () => {
     const mapData = makeMapData({
       deploymentOrder: [
         { position: { row: 1, col: 2 }, role: "sniper", priority: 100 },
       ],
     });
     const analysis = analyzeBattle(mapData);
+    // Player owns 芬 (vanguard) but no snipers — sniper role should be skipped
     const playerOps = new Map<string, PlayerOperator>([
       ["芬", { id: "char_xxx", name: "芬", rarity: 2, own: true, elite: 0, level: 30, potential: 6 }],
     ]);
     const script = generateScript("test-01", mapData, analysis, { playerOperators: playerOps });
     const deployAction = script.actions.find(a => a.type === "Deploy");
     expect(deployAction).toBeDefined();
-    expect(deployAction!.name).toBe("能天使");
+    // Owned vanguard fills the unused deployment slot (no unowned fallback)
+    expect(deployAction!.name).toBe("芬");
+    // No unowned sniper in groups
+    const sniperGroup = script.groups.find(g => g.name === "狙击");
+    expect(sniperGroup).toBeUndefined();
   });
 
   it("should include requirements in opers when player data is provided", () => {
@@ -290,5 +296,167 @@ describe("generateScript", () => {
     expect(topOper!.requirements!.elite).toBe(2);
     expect(topOper!.requirements!.level).toBe(90);
     expect(topOper!.requirements!.potential).toBe(3);
+  });
+
+  it("should record operator gaps when owned player data lacks a requested role", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "sniper", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 1,
+      casterCount: 0,
+      medicCount: 0,
+      supportCount: 0,
+      specialistCount: 0,
+    };
+    const ownedVanguard = OPERATOR_POOLS.vanguard[0].name;
+    const playerOps = new Map<string, PlayerOperator>([
+      [ownedVanguard, { id: "owned-vanguard", name: ownedVanguard, rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+
+    const script = generateScript("test-01", mapData, analysis, { playerOperators: playerOps });
+
+    expect(script.actions.some(a => a.type === "Deploy")).toBe(false);
+    expect(script.metadata.playerOperatorsUsed).toBe(true);
+    expect(script.metadata.operatorGaps).toEqual(expect.arrayContaining([
+      expect.stringContaining("need 1, selected 0"),
+    ]));
+  });
+
+  it("should prefer boss-killer functions over generic lane holders for boss stages", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 1, col: 2 }, role: "guard", priority: 100 },
+      ],
+      enemyDetails: [
+        { id: "boss", name: "Boss", maxHp: 80000, atk: 1200, def: 500, magicResistance: 30, moveSpeed: 1, isBoss: true, isElite: true },
+      ],
+      spawnTimeline: [{ time: 30, enemyId: "boss", count: 1, routeIndex: 0 }],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 1,
+      tankCount: 0,
+      sniperCount: 0,
+      casterCount: 0,
+      medicCount: 0,
+      specialistCount: 0,
+    };
+    const playerOps = new Map<string, PlayerOperator>([
+      ["史尔特尔", { id: "surtr", name: "史尔特尔", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+      ["煌", { id: "blaze", name: "煌", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+
+    const script = generateScript("boss-test", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("史尔特尔");
+    expect(script.metadata.deploymentReasons?.["史尔特尔"]).toContain("boss_killer");
+  });
+
+  it("should prefer anti-air functions when flying routes are present", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "sniper", priority: 100 },
+      ],
+      routes: [{
+        id: 0,
+        motionMode: "fly",
+        startPosition: { row: 0, col: 0 },
+        endPosition: { row: 0, col: 5 },
+        checkpoints: [{ row: 0, col: 2 }],
+      }],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 1,
+      casterCount: 0,
+      medicCount: 0,
+      specialistCount: 0,
+    };
+    const playerOps = new Map<string, PlayerOperator>([
+      ["能天使", { id: "exusiai", name: "能天使", rarity: 6, own: true, elite: 2, level: 80, potential: 1 }],
+      ["黑", { id: "schwarz", name: "黑", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+
+    const script = generateScript("fly-test", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("能天使");
+    expect(script.metadata.deploymentReasons?.["能天使"]).toContain("anti_air");
+  });
+
+  it("should use functional cross-role fallback when a defender is unavailable", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 1, col: 2 }, role: "tank", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 1,
+      sniperCount: 0,
+      casterCount: 0,
+      medicCount: 0,
+      specialistCount: 0,
+    };
+    const playerOps = new Map<string, PlayerOperator>([
+      ["山", { id: "mountain", name: "山", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+
+    const script = generateScript("tank-fallback", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("山");
+    expect(script.metadata.deploymentReasons?.["山"]).toMatch(/main_tank|lane_holder/);
+  });
+
+  it("should prefer arts burst functions for high DEF enemies", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "caster", priority: 100 },
+      ],
+      enemyDetails: [
+        { id: "shield", name: "Shield", maxHp: 10000, atk: 300, def: 900, magicResistance: 0, moveSpeed: 1, isBoss: false, isElite: true },
+      ],
+      spawnTimeline: [{ time: 15, enemyId: "shield", count: 3, routeIndex: 0 }],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 0,
+      casterCount: 1,
+      medicCount: 0,
+      specialistCount: 0,
+    };
+    const playerOps = new Map<string, PlayerOperator>([
+      ["艾雅法拉", { id: "eyja", name: "艾雅法拉", rarity: 6, own: true, elite: 2, level: 80, potential: 1 }],
+      ["能天使", { id: "exusiai", name: "能天使", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+
+    const script = generateScript("high-def", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("艾雅法拉");
+    expect(script.metadata.deploymentReasons?.["艾雅法拉"]).toContain("arts_burst");
   });
 });

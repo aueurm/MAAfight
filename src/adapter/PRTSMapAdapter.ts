@@ -193,6 +193,12 @@ function getOverrideVal(
   return mDef?.m_defined ? mDef.m_value : base;
 }
 
+function isNearChokepoint(dp: DeploymentPoint, strategicPoints: StrategicPoint[]): boolean {
+  return strategicPoints
+    .filter(sp => sp.type === "chokepoint")
+    .some(cp => Math.abs(dp.row - cp.row) + Math.abs(dp.col - cp.col) <= 2);
+}
+
 function inferDeploymentOrder(
   deploymentPoints: DeploymentPoint[],
   spawnTimeline: SpawnEvent[],
@@ -231,9 +237,13 @@ function inferDeploymentOrder(
     return scoreA - scoreB;
   });
 
+  let meleeIdx = 0;
+  let rangedIdx = 0;
   return points.map((p, i) => ({
     position: { row: p.point.row, col: p.point.col },
-    role: p.point.buildableType === "melee" ? (i < 3 ? "vanguard" : "guard") : "sniper",
+    role: p.point.buildableType === "melee"
+      ? (meleeIdx++ < 2 ? "vanguard" : isNearChokepoint(p.point, strategicPoints) ? "tank" : "guard")
+      : (rangedIdx++ < 2 ? "sniper" : "caster"),
     priority: 100 - i,
   }));
 }
