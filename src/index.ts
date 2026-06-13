@@ -3,13 +3,14 @@ import * as path from "path";
 import { PRTSMapLoader } from "./loader/PRTSMapLoader";
 import { PRTSMapAdapter } from "./adapter/PRTSMapAdapter";
 import { analyzeBattle } from "./battle/BattleAnalyzer";
-import { generateScript } from "./battle/ScriptGenerator";
+import { generateScript, type GeneratorConfig } from "./battle/ScriptGenerator";
 import { validateScript } from "./battle/ScriptValidator";
 import { validateMAAProtocol } from "./battle/MAAProtocolValidator";
 import { buildPlanningReport, formatPlanningReport } from "./battle/PlanningReport";
 import { exportToCopilotFormat } from "./battle/ScriptExporter";
 import { listStages, searchStages, listByCategory, resolveStage } from "./loader/levelIndex";
 import { OperatorBox } from "./player/OperatorBox";
+import { loadConfiguredOperatorBox, saveOperatorConfig } from "./player/PlayerConfig";
 import type { MapData, BattleScript, PRTSLevelData, StageIndexEntry } from "./types";
 
 const CACHE_DIR = process.env.MAAFIGHT_CACHE_DIR || path.resolve(__dirname, "..", "cache", "levels");
@@ -28,8 +29,10 @@ interface Args {
   file?: string;
   config?: string;
   operators?: string;
+  operatorsStdin?: boolean;
   data?: string;
   explain?: boolean;
+  subcommand?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -37,8 +40,11 @@ function parseArgs(argv: string[]): Args {
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
-    if (["generate", "list", "analyze", "validate", "info"].includes(arg)) {
+    if (["generate", "list", "analyze", "validate", "info", "init", "operators"].includes(arg)) {
       args.command = arg;
+      if (arg === "operators" && argv[i + 1] && !argv[i + 1].startsWith("-")) {
+        args.subcommand = argv[++i];
+      }
     } else if (arg === "--stage" || arg === "-s") {
       args.stage = argv[++i];
     } else if (arg === "--output" || arg === "-o") {
@@ -61,6 +67,8 @@ function parseArgs(argv: string[]): Args {
       args.config = argv[++i];
     } else if (arg === "--operators") {
       args.operators = argv[++i];
+    } else if (arg === "--operators-stdin") {
+      args.operatorsStdin = true;
     } else if (arg === "--data" || arg === "-d") {
       args.data = argv[++i];
     } else if (arg === "--explain") {
@@ -74,7 +82,7 @@ function parseArgs(argv: string[]): Args {
 
   if (!args.command) {
     console.error("Usage: maafight <command> [options]");
-    console.error("Commands: generate, list, analyze, validate, info");
+    console.error("Commands: generate, list, analyze, validate, info, init, operators");
     console.error("Try: maafight --help");
     process.exit(1);
   }
@@ -94,12 +102,70 @@ function getDisplayStageName(stageId: string, resolved: StageIndexEntry | null):
   return resolved?.code || resolved?.name || stageId;
 }
 
+function readStdin(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    process.stdin.on("data", chunk => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    process.stdin.on("end", () => {
+      const buffer = Buffer.concat(chunks);
+      const hasUtf16Bom = buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe;
+      const likelyUtf16 = !hasUtf16Bom && buffer.slice(0, 80).some((byte, index) => index % 2 === 1 && byte === 0);
+      resolve(hasUtf16Bom || likelyUtf16 ? buffer.toString("utf16le").replace(/^\uFEFF/, "") : buffer.toString("utf-8"));
+    });
+    process.stdin.on("error", reject);
+  });
+}
+
+function loadOperatorBoxForGeneration(args: Args): { box: OperatorBox; source: string; configured: boolean } | null {
+  if (args.operators) {
+    if (!fs.existsSync(args.operators)) {
+      throw new Error(`Operator file not found: ${args.operators}`);
+    }
+    return { box: new OperatorBox(args.operators), source: args.operators, configured: false };
+  }
+
+  const configured = loadConfiguredOperatorBox();
+  if (!configured) return null;
+
+  return { box: configured.box, source: configured.operatorsPath, configured: true };
+}
+
+function printOperatorBoxInfo(box: OperatorBox, source: string): void {
+  const roles = box.roleCounts();
+  console.log(`Source: ${source}`);
+  console.log(`Owned operators: ${box.size}`);
+  console.log(`High rarity: ${box.highRarityCount()}`);
+  console.log(`Vanguard: ${roles.vanguard}`);
+  console.log(`Guard: ${roles.guard}`);
+  console.log(`Defender: ${roles.tank}`);
+  console.log(`Medic: ${roles.medic}`);
+  console.log(`Sniper: ${roles.sniper}`);
+  console.log(`Caster: ${roles.caster}`);
+  console.log(`Supporter: ${roles.support}`);
+  console.log(`Specialist: ${roles.specialist}`);
+}
+
+function countMatchedRoles(box: OperatorBox): number {
+  const roles = box.roleCounts();
+  return Object.values(roles).reduce((sum, count) => sum + count, 0);
+}
+
+function warnIfOperatorNamesDoNotMatchPools(box: OperatorBox): void {
+  if (box.size > 0 && countMatchedRoles(box) === 0) {
+    console.error("Warning: no owned operator names matched MAAfight role pools. If you used a Windows pipe, try --operators <file> instead.");
+  }
+}
+
 function printHelp(): void {
   console.log(`MAAfight - AI-driven Arknights copilot battle script generator
 
 Usage: maafight <command> [options]
 
 Commands:
+  init       Initialize local player operator database
+  operators Manage local player operator database
   generate   Generate copilot battle script for a stage
   list       List available stages
   analyze    Analyze a stage without generating script
@@ -118,11 +184,15 @@ Options:
   --file, -f <path>   Input script file for validate command
   --config <path>      Generator config JSON file
   --operators <path>   MAA operator export JSON for personalized script
+  --operators-stdin    Read MAA operator export JSON from stdin for init
   --data, -d <path>    Use local PRTS.Map JSON file instead of index lookup
   --explain            Print planning confidence, risks, and deployment reasons
   --help, -h           Show this help
 
 Examples:
+  maafight init --operators Arknights_OperBox_Export.json
+  maafight init --operators-stdin
+  maafight operators info
   maafight generate --stage a001_01
   maafight generate --data ./level_OF-3.json --output script.json --pretty
   maafight list --search CE
@@ -135,6 +205,68 @@ Environment:
   MAAFIGHT_CACHE_DIR   Cache directory (default: ./cache/levels)
   MAAFIGHT_DATA_URL    PRTS.Map data URL (default: https://map.ark-nights.com)
   MAAFIGHT_LOG_LEVEL   Log level (default: info)`);
+}
+
+async function cmdInit(args: Args): Promise<void> {
+  if (args.operators && args.operatorsStdin) {
+    console.error("Error: use either --operators or --operators-stdin, not both");
+    process.exit(1);
+  }
+  if (!args.operators && !args.operatorsStdin) {
+    console.error("Error: --operators or --operators-stdin is required for init");
+    process.exit(1);
+  }
+
+  let raw: string;
+  if (args.operators) {
+    if (!fs.existsSync(args.operators)) {
+      console.error(`Error: File not found: ${args.operators}`);
+      process.exit(1);
+    }
+    raw = fs.readFileSync(args.operators, "utf-8");
+  } else {
+    raw = await readStdin();
+    if (!raw.trim()) {
+      console.error("Error: no JSON received from stdin");
+      process.exit(1);
+    }
+  }
+
+  const saved = saveOperatorConfig(raw);
+  console.log(`Initialized local operator database: ${saved.operatorsPath}`);
+  console.log(`Config written to: ${saved.configPath}`);
+  printOperatorBoxInfo(saved.box, saved.operatorsPath);
+  warnIfOperatorNamesDoNotMatchPools(saved.box);
+}
+
+function cmdOperators(args: Args): void {
+  if (args.subcommand !== "info") {
+    console.error("Usage: maafight operators info [--operators <path>]");
+    process.exit(1);
+  }
+
+  let box: OperatorBox;
+  let source: string;
+
+  if (args.operators) {
+    if (!fs.existsSync(args.operators)) {
+      console.error(`Error: File not found: ${args.operators}`);
+      process.exit(1);
+    }
+    box = new OperatorBox(args.operators);
+    source = args.operators;
+  } else {
+    const configured = loadConfiguredOperatorBox();
+    if (!configured) {
+      console.error("Error: no local operator database found. Run: maafight init --operators <path>");
+      process.exit(1);
+    }
+    box = configured.box;
+    source = configured.operatorsPath;
+  }
+
+  printOperatorBoxInfo(box, source);
+  warnIfOperatorNamesDoNotMatchPools(box);
 }
 
 async function cmdGenerate(args: Args): Promise<void> {
@@ -172,14 +304,18 @@ async function cmdGenerate(args: Args): Promise<void> {
   const mapData = adapter.adapt(prtsData, stageId, displayName);
   const analysis = analyzeBattle(mapData);
 
-  let config = {};
+  let config: GeneratorConfig = {};
   if (args.config && fs.existsSync(args.config)) {
     config = JSON.parse(fs.readFileSync(args.config, "utf-8"));
   }
-  if (args.operators && fs.existsSync(args.operators)) {
-    const box = new OperatorBox(args.operators);
-    if (!args.quiet) console.error(`Loaded ${box.size} owned operators from player data`);
-    config = { ...config, playerOperators: box.playerMap };
+
+  const operatorSource = loadOperatorBoxForGeneration(args);
+  if (operatorSource) {
+    const mode = operatorSource.configured ? "local operator database" : "player data";
+    if (!args.quiet) {
+      console.error(`Loaded ${operatorSource.box.size} owned operators from ${mode}: ${operatorSource.source}`);
+    }
+    config = { ...config, playerOperators: operatorSource.box.playerMap };
   }
 
   const script = generateScript(displayName, mapData, analysis, config);
@@ -386,6 +522,12 @@ async function main(): Promise<void> {
 
   try {
     switch (args.command) {
+      case "init":
+        await cmdInit(args);
+        break;
+      case "operators":
+        cmdOperators(args);
+        break;
       case "generate":
         await cmdGenerate(args);
         break;

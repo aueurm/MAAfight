@@ -163,4 +163,27 @@ describe("PlanningReport", () => {
     expect(text).toContain("Deployments:");
     expect(text).toContain("1. test: [0, 0] Right");
   });
+
+  it("should include operator gaps in report and formatted explanation", () => {
+    const script = makeScript({
+      metadata: {
+        source: "test",
+        operatorGaps: ["Medic: need 1, selected 0"],
+      },
+    });
+    const report = buildPlanningReport({
+      mapData: makeMapData(),
+      analysis: makeAnalysis(),
+      script,
+      validation: makeValidation(),
+      protocol: validateMAAProtocol(script),
+    });
+
+    const text = formatPlanningReport(report, script);
+
+    expect(report.operatorGaps).toEqual(["Medic: need 1, selected 0"]);
+    expect(report.known_risks).toContain("player operator box lacks candidates for some requested roles");
+    expect(text).toContain("Operator gaps:");
+    expect(text).toContain("- Medic: need 1, selected 0");
+  });
 });

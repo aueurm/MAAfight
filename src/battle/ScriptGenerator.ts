@@ -141,6 +141,7 @@ export function generateScript(
   };
 
   const selectedByRole: Record<string, OperatorEntry[]> = {};
+  const operatorGaps: string[] = [];
   let totalSelected = 0;
 
   for (const role of DEPLOY_ROLE_ORDER) {
@@ -148,6 +149,9 @@ export function generateScript(
     const count = roleCounts[role] || 0;
     const selected = selectOperators(pool, count, playerOps);
     selectedByRole[role] = selected;
+    if (playerOps && playerOps.size > 0 && count > 0 && selected.length < count) {
+      operatorGaps.push(`${ROLE_NAMES[role] || role}: need ${count}, selected ${selected.length}`);
+    }
     totalSelected += selected.length;
   }
 
@@ -290,6 +294,8 @@ export function generateScript(
       source: "ai",
       difficulty: tacticalAnalysis.requirements.difficultyRating,
       estimatedCost: tacticalAnalysis.requirements.expectedCost,
+      playerOperatorsUsed: Boolean(playerOps && playerOps.size > 0),
+      operatorGaps,
     },
   };
 }

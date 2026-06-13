@@ -1,53 +1,129 @@
 import * as fs from "fs";
 import type { PlayerOperator } from "../types";
+import { OPERATOR_POOLS } from "../shared/operatorDB";
+
+export interface OperatorRoleStats {
+  vanguard: number;
+  guard: number;
+  tank: number;
+  sniper: number;
+  caster: number;
+  medic: number;
+  support: number;
+  specialist: number;
+}
+
+type RawPlayerOperator = Partial<PlayerOperator> & {
+  id?: string;
+  name?: string;
+  own?: boolean;
+};
+
+const ROLE_KEYS: (keyof OperatorRoleStats)[] = [
+  "vanguard",
+  "guard",
+  "tank",
+  "sniper",
+  "caster",
+  "medic",
+  "support",
+  "specialist",
+];
+
+function normalizeOperator(op: RawPlayerOperator): PlayerOperator | null {
+  if (!op.own || !op.name) return null;
+  return {
+    id: op.id || op.name,
+    name: op.name,
+    rarity: op.rarity || 0,
+    own: true,
+    elite: op.elite || 0,
+    level: op.level || 0,
+    potential: op.potential || 0,
+  };
+}
 
 export class OperatorBox {
-  /** name → PlayerOperator 索引，仅包含已拥有干员 */
   private operators = new Map<string, PlayerOperator>();
 
-  /**
-   * @param filePath MAA 导出 JSON 文件路径 (Arknights_OperBox_Export.json)
-   */
   constructor(filePath: string) {
-    const raw = fs.readFileSync(filePath, "utf-8");
-    const list: PlayerOperator[] = JSON.parse(raw);
-    for (const op of list) {
-      if (op.own) {
-        this.operators.set(op.name, op);
-      }
+    this.loadFromJson(fs.readFileSync(filePath, "utf-8"));
+  }
+
+  static parseJson(raw: string): PlayerOperator[] {
+    const list = JSON.parse(raw) as RawPlayerOperator[];
+    if (!Array.isArray(list)) {
+      throw new Error("Operator export JSON must be an array");
+    }
+    return list
+      .map(normalizeOperator)
+      .filter((op): op is PlayerOperator => op !== null);
+  }
+
+  static fromOperators(operators: PlayerOperator[]): OperatorBox {
+    const box = Object.create(OperatorBox.prototype) as OperatorBox;
+    box.operators = new Map();
+    for (const op of operators) {
+      if (op.own) box.operators.set(op.name, op);
+    }
+    return box;
+  }
+
+  private loadFromJson(raw: string): void {
+    for (const op of OperatorBox.parseJson(raw)) {
+      this.operators.set(op.name, op);
     }
   }
 
-  /** 查询单个干员练度 */
   get(name: string): PlayerOperator | undefined {
     return this.operators.get(name);
   }
 
-  /** 是否拥有该干员 */
   has(name: string): boolean {
     return this.operators.has(name);
   }
 
-  /** 练度优先级分数（高者优先部署） */
   priority(name: string): number {
     const op = this.operators.get(name);
     if (!op) return -1;
     return op.rarity * 100 + op.elite * 50 + op.level;
   }
 
-  /** 按练度降序排列的干员名列表 */
   sortedNames(): string[] {
     return [...this.operators.keys()].sort(
       (a, b) => this.priority(b) - this.priority(a)
     );
   }
 
-  /** 已拥有干员总数 */
+  highRarityCount(minRarity = 5): number {
+    return [...this.operators.values()].filter(op => op.rarity >= minRarity).length;
+  }
+
+  roleCounts(): OperatorRoleStats {
+    const counts = Object.fromEntries(ROLE_KEYS.map(role => [role, 0])) as unknown as OperatorRoleStats;
+    const ownedNames = new Set(this.operators.keys());
+
+    for (const role of ROLE_KEYS) {
+      const seen = new Set<string>();
+      for (const op of OPERATOR_POOLS[role] || []) {
+        if (!seen.has(op.name) && ownedNames.has(op.name)) {
+          counts[role]++;
+          seen.add(op.name);
+        }
+      }
+    }
+
+    return counts;
+  }
+
+  toJSON(): PlayerOperator[] {
+    return [...this.operators.values()];
+  }
+
   get size(): number {
     return this.operators.size;
   }
 
-  /** name → PlayerOperator Map，供 ScriptGenerator 使用 */
   get playerMap(): Map<string, PlayerOperator> {
     return this.operators;
   }

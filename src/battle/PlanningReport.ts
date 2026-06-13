@@ -35,10 +35,11 @@ function detectBoss(mapData: MapData, analysis: TacticalAnalysis): boolean {
 }
 
 function collectKnownRisks(input: PlanningReportInput): string[] {
-  const { mapData, analysis, protocol } = input;
+  const { mapData, analysis, protocol, script } = input;
   const risks: string[] = [];
   const hasEnemyData = (mapData.enemyDetails || []).length > 0;
   const bossDetected = detectBoss(mapData, analysis);
+  const operatorGaps = script.metadata.operatorGaps || [];
 
   if (!hasEnemyData) {
     risks.push("enemy data unavailable; composition uses heuristics");
@@ -57,6 +58,9 @@ function collectKnownRisks(input: PlanningReportInput): string[] {
   }
   if (protocol.warnings.some(w => w.code === "REQUIREMENTS_RESERVED")) {
     risks.push("operator requirements are informational only in MAA");
+  }
+  if (operatorGaps.length > 0) {
+    risks.push("player operator box lacks candidates for some requested roles");
   }
 
   return risks;
@@ -121,6 +125,7 @@ export function buildPlanningReport(input: PlanningReportInput): PlanningReport 
     validationScore: Math.min(validation.score, protocol.score),
     difficulty: analysis.requirements.difficultyRating,
     strategy: analysis.suggestedStrategy.name,
+    operatorGaps: script.metadata.operatorGaps || [],
     actionCount: (script.actions || []).length,
     deployCount: (script.actions || []).filter(a => a.type === "Deploy").length,
     generatedAt: new Date().toISOString(),
@@ -154,6 +159,13 @@ export function formatPlanningReport(report: PlanningReport, script: BattleScrip
     lines.push("- None");
   } else {
     report.known_risks.forEach(risk => lines.push(`- ${risk}`));
+  }
+
+  lines.push("", "Operator gaps:");
+  if (report.operatorGaps.length === 0) {
+    lines.push("- None");
+  } else {
+    report.operatorGaps.forEach(gap => lines.push(`- ${gap}`));
   }
 
   lines.push("", "Protocol warnings:");

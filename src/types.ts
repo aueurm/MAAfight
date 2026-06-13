@@ -354,6 +354,8 @@ export interface BattleScript {
     source: string;
     difficulty?: string;
     estimatedCost?: number;
+    playerOperatorsUsed?: boolean;
+    operatorGaps?: string[];
   };
   version?: number;
 }
@@ -450,6 +452,7 @@ export interface PlanningReport {
   validationScore: number;
   difficulty?: string;
   strategy?: string;
+  operatorGaps: string[];
   actionCount: number;
   deployCount: number;
   generatedAt: string;

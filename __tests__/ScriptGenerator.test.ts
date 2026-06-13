@@ -1,6 +1,7 @@
 import { generateScript } from "../src/battle/ScriptGenerator";
 import { analyzeBattle } from "../src/battle/BattleAnalyzer";
 import type { MapData, PlayerOperator } from "../src/types";
+import { OPERATOR_POOLS } from "../src/shared/operatorDB";
 
 function makeMapData(overrides: Partial<MapData> = {}): MapData {
   return {
@@ -295,5 +296,37 @@ describe("generateScript", () => {
     expect(topOper!.requirements!.elite).toBe(2);
     expect(topOper!.requirements!.level).toBe(90);
     expect(topOper!.requirements!.potential).toBe(3);
+  });
+
+  it("should record operator gaps when owned player data lacks a requested role", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "sniper", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 1,
+      casterCount: 0,
+      medicCount: 0,
+      supportCount: 0,
+      specialistCount: 0,
+    };
+    const ownedVanguard = OPERATOR_POOLS.vanguard[0].name;
+    const playerOps = new Map<string, PlayerOperator>([
+      [ownedVanguard, { id: "owned-vanguard", name: ownedVanguard, rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+
+    const script = generateScript("test-01", mapData, analysis, { playerOperators: playerOps });
+
+    expect(script.actions.some(a => a.type === "Deploy")).toBe(false);
+    expect(script.metadata.playerOperatorsUsed).toBe(true);
+    expect(script.metadata.operatorGaps).toEqual(expect.arrayContaining([
+      expect.stringContaining("need 1, selected 0"),
+    ]));
   });
 });
