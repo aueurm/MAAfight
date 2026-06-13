@@ -1,0 +1,20 @@
+{
+  "name": "maafight",
+  "version": "1.0.0-alpha",
+  "description": "AI-driven Arknights copilot battle script generator (CLI)",
+  "main": "dist/index.js",
+  "bin": { "maafight": "./dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.3",
+    "@types/node": "^20.4.2",
+    "jest": "^29.6.1",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.1.6"
+  }
+}
