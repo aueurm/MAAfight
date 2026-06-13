@@ -356,6 +356,7 @@ export interface BattleScript {
     estimatedCost?: number;
     playerOperatorsUsed?: boolean;
     operatorGaps?: string[];
+    deploymentReasons?: Record<string, string>;
   };
   version?: number;
 }

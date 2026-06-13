@@ -150,7 +150,8 @@ export function formatPlanningReport(report: PlanningReport, script: BattleScrip
     deployActions.forEach((action, index) => {
       const location = action.location ? `[${action.location[0]}, ${action.location[1]}]` : "[unknown]";
       lines.push(`${index + 1}. ${action.name || "Unknown"}: ${location} ${action.direction || "Unknown"}`);
-      lines.push(`   Reason: selected by current role and deployment-order heuristics`);
+      const reason = action.name ? script.metadata.deploymentReasons?.[action.name] : undefined;
+      lines.push(`   Reason: ${reason || "selected by current role and deployment-order heuristics"}`);
     });
   }
 

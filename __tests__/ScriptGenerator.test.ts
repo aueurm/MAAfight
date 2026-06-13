@@ -329,4 +329,134 @@ describe("generateScript", () => {
       expect.stringContaining("need 1, selected 0"),
     ]));
   });
+
+  it("should prefer boss-killer functions over generic lane holders for boss stages", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 1, col: 2 }, role: "guard", priority: 100 },
+      ],
+      enemyDetails: [
+        { id: "boss", name: "Boss", maxHp: 80000, atk: 1200, def: 500, magicResistance: 30, moveSpeed: 1, isBoss: true, isElite: true },
+      ],
+      spawnTimeline: [{ time: 30, enemyId: "boss", count: 1, routeIndex: 0 }],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 1,
+      tankCount: 0,
+      sniperCount: 0,
+      casterCount: 0,
+      medicCount: 0,
+      specialistCount: 0,
+    };
+    const playerOps = new Map<string, PlayerOperator>([
+      ["史尔特尔", { id: "surtr", name: "史尔特尔", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+      ["煌", { id: "blaze", name: "煌", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+
+    const script = generateScript("boss-test", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("史尔特尔");
+    expect(script.metadata.deploymentReasons?.["史尔特尔"]).toContain("boss_killer");
+  });
+
+  it("should prefer anti-air functions when flying routes are present", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "sniper", priority: 100 },
+      ],
+      routes: [{
+        id: 0,
+        motionMode: "fly",
+        startPosition: { row: 0, col: 0 },
+        endPosition: { row: 0, col: 5 },
+        checkpoints: [{ row: 0, col: 2 }],
+      }],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 1,
+      casterCount: 0,
+      medicCount: 0,
+      specialistCount: 0,
+    };
+    const playerOps = new Map<string, PlayerOperator>([
+      ["能天使", { id: "exusiai", name: "能天使", rarity: 6, own: true, elite: 2, level: 80, potential: 1 }],
+      ["黑", { id: "schwarz", name: "黑", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+
+    const script = generateScript("fly-test", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("能天使");
+    expect(script.metadata.deploymentReasons?.["能天使"]).toContain("anti_air");
+  });
+
+  it("should use functional cross-role fallback when a defender is unavailable", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 1, col: 2 }, role: "tank", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 1,
+      sniperCount: 0,
+      casterCount: 0,
+      medicCount: 0,
+      specialistCount: 0,
+    };
+    const playerOps = new Map<string, PlayerOperator>([
+      ["山", { id: "mountain", name: "山", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+
+    const script = generateScript("tank-fallback", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("山");
+    expect(script.metadata.deploymentReasons?.["山"]).toMatch(/main_tank|lane_holder/);
+  });
+
+  it("should prefer arts burst functions for high DEF enemies", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "caster", priority: 100 },
+      ],
+      enemyDetails: [
+        { id: "shield", name: "Shield", maxHp: 10000, atk: 300, def: 900, magicResistance: 0, moveSpeed: 1, isBoss: false, isElite: true },
+      ],
+      spawnTimeline: [{ time: 15, enemyId: "shield", count: 3, routeIndex: 0 }],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 0,
+      casterCount: 1,
+      medicCount: 0,
+      specialistCount: 0,
+    };
+    const playerOps = new Map<string, PlayerOperator>([
+      ["艾雅法拉", { id: "eyja", name: "艾雅法拉", rarity: 6, own: true, elite: 2, level: 80, potential: 1 }],
+      ["能天使", { id: "exusiai", name: "能天使", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+
+    const script = generateScript("high-def", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("艾雅法拉");
+    expect(script.metadata.deploymentReasons?.["艾雅法拉"]).toContain("arts_burst");
+  });
 });

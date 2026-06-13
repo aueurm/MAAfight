@@ -186,4 +186,30 @@ describe("PlanningReport", () => {
     expect(text).toContain("Operator gaps:");
     expect(text).toContain("- Medic: need 1, selected 0");
   });
+
+  it("should format deployment-specific tactical reasons when available", () => {
+    const script = makeScript({
+      actions: [
+        { type: "Deploy", name: "能天使", location: [0, 0], direction: "Right" },
+        { type: "SkillDaemon" },
+      ],
+      metadata: {
+        source: "test",
+        deploymentReasons: {
+          "能天使": "狙击 slot matched functions: anti_air",
+        },
+      },
+    });
+    const report = buildPlanningReport({
+      mapData: makeMapData(),
+      analysis: makeAnalysis(),
+      script,
+      validation: makeValidation(),
+      protocol: validateMAAProtocol(script),
+    });
+
+    const text = formatPlanningReport(report, script);
+
+    expect(text).toContain("Reason: 狙击 slot matched functions: anti_air");
+  });
 });
