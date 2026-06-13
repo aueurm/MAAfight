@@ -1,0 +1,16 @@
+{
+  "name": "basic",
+  "description": "Initial cached benchmark set for evaluation and explainability checks.",
+  "stages": [
+    { "id": "a001_01", "cache": "activities/a001/level_a001_01.json", "type": "activity-basic", "purpose": "baseline activity map" },
+    { "id": "main_00-01", "cache": "obt/main/level_main_00-01.json", "type": "main-early", "purpose": "early mainline stability" },
+    { "id": "main_03-08", "cache": "obt/main/level_main_03-08.json", "type": "main-mid", "purpose": "mid mainline generalization" },
+    { "id": "hard_05-01", "cache": "obt/hard/level_hard_05-01.json", "type": "hard", "purpose": "hard-mode pressure" },
+    { "id": "weekly_armor_1", "cache": "obt/weekly/level_weekly_armor_1.json", "type": "weekly", "purpose": "resource stage armor route" },
+    { "id": "weekly_fly_1", "cache": "obt/weekly/level_weekly_fly_1.json", "type": "weekly", "purpose": "resource stage anti-air route" },
+    { "id": "camp_01", "cache": "obt/campaign/level_camp_01.json", "type": "campaign", "purpose": "campaign route variation" },
+    { "id": "crisis_v2_01-01", "cache": "obt/crisis/v2/level_crisis_v2_01-01.json", "type": "crisis", "purpose": "high-risk special mode boundary" },
+    { "id": "bossrush1_01", "cache": "activities/act1bossrush/level_bossrush1_01.json", "type": "boss", "purpose": "boss detection and risk reporting" },
+    { "id": "a001_ex01", "cache": "activities/a001/level_a001_ex01.json", "type": "activity-ex", "purpose": "activity EX support boundary" }
+  ]
+}

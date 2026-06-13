@@ -257,11 +257,13 @@ export interface EnemyComposition {
 
 export interface OperatorRequirements {
   vanguardCount: number;
+  guardCount: number;
   medicCount: number;
   tankCount: number;
   sniperCount: number;
   casterCount: number;
   supportCount: number;
+  specialistCount: number;
   specialRequirements: string[];
   expectedCost: number;
   difficultyRating: "easy" | "medium" | "hard" | "extreme";
@@ -358,7 +360,7 @@ export interface BattleScript {
 
 export interface BattleScriptGroup {
   name: string;
-  opers: { name: string; skill: number; skill_usage: number }[];
+  opers: BattleScriptOper[];
 }
 
 export interface BattleScriptOper {
@@ -383,6 +385,12 @@ export interface BattleScriptAction {
   skill_usage?: number;
   target?: string;
   time?: number;
+  pre_delay?: number;
+  post_delay?: number;
+  costs?: number;
+  cost_changes?: number;
+  kills?: number;
+  time_elapsed?: number;
 }
 
 // ====================== 验证 ======================
@@ -411,6 +419,41 @@ export interface ValidationWarningItem {
 }
 
 // ====================== 玩家干员 ======================
+
+export interface ProtocolValidationResult {
+  valid: boolean;
+  errors: ProtocolIssue[];
+  warnings: ProtocolIssue[];
+  score: number;
+}
+
+export interface ProtocolIssue {
+  code: string;
+  message: string;
+  severity: "error" | "warning";
+  actionIndex?: number;
+  suggestion?: string;
+}
+
+export type SupportLevel = "supported" | "partial" | "experimental" | "unsupported";
+
+export interface PlanningReport {
+  stage: string;
+  script_valid: boolean;
+  deployable_tiles_used: number;
+  enemy_data_used: boolean;
+  boss_detected: boolean;
+  planner_confidence: number;
+  supportLevel: SupportLevel;
+  known_risks: string[];
+  protocolWarnings: ProtocolIssue[];
+  validationScore: number;
+  difficulty?: string;
+  strategy?: string;
+  actionCount: number;
+  deployCount: number;
+  generatedAt: string;
+}
 
 export interface PlayerOperator {
   id: string;

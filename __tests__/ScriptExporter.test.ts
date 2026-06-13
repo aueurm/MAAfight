@@ -71,6 +71,18 @@ describe("exportToCopilotFormat", () => {
     expect(parsed.opers[0].skill_usage).toBe(2);
   });
 
+  it("should preserve operator requirements", () => {
+    const requirements = { elite: 2, level: 90, skill_level: 7, module: 0, potential: 3 };
+    const script = makeScript({
+      opers: [{ name: "test", skill: 1, skill_usage: 1, requirements }],
+      groups: [{ name: "test-group", opers: [{ name: "test", skill: 1, skill_usage: 1, requirements }] }],
+    });
+    const json = exportToCopilotFormat(script);
+    const parsed = JSON.parse(json);
+    expect(parsed.opers[0].requirements).toEqual(requirements);
+    expect(parsed.groups[0].opers[0].requirements).toEqual(requirements);
+  });
+
   it("should preserve action location and direction", () => {
     const json = exportToCopilotFormat(makeScript());
     const parsed = JSON.parse(json);

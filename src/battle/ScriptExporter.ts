@@ -13,6 +13,7 @@ export function exportToCopilotFormat(script: BattleScript, options: ExportOptio
       const out: Record<string, unknown> = { name: op.name };
       if (op.skill !== undefined) out.skill = op.skill;
       if (op.skill_usage !== undefined) out.skill_usage = op.skill_usage;
+      if (op.requirements !== undefined) out.requirements = op.requirements;
       return out;
     }),
     groups: (script.groups || []).map(g => ({
@@ -21,6 +22,7 @@ export function exportToCopilotFormat(script: BattleScript, options: ExportOptio
         const out: Record<string, unknown> = { name: op.name };
         if (op.skill !== undefined) out.skill = op.skill;
         if (op.skill_usage !== undefined) out.skill_usage = op.skill_usage;
+        if (op.requirements !== undefined) out.requirements = op.requirements;
         return out;
       }),
     })),

@@ -16,6 +16,13 @@ bundle_esm.js
 coverage/
 test-output.json
 test-results/
+benchmark-results/
+
+# 生成脚本
+output/
+
+# 测试数据（玩家导出等私密数据）
+test-data/
 
 # 数据目录
 data/

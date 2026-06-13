@@ -5,6 +5,8 @@ import { PRTSMapAdapter } from "./adapter/PRTSMapAdapter";
 import { analyzeBattle } from "./battle/BattleAnalyzer";
 import { generateScript } from "./battle/ScriptGenerator";
 import { validateScript } from "./battle/ScriptValidator";
+import { validateMAAProtocol } from "./battle/MAAProtocolValidator";
+import { buildPlanningReport, formatPlanningReport } from "./battle/PlanningReport";
 import { exportToCopilotFormat } from "./battle/ScriptExporter";
 import { listStages, searchStages, listByCategory, resolveStage } from "./loader/levelIndex";
 import { OperatorBox } from "./player/OperatorBox";
@@ -27,6 +29,7 @@ interface Args {
   config?: string;
   operators?: string;
   data?: string;
+  explain?: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -60,6 +63,8 @@ function parseArgs(argv: string[]): Args {
       args.operators = argv[++i];
     } else if (arg === "--data" || arg === "-d") {
       args.data = argv[++i];
+    } else if (arg === "--explain") {
+      args.explain = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -79,6 +84,14 @@ function parseArgs(argv: string[]): Args {
 
 function padEnd(s: string, len: number): string {
   return s.length >= len ? s : s + " ".repeat(len - s.length);
+}
+
+function inferStageIdFromDataPath(dataPath: string): string {
+  return path.basename(dataPath, ".json").replace(/^level_/, "");
+}
+
+function getDisplayStageName(stageId: string, resolved: StageIndexEntry | null): string {
+  return resolved?.code || resolved?.name || stageId;
 }
 
 function printHelp(): void {
@@ -106,6 +119,7 @@ Options:
   --config <path>      Generator config JSON file
   --operators <path>   MAA operator export JSON for personalized script
   --data, -d <path>    Use local PRTS.Map JSON file instead of index lookup
+  --explain            Print planning confidence, risks, and deployment reasons
   --help, -h           Show this help
 
 Examples:
@@ -143,7 +157,9 @@ async function cmdGenerate(args: Args): Promise<void> {
     }
     const raw = fs.readFileSync(args.data, "utf-8");
     prtsData = JSON.parse(raw) as PRTSLevelData;
-    stageId = args.stage || path.basename(args.data, ".json");
+    const inputStage = args.stage || inferStageIdFromDataPath(args.data);
+    resolved = resolveStage(inputStage);
+    stageId = resolved ? resolved.stageId : inputStage;
   } else {
     const inputStage = args.stage!;
     resolved = resolveStage(inputStage);
@@ -152,7 +168,7 @@ async function cmdGenerate(args: Args): Promise<void> {
   }
 
   await loader.loadEnemyDatabase();
-  const displayName = resolved?.code || resolved?.name;
+  const displayName = getDisplayStageName(stageId, resolved);
   const mapData = adapter.adapt(prtsData, stageId, displayName);
   const analysis = analyzeBattle(mapData);
 
@@ -166,12 +182,22 @@ async function cmdGenerate(args: Args): Promise<void> {
     config = { ...config, playerOperators: box.playerMap };
   }
 
-  const script = generateScript(stageId, mapData, analysis, config);
+  const script = generateScript(displayName, mapData, analysis, config);
   const validation = validateScript(script, mapData);
+  const protocol = validateMAAProtocol(script);
+  const report = buildPlanningReport({ mapData, analysis, script, validation, protocol });
 
   if (!validation.valid && !args.quiet) {
     console.error("Warning: Script validation had errors:");
     validation.errors.forEach(e => console.error(`  - [${e.code}] ${e.message}`));
+  }
+  if (!protocol.valid && !args.quiet) {
+    console.error("Warning: MAA protocol validation had errors:");
+    protocol.errors.forEach(e => console.error(`  - [${e.code}] ${e.message}`));
+  }
+
+  if (args.explain) {
+    process.stderr.write(formatPlanningReport(report, script) + "\n");
   }
 
   const output = exportToCopilotFormat(script, { compress: !args.pretty });
@@ -240,7 +266,9 @@ async function cmdAnalyze(args: Args): Promise<void> {
     }
     const raw = fs.readFileSync(args.data, "utf-8");
     prtsData = JSON.parse(raw) as PRTSLevelData;
-    stageId = args.stage || path.basename(args.data, ".json");
+    const inputStage = args.stage || inferStageIdFromDataPath(args.data);
+    resolved = resolveStage(inputStage);
+    stageId = resolved ? resolved.stageId : inputStage;
   } else {
     const inputStage = args.stage!;
     resolved = resolveStage(inputStage);
@@ -249,7 +277,7 @@ async function cmdAnalyze(args: Args): Promise<void> {
   }
 
   await loader.loadEnemyDatabase();
-  const displayName = resolved?.code || resolved?.name;
+  const displayName = getDisplayStageName(stageId, resolved);
   const mapData = adapter.adapt(prtsData, stageId, displayName);
   const analysis = analyzeBattle(mapData);
 
@@ -270,6 +298,7 @@ function cmdValidate(args: Args): void {
   const raw = fs.readFileSync(args.file, "utf-8");
   const script: BattleScript = JSON.parse(raw);
   const result = validateScript(script);
+  const protocol = validateMAAProtocol(script);
 
   if (result.errors.length > 0) {
     console.log("Errors:");
@@ -279,10 +308,19 @@ function cmdValidate(args: Args): void {
     console.log("Warnings:");
     result.warnings.forEach(w => console.log(`  [${w.code}] ${w.message}`));
   }
+  if (protocol.errors.length > 0) {
+    console.log("Protocol Errors:");
+    protocol.errors.forEach(e => console.log(`  [${e.code}] ${e.message}`));
+  }
+  if (protocol.warnings.length > 0) {
+    console.log("Protocol Warnings:");
+    protocol.warnings.forEach(w => console.log(`  [${w.code}] ${w.message}`));
+  }
   if (result.errors.length === 0 && result.warnings.length === 0) {
     console.log("Script is valid.");
   }
   console.log(`Score: ${result.score}/100`);
+  console.log(`Protocol Score: ${protocol.score}/100`);
 }
 
 async function cmdInfo(args: Args): Promise<void> {
@@ -293,6 +331,7 @@ async function cmdInfo(args: Args): Promise<void> {
 
   let prtsData: PRTSLevelData;
   let stageId: string;
+  let resolved: StageIndexEntry | null = null;
 
   if (args.data) {
     if (!fs.existsSync(args.data)) {
@@ -301,11 +340,13 @@ async function cmdInfo(args: Args): Promise<void> {
     }
     const raw = fs.readFileSync(args.data, "utf-8");
     prtsData = JSON.parse(raw) as PRTSLevelData;
-    stageId = args.stage || path.basename(args.data, ".json");
+    const inputStage = args.stage || inferStageIdFromDataPath(args.data);
+    resolved = resolveStage(inputStage);
+    stageId = resolved ? resolved.stageId : inputStage;
   } else {
     const loader = new PRTSMapLoader(CACHE_DIR, DATA_URL);
     const inputStage = args.stage!;
-    const resolved = resolveStage(inputStage);
+    resolved = resolveStage(inputStage);
     stageId = resolved ? resolved.stageId : inputStage;
     prtsData = await loader.load(inputStage, { noCache: args.noCache });
   }
@@ -320,7 +361,7 @@ async function cmdInfo(args: Args): Promise<void> {
     if (a.actionType === "SPAWN") enemies.add(a.key);
   })));
 
-  const indexEntry = args.data ? null : resolveStage(stageId);
+  const indexEntry = resolved || resolveStage(stageId);
 
   console.log(`  Stage:        ${stageId}`);
   if (indexEntry?.code) console.log(`  Code:         ${indexEntry.code}`);

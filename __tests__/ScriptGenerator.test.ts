@@ -227,7 +227,7 @@ describe("generateScript", () => {
     expect(waitActions.length).toBe(0);
   });
 
-  it("should skip unknown roles in deploymentOrder", () => {
+  it("should skip unknown roles and fallback-deploy remaining operators", () => {
     const mapData = makeMapData({
       deploymentOrder: [
         { position: { row: 1, col: 2 }, role: "unknown_role", priority: 100 },
@@ -237,8 +237,8 @@ describe("generateScript", () => {
     const analysis = analyzeBattle(mapData);
     const script = generateScript("test-01", mapData, analysis);
     const deployActions = script.actions.filter(a => a.type === "Deploy");
-    // Only the vanguard role should produce deployments
-    expect(deployActions.length).toBe(1);
+    // Unknown role skipped, then fallback deploys remaining operators to unused slots
+    expect(deployActions.length).toBeGreaterThanOrEqual(1);
   });
 
   it("should prefer owned operators when player data is provided", () => {
@@ -257,20 +257,25 @@ describe("generateScript", () => {
     expect(deployAction!.name).toBe("克洛斯");
   });
 
-  it("should fallback to default pool when player data has no matching role", () => {
+  it("should not use unowned operators — only owned are deployed", () => {
     const mapData = makeMapData({
       deploymentOrder: [
         { position: { row: 1, col: 2 }, role: "sniper", priority: 100 },
       ],
     });
     const analysis = analyzeBattle(mapData);
+    // Player owns 芬 (vanguard) but no snipers — sniper role should be skipped
     const playerOps = new Map<string, PlayerOperator>([
       ["芬", { id: "char_xxx", name: "芬", rarity: 2, own: true, elite: 0, level: 30, potential: 6 }],
     ]);
     const script = generateScript("test-01", mapData, analysis, { playerOperators: playerOps });
     const deployAction = script.actions.find(a => a.type === "Deploy");
     expect(deployAction).toBeDefined();
-    expect(deployAction!.name).toBe("能天使");
+    // Owned vanguard fills the unused deployment slot (no unowned fallback)
+    expect(deployAction!.name).toBe("芬");
+    // No unowned sniper in groups
+    const sniperGroup = script.groups.find(g => g.name === "狙击");
+    expect(sniperGroup).toBeUndefined();
   });
 
   it("should include requirements in opers when player data is provided", () => {
