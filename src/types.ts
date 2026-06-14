@@ -3,7 +3,7 @@
 export interface PRTSLevelData {
   options: PRTSOptions;
   mapData: PRTSMapData;
-  routes: PRTSRoute[];
+  routes: Array<PRTSRoute | null>;
   waves: PRTSWave[];
   enemyDbRefs: PRTSEnemyDbRef[];
   runes: PRTSRune[];
@@ -29,10 +29,10 @@ export interface PRTSMapData {
 
 export interface PRTSTile {
   tileKey: string;
-  heightType: "HIGHLAND" | "LOWLAND";
-  buildableType: "MELEE" | "RANGED" | "NONE";
-  passableMask: "ALL" | "FLY_ONLY";
-  playerSideMask: "ALL";
+  heightType: "HIGHLAND" | "LOWLAND" | 0 | 1;
+  buildableType: "MELEE" | "RANGED" | "NONE" | 0 | 1 | 2;
+  passableMask: "ALL" | "FLY_ONLY" | number;
+  playerSideMask: "ALL" | number;
   effects: PRTSTileEffect[] | null;
 }
 
@@ -42,7 +42,7 @@ export interface PRTSTileEffect {
 }
 
 export interface PRTSRoute {
-  motionMode: "WALK" | "FLY" | "E_NUM";
+  motionMode: "WALK" | "FLY" | "E_NUM" | 0 | 1 | 2;
   startPosition: { row: number; col: number };
   endPosition: { row: number; col: number };
   checkpoints: PRTSCheckpoint[] | null;
@@ -50,7 +50,7 @@ export interface PRTSRoute {
 }
 
 export interface PRTSCheckpoint {
-  type: "MOVE" | "WAIT_CURRENT_FRAGMENT_TIME" | "WAIT_FOR_SECONDS";
+  type: "MOVE" | "WAIT_CURRENT_FRAGMENT_TIME" | "WAIT_FOR_SECONDS" | "DISAPPEAR" | "APPEAR_AT_POS" | 0 | 1 | 5 | 6;
   time: number;
   position: { row: number; col: number };
 }
@@ -68,7 +68,7 @@ export interface PRTSFragment {
 }
 
 export interface PRTSSpawnAction {
-  actionType: "SPAWN" | "STORY";
+  actionType: "SPAWN" | "STORY" | "DISPLAY_ENEMY_INFO" | "PREVIEW_CURSOR" | 0 | 6 | 8;
   key: string;
   count: number;
   preDelay: number;
@@ -357,6 +357,7 @@ export interface BattleScript {
     playerOperatorsUsed?: boolean;
     operatorGaps?: string[];
     deploymentReasons?: Record<string, string>;
+    squadMode?: "fixed" | "groups" | "hybrid";
   };
   version?: number;
 }

@@ -9,10 +9,16 @@ import { exportToCopilotFormat } from "../src/battle/ScriptExporter";
 import type { PRTSLevelData, MapData } from "../src/types";
 
 const LEVEL_PATH = path.resolve(__dirname, "..", "cache", "levels", "activities", "a001", "level_a001_01.json");
+const BOSS_RUSH_LEVEL_PATH = path.resolve(__dirname, "..", "cache", "levels", "activities", "act1bossrush", "level_bossrush1_01.json");
 const ENEMY_DB_PATH = path.resolve(__dirname, "..", "cache", "enemy_database.json");
 
 function loadLevelData(): PRTSLevelData {
   const raw = fs.readFileSync(LEVEL_PATH, "utf-8");
+  return JSON.parse(raw) as PRTSLevelData;
+}
+
+function loadBossRushLevelData(): PRTSLevelData {
+  const raw = fs.readFileSync(BOSS_RUSH_LEVEL_PATH, "utf-8");
   return JSON.parse(raw) as PRTSLevelData;
 }
 
@@ -98,6 +104,20 @@ describe("PRTSMapAdapter", () => {
     const first = mapData.deploymentOrder![0];
     expect(first.role).toBeDefined();
     expect(first.priority).toBeGreaterThan(0);
+  });
+
+  it("should parse numeric enum routes and spawn actions from boss rush data", () => {
+    const bossRushData = loadBossRushLevelData();
+    const mapData = adapter.adapt(bossRushData, "bossrush1_01");
+    const analysis = analyzeBattle(mapData);
+
+    expect(mapData.routes.length).toBeGreaterThan(0);
+    expect(mapData.routes.some(route => route.motionMode === "fly")).toBe(true);
+    expect(mapData.deploymentPoints.length).toBeGreaterThan(0);
+    expect(mapData.deploymentPoints.length).toBeLessThan(mapData.tiles.length * mapData.tiles[0].length);
+    expect(mapData.spawnTimeline.length).toBeGreaterThan(0);
+    expect(mapData.enemyDetails.length).toBeGreaterThan(0);
+    expect(analysis.enemyComposition.totalCount).toBeGreaterThan(0);
   });
 });
 

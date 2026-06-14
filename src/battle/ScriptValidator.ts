@@ -15,6 +15,7 @@ export function validateScript(script: BattleScript, mapData?: MapData): Validat
 
   const validTypes = ["Deploy", "SpeedUp", "SkillDaemon", "SkillUse", "Retreat", "Wait"];
   const deployedNames = new Set<string>();
+  const groupNames = new Set((script.groups || []).map(g => g.name));
 
   for (let i = 0; i < (script.actions || []).length; i++) {
     const a = script.actions[i];
@@ -69,7 +70,7 @@ export function validateScript(script: BattleScript, mapData?: MapData): Validat
   }
 
   for (const name of deployedNames) {
-    if (!OPERATOR_DB.has(name)) {
+    if (!OPERATOR_DB.has(name) && !groupNames.has(name)) {
       warnings.push({
         code: "UNKNOWN_OPERATOR",
         message: `Operator "${name}" not in database`,
