@@ -11,7 +11,7 @@ MAAfight 只负责生成脚本。它不执行战斗，不调用 ADB，不做图�
 ## 当前能力
 
 - 通过关卡代号或 PRTS.Map 内部 ID 生成 MAA copilot JSON v3。
-- 支持本地 Web GUI：`maafight gui` / `npm run gui`。
+- 支持本地 Web GUI：源码目录使用 `npm run gui`；安装或 `npm link` 后可用 `maafight gui`。
 - 支持 Windows-first 内测发布包：`npm run release:preview`。
 - 支持关卡搜索、关卡信息查看、战术分析、脚本验证。
 - 支持 MAA 干员识别导出的 operators JSON，用于优先选择玩家拥有的干员。
@@ -32,6 +32,8 @@ npm run gui
 node dist/index.js generate --stage GT-1 --output script.json --pretty
 ```
 
+注意：npm script 需要用 `npm run build`，不是 `npm build`。
+
 GUI 默认打开：
 
 ```text
@@ -43,8 +45,11 @@ http://localhost:14514
 ## GUI 使用
 
 ```bash
-maafight gui
+# 源码目录开发运行
 npm run gui
+
+# 安装为命令或执行 npm link 后
+maafight gui
 ```
 
 GUI 第一版是“生成控制台”，包含：

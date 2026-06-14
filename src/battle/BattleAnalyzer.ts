@@ -1,4 +1,5 @@
 import type { MapData, TacticalAnalysis, DPSRequirement, MapRecommendation } from "../types";
+import { buildBattlePlan } from "./BattlePlanner";
 
 interface EnemyStats {
   bossCount: number;
@@ -331,7 +332,7 @@ export function analyzeBattle(mapData: MapData): TacticalAnalysis {
   const mapRecommendations = recommendPositions(mapData);
   const keyTimings = buildKeyTimings(mapData.spawnTimeline || [], stats);
 
-  return {
+  const analysis: TacticalAnalysis = {
     summary: `${compositionType.replace("_", " ")} composition with ${stats.totalCount} enemies, rated ${difficultyRating}`,
     enemyComposition: {
       totalCount: stats.totalCount,
@@ -366,5 +367,13 @@ export function analyzeBattle(mapData: MapData): TacticalAnalysis {
       ...(stats.totalHP > 100000 ? [`Total enemy HP: ${Math.round(stats.totalHP / 1000)}k — ensure sufficient DPS`] : []),
       `Estimated required cost: ${expectedCost}`,
     ],
+  };
+
+  const battlePlan = buildBattlePlan(mapData, analysis);
+  return {
+    ...analysis,
+    battlePlan,
+    pressureWindows: battlePlan.pressureWindows,
+    recommendedTasks: battlePlan.recommendedTasks,
   };
 }

@@ -1,5 +1,14 @@
 // ====================== PRTS.Map 格式 (输入) ======================
 
+import type {
+  BattlePlan,
+  BattleTask,
+  DPTimelineSummary,
+  OperatorSelectionTrace,
+  PositionScoreSummary,
+  PressureWindow,
+} from "./battle/types";
+
 export interface PRTSLevelData {
   options: PRTSOptions;
   mapData: PRTSMapData;
@@ -242,6 +251,9 @@ export interface TacticalAnalysis {
   spawnTimeline?: SpawnEvent[];
   mapRecommendations?: MapRecommendation[];
   notes?: string[];
+  battlePlan?: BattlePlan;
+  pressureWindows?: PressureWindow[];
+  recommendedTasks?: BattleTask[];
 }
 
 export interface EnemyComposition {
@@ -358,6 +370,13 @@ export interface BattleScript {
     operatorGaps?: string[];
     deploymentReasons?: Record<string, string>;
     squadMode?: "fixed" | "groups" | "hybrid";
+    battlePlan?: BattlePlan;
+    pressureWindows?: PressureWindow[];
+    recommendedTasks?: BattleTask[];
+    positionScoreSummary?: PositionScoreSummary[];
+    dpTimelineSummary?: DPTimelineSummary;
+    operatorSelectionTrace?: OperatorSelectionTrace[];
+    warnings?: string[];
   };
   version?: number;
 }

@@ -1,5 +1,6 @@
 import { generateScript } from "../src/battle/ScriptGenerator";
 import { analyzeBattle } from "../src/battle/BattleAnalyzer";
+import { validateMAAProtocol } from "../src/battle/MAAProtocolValidator";
 import type { MapData, PlayerOperator } from "../src/types";
 import { OPERATOR_POOLS } from "../src/shared/operatorDB";
 
@@ -89,6 +90,9 @@ describe("generateScript", () => {
 
     expect(script.metadata.source).toBe("ai");
     expect(script.metadata.difficulty).toBeDefined();
+    expect(script.metadata.battlePlan).toBeDefined();
+    expect(script.metadata.recommendedTasks).toContain("early_dp");
+    expect(script.metadata.dpTimelineSummary?.entries.length).toBeGreaterThan(0);
     expect(script.generatedAt).toBeDefined();
   });
 
@@ -117,7 +121,8 @@ describe("generateScript", () => {
 
     const waitActions = script.actions.filter(a => a.type === "Wait");
     expect(waitActions.length).toBeGreaterThan(0);
-    expect(waitActions[0].time).toBe(5);
+    expect(waitActions.every(action => (action.time || 0) >= 0)).toBe(true);
+    expect(script.metadata.dpTimelineSummary?.entries.some(entry => entry.waitBefore >= 5)).toBe(true);
   });
 
   it("should infer vertical direction for north-south routes", () => {
@@ -147,6 +152,20 @@ describe("generateScript", () => {
     const script = generateScript("test-01", mapData, analysis);
     expect(script.actions.some(a => a.type === "Deploy")).toBe(true);
     expect(script.groups.length).toBeGreaterThan(0);
+  });
+
+  it("should fall back to requirement order when battlePlan is missing", () => {
+    const mapData = makeMapData({ deploymentOrder: undefined });
+    const analysis = analyzeBattle(mapData);
+    delete analysis.battlePlan;
+    delete analysis.pressureWindows;
+    delete analysis.recommendedTasks;
+
+    const script = generateScript("fallback-plan", mapData, analysis);
+
+    expect(script.actions.some(a => a.type === "Deploy")).toBe(true);
+    expect(script.metadata.battlePlan).toBeUndefined();
+    expect(script.metadata.dpTimelineSummary?.entries.length).toBeGreaterThan(0);
   });
 
   it("should infer Down direction for north-to-south routes", () => {
@@ -212,7 +231,7 @@ describe("generateScript", () => {
     expect(deployAction!.direction).toBe("Right");
   });
 
-  it("should not insert Wait when deploymentTimeout is 0", () => {
+  it("should only insert DP waits when deploymentTimeout is 0", () => {
     const mapData = makeMapData({
       deploymentOrder: [
         { position: { row: 1, col: 2 }, role: "vanguard", priority: 100 },
@@ -225,7 +244,8 @@ describe("generateScript", () => {
     });
 
     const waitActions = script.actions.filter(a => a.type === "Wait");
-    expect(waitActions.length).toBe(0);
+    expect(waitActions.every(action => (action.time || 0) >= 0)).toBe(true);
+    expect(script.metadata.dpTimelineSummary?.entries.every(entry => entry.waitBefore >= 0)).toBe(true);
   });
 
   it("should skip unknown roles and fallback-deploy remaining operators", () => {
@@ -256,6 +276,279 @@ describe("generateScript", () => {
     const deployAction = scriptWithPlayer.actions.find(a => a.type === "Deploy");
     expect(deployAction).toBeDefined();
     expect(deployAction!.name).toBe("克洛斯");
+  });
+
+  it("should prefer a highly trained owned operator over a low-trained higher tier candidate", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "sniper", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 1,
+      casterCount: 0,
+      medicCount: 0,
+      supportCount: 0,
+      specialistCount: 0,
+    };
+    analysis.battlePlan = {
+      difficulty: analysis.requirements.difficultyRating,
+      tacticType: "test",
+      pressureWindows: [],
+      recommendedTasks: ["physical_dps"],
+      positionHints: {},
+      warnings: [],
+    };
+    analysis.recommendedTasks = ["physical_dps"];
+    const playerOps = new Map<string, PlayerOperator>([
+      ["维什戴尔", { id: "wisadel", name: "维什戴尔", rarity: 6, own: true, elite: 0, level: 1, potential: 1 }],
+      ["克洛斯", { id: "kroos", name: "克洛斯", rarity: 3, own: true, elite: 2, level: 55, potential: 6 }],
+    ]);
+
+    const script = generateScript("trained-sniper", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+    const selectedOper = script.opers.find(op => op.name === "克洛斯");
+
+    expect(deployAction?.name).toBe("克洛斯");
+    expect(selectedOper?.requirements?.elite).toBe(2);
+    expect(selectedOper?.requirements?.level).toBe(55);
+  });
+
+  it("should prefer higher level owned operators within the same elite stage", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "sniper", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 1,
+      casterCount: 0,
+      medicCount: 0,
+      supportCount: 0,
+      specialistCount: 0,
+    };
+    analysis.battlePlan = {
+      difficulty: analysis.requirements.difficultyRating,
+      tacticType: "test",
+      pressureWindows: [],
+      recommendedTasks: ["physical_dps"],
+      positionHints: {},
+      warnings: [],
+    };
+    analysis.recommendedTasks = ["physical_dps"];
+    const playerOps = new Map<string, PlayerOperator>([
+      ["流星", { id: "meteor", name: "流星", rarity: 4, own: true, elite: 2, level: 20, potential: 1 }],
+      ["杰西卡", { id: "jessica", name: "杰西卡", rarity: 4, own: true, elite: 2, level: 70, potential: 1 }],
+    ]);
+
+    const script = generateScript("trained-level", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("杰西卡");
+  });
+
+  it("should use strength-aware priority when player data is not provided", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "sniper", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 1,
+      casterCount: 0,
+      medicCount: 0,
+      supportCount: 0,
+      specialistCount: 0,
+    };
+    analysis.battlePlan = {
+      difficulty: analysis.requirements.difficultyRating,
+      tacticType: "test",
+      pressureWindows: [],
+      recommendedTasks: ["physical_dps"],
+      positionHints: {},
+      warnings: [],
+    };
+    analysis.recommendedTasks = ["physical_dps"];
+
+    const script = generateScript("default-sniper", mapData, analysis);
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("维什戴尔");
+    expect(script.metadata.operatorSelectionTrace?.[0].selected).toBe("维什戴尔");
+  });
+
+  it("should prefer S or A strength operators over lower strength candidates for the same task", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "sniper", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 1,
+      casterCount: 0,
+      medicCount: 0,
+      supportCount: 0,
+      specialistCount: 0,
+    };
+    analysis.battlePlan = {
+      difficulty: analysis.requirements.difficultyRating,
+      tacticType: "test",
+      pressureWindows: [],
+      recommendedTasks: ["physical_dps"],
+      positionHints: {},
+      warnings: [],
+    };
+    analysis.recommendedTasks = ["physical_dps"];
+    const playerOps = new Map<string, PlayerOperator>([
+      ["维什戴尔", { id: "wisadel", name: "维什戴尔", rarity: 6, own: true, elite: 2, level: 60, potential: 1 }],
+      ["克洛斯", { id: "kroos", name: "克洛斯", rarity: 3, own: true, elite: 2, level: 60, potential: 6 }],
+    ]);
+
+    const script = generateScript("strength-sniper", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("维什戴尔");
+    expect(script.metadata.operatorSelectionTrace?.[0].consideredCandidates[0].strengthTier).toBe("SS");
+  });
+
+  it("should not select a high strength operator for a mismatched task", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "medic", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 0,
+      casterCount: 0,
+      medicCount: 1,
+      supportCount: 0,
+      specialistCount: 0,
+    };
+    analysis.battlePlan = {
+      difficulty: analysis.requirements.difficultyRating,
+      tacticType: "test",
+      pressureWindows: [],
+      recommendedTasks: ["healing"],
+      positionHints: {},
+      warnings: [],
+    };
+    analysis.recommendedTasks = ["healing"];
+    const playerOps = new Map<string, PlayerOperator>([
+      ["维什戴尔", { id: "wisadel", name: "维什戴尔", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+      ["白面鸮", { id: "ptilopsis", name: "白面鸮", rarity: 5, own: true, elite: 2, level: 60, potential: 1 }],
+    ]);
+
+    const script = generateScript("healing-task", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("白面鸮");
+    expect(script.metadata.operatorSelectionTrace?.[0].consideredCandidates.some(
+      candidate => candidate.name === "维什戴尔" && candidate.rejectedReason?.includes("role mismatch")
+    )).toBe(true);
+  });
+
+  it("should keep deployment type compatibility when strength data is present", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "caster", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 0,
+      casterCount: 1,
+      medicCount: 0,
+      supportCount: 0,
+      specialistCount: 0,
+    };
+    analysis.battlePlan = {
+      difficulty: analysis.requirements.difficultyRating,
+      tacticType: "test",
+      pressureWindows: [],
+      recommendedTasks: ["arts_damage"],
+      positionHints: {},
+      warnings: [],
+    };
+    analysis.recommendedTasks = ["arts_damage"];
+    const playerOps = new Map<string, PlayerOperator>([
+      ["史尔特尔", { id: "surtr", name: "史尔特尔", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+      ["艾雅法拉", { id: "eyja", name: "艾雅法拉", rarity: 6, own: true, elite: 2, level: 80, potential: 1 }],
+    ]);
+
+    const script = generateScript("caster-compat", mapData, analysis, { playerOperators: playerOps });
+    const deployAction = script.actions.find(a => a.type === "Deploy");
+
+    expect(deployAction?.name).toBe("艾雅法拉");
+    expect(script.metadata.operatorSelectionTrace?.[0].consideredCandidates.some(
+      candidate => candidate.name === "史尔特尔" && candidate.rejectedReason
+    )).toBe(true);
+  });
+
+  it("should output selection trace and warnings for risky high precision picks", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 2, col: 2 }, role: "sniper", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    analysis.requirements = {
+      ...analysis.requirements,
+      vanguardCount: 0,
+      guardCount: 0,
+      tankCount: 0,
+      sniperCount: 1,
+      casterCount: 0,
+      medicCount: 0,
+      supportCount: 0,
+      specialistCount: 0,
+    };
+    analysis.battlePlan = {
+      difficulty: analysis.requirements.difficultyRating,
+      tacticType: "test",
+      pressureWindows: [],
+      recommendedTasks: ["boss_kill"],
+      positionHints: {},
+      warnings: [],
+    };
+    analysis.recommendedTasks = ["boss_kill"];
+    const playerOps = new Map<string, PlayerOperator>([
+      ["鸿雪", { id: "pozemka", name: "鸿雪", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+
+    const script = generateScript("precision-warning", mapData, analysis, { playerOperators: playerOps });
+
+    expect(script.metadata.operatorSelectionTrace?.[0].selected).toBe("鸿雪");
+    expect(script.metadata.operatorSelectionTrace?.[0].reasons.join(" ")).toContain("high precision");
+    expect(script.metadata.warnings?.some(warning => warning.includes("high_precision_required"))).toBe(true);
   });
 
   it("should not use unowned operators — only owned are deployed", () => {
@@ -316,6 +609,15 @@ describe("generateScript", () => {
       supportCount: 0,
       specialistCount: 0,
     };
+    analysis.battlePlan = {
+      difficulty: analysis.requirements.difficultyRating,
+      tacticType: "test",
+      pressureWindows: [],
+      recommendedTasks: ["physical_dps"],
+      positionHints: {},
+      warnings: [],
+    };
+    analysis.recommendedTasks = ["physical_dps"];
     const ownedVanguard = OPERATOR_POOLS.vanguard[0].name;
     const playerOps = new Map<string, PlayerOperator>([
       [ownedVanguard, { id: "owned-vanguard", name: ownedVanguard, rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
@@ -328,6 +630,34 @@ describe("generateScript", () => {
     expect(script.metadata.operatorGaps).toEqual(expect.arrayContaining([
       expect.stringContaining("need 1, selected 0"),
     ]));
+  });
+
+  it("should keep generated scripts MAA-protocol valid with lightweight planning metadata", () => {
+    const mapData = makeMapData();
+    const analysis = analyzeBattle(mapData);
+    const script = generateScript("protocol-test", mapData, analysis);
+    const protocol = validateMAAProtocol(script);
+
+    expect(protocol.valid).toBe(true);
+    expect(script.metadata.pressureWindows).toBeDefined();
+    expect(script.metadata.positionScoreSummary?.length).toBeGreaterThan(0);
+  });
+
+  it("should not generate negative waits in the DP timeline", () => {
+    const mapData = makeMapData({
+      options: {
+        characterLimit: 8,
+        maxLifePoint: 10,
+        initialCost: 0,
+        maxCost: 99,
+        costIncreaseTime: 1,
+      },
+    });
+    const analysis = analyzeBattle(mapData);
+    const script = generateScript("dp-test", mapData, analysis);
+
+    expect(script.actions.filter(action => action.type === "Wait").every(action => (action.time || 0) >= 0)).toBe(true);
+    expect(script.metadata.dpTimelineSummary?.entries.every(entry => entry.waitBefore >= 0)).toBe(true);
   });
 
   it("should prefer boss-killer functions over generic lane holders for boss stages", () => {

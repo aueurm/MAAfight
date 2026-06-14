@@ -123,6 +123,9 @@ describe("GUI server routes", () => {
     expect(Array.isArray(generated.opers)).toBe(true);
     expect(Array.isArray(generated.groups)).toBe(true);
     expect(Array.isArray(generated.actions)).toBe(true);
+    expect(body.script.metadata.battlePlan).toBeDefined();
+    expect(body.script.metadata.recommendedTasks.length).toBeGreaterThan(0);
+    expect(body.script.metadata.operatorSelectionTrace.length).toBeGreaterThan(0);
   });
 
   it("should generate group-based scripts when squadMode is groups", async () => {
