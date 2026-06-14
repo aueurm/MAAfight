@@ -357,7 +357,7 @@ export default function App() {
               onFocus={() => setStageFocused(true)}
               onBlur={() => window.setTimeout(() => setStageFocused(false), 120)}
               onKeyDown={handleStageKeyDown}
-              placeholder="GT-1 / 3-8 / 愚人号"
+              placeholder="GT-1 / 3-8 / 0-1"
               autoComplete="off"
             />
             {canShowSuggestions && (
