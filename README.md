@@ -1,217 +1,338 @@
 # MAAfight
 
-AI 驱动的明日方舟 MAA copilot 战斗脚本生成器。
+> 预览版：本项目当前是 **MAA copilot JSON v3 本地生成工具**，不是 AI 驱动工具。
 
-**一行命令，关卡 ID → MAA 可用的 copilot JSON。**
+MAAfight 是一个 TypeScript / Node.js CLI 与本地 Web GUI 工具。它读取 [PRTS.Map](https://map.ark-nights.com/) 关卡数据，分析地图、路线、敌人波次和可部署位置，生成可导入 MAA 的 copilot JSON v3。
 
-```
-maafight generate --stage a001_01 --output script.json
-```
+MAAfight 只负责生成脚本。它不执行战斗，不调用 ADB，不做图像识别，不修改 MAA，也不提供在线服务。
 
-## 这是什么
+当前版本适合小范围测试。生成结果仍需要人工检查关卡名、干员、部署顺序、朝向和技能逻辑后再导入 MAA。
 
-[MAA](https://github.com/MaaAssistantArknights/MaaAssistantArknights) 已内置完整的战斗执行引擎（图像识别、ADB 操控、任务队列）。但它不会帮你写作战脚本。
+## 当前能力
 
-**MAAfight 补上这个缺口** — 从 [PRTS.Map](https://map.ark-nights.com/) 获取精确游戏数据（地图、敌人路线、波次、HP/ATK/DEF），自动分析战术需求，生成符合 MAA copilot v3 格式的战斗脚本。
-
-```
-关卡 ID ──▶ [地图数据获取 → 格式适配 → 战术分析 → 策略生成 → 脚本编排] ──▶ copilot JSON → MAA 执行
-```
-
-MAAfight **不做**的：不控制 ADB、不做图像识别、不执行任务调度。它只输出 JSON，剩下的交给 MAA。
+- 通过关卡代号或 PRTS.Map 内部 ID 生成 MAA copilot JSON v3。
+- 支持本地 Web GUI：`maafight gui` / `npm run gui`。
+- 支持 Windows-first 内测发布包：`npm run release:preview`。
+- 支持关卡搜索、关卡信息查看、战术分析、脚本验证。
+- 支持 MAA 干员识别导出的 operators JSON，用于优先选择玩家拥有的干员。
+- 支持 `.maafight/operators.json` 本地干员库，初始化后生成时自动加载。
+- 支持 GUI 里粘贴 operators JSON 并保存为默认干员库。
+- 支持生成日志与“复制调试信息”，便于内测反馈。
 
 ## 快速开始
 
 ```bash
-# 安装依赖 & 构建
 npm install
 npm run build
 
-# 生成作战脚本
-node dist/index.js generate --stage a001_01 --output script.json --pretty
+# 启动本地 Web GUI
+npm run gui
 
-# 用 MAA 加载 script.json → 自动战斗
+# 或直接用 CLI 生成
+node dist/index.js generate --stage GT-1 --output script.json --pretty
 ```
 
-## 命令
+GUI 默认打开：
 
-### init — 初始化玩家干员库
+```text
+http://localhost:14514
+```
+
+如果端口被占用，会自动尝试 `14515` 到 `14523`。
+
+## GUI 使用
+
+```bash
+maafight gui
+npm run gui
+```
+
+GUI 第一版是“生成控制台”，包含：
+
+- 关卡 ID / 关卡名输入与候选提示。
+- operators JSON 文件选择、路径输入、JSON 粘贴保存。
+- 编队模式：固定编队（fixed）、分组替换（groups）、混合模式（hybrid）。
+- pretty JSON 开关。
+- 输出目录和文件名设置。
+- 分析关卡、生成脚本、验证脚本、打开输出目录。
+- 成功后显示完整 `outputPath`。
+- JSON 预览和复制 JSON。
+- 复制调试信息。
+
+浏览器文件选择不会暴露完整本地路径，所以 GUI 会读取所选 JSON 文件内容用于生成；如果需要按路径读取，也可以手动输入完整文件路径。
+
+## Windows 内测包
+
+生成内测包：
+
+```bash
+npm run release:preview
+```
+
+生成结果：
+
+```text
+release/
+  MAAfight-GUI-v{version}-preview-win-x64/
+  MAAfight-GUI-v{version}-preview-win-x64.zip
+```
+
+测试者使用方式：
+
+1. 解压 zip。
+2. 双击 `start-gui.bat`。
+3. 浏览器打开本地 GUI。
+4. 生成脚本。
+5. 在包内 `output/` 找到生成的 JSON。
+
+发布包目录结构：
+
+```text
+MAAfight-GUI-v{version}-preview-win-x64/
+  app/
+    dist/
+    web-dist/
+    package.json
+    node_modules/
+  output/
+  cache/
+  logs/
+  examples/
+  start-gui.bat
+  README-TEST.md
+  VERSION.txt
+```
+
+`start-gui.bat` 会设置：
+
+- `MAAFIGHT_HOME`：解压后的包根目录。
+- `MAAFIGHT_OUTPUT_DIR`：包内 `output/`。
+- `MAAFIGHT_CACHE_DIR`：包内 `cache/`。
+- `MAAFIGHT_LOG_DIR`：包内 `logs/`。
+- `MAAFIGHT_WEB_ROOT`：包内 `app/web-dist`。
+
+如果 `runtime/node.exe` 存在，会优先使用它；否则使用系统 `node`。
+
+## 干员库
+
+初始化本地干员库：
 
 ```bash
 maafight init --operators Arknights_OperBox_Export.json
 maafight init --operators-stdin
 ```
 
-初始化会在当前目录写入 `.maafight/config.json` 和 `.maafight/operators.json`。`operators.json` 只保存 MAA 识别结果里 `own: true` 的干员。
+初始化后会写入：
 
-### operators info — 查看玩家干员库统计
+```text
+.maafight/
+  config.json
+  operators.json
+```
+
+`operators.json` 只保存 MAA 识别结果里 `own: true` 的干员。之后 `generate` 和 GUI 默认会加载这份本地干员库。
+
+查看统计：
 
 ```bash
 maafight operators info
 maafight operators info --operators Arknights_OperBox_Export.json
 ```
 
-输出 owned 总数、高星数量和各职业可用干员数，用来确认初始化是否成功。
+如果没有初始化，生成器会退回默认干员池。当前选人逻辑仍是规则驱动和预设池驱动，不是 AI 自动理解每个账号的完整打法。
 
-### generate — 生成作战脚本
+## CLI 命令
+
+### generate
+
+生成作战脚本。
 
 ```bash
-maafight generate --stage <关卡ID> [--output <路径>] [--pretty] [--no-cache]
-maafight generate --data <本地JSON> [--stage <名称>] [--output <路径>]
-maafight generate --stage a001_01 --output script.json --pretty
-maafight generate --data ./level_OF-3.json --stage OF-3 --output of3.json
+maafight generate --stage <关卡ID或关卡代号> [--output <路径>] [--pretty] [--no-cache]
+maafight generate --data <本地PRTS.Map JSON> [--stage <名称>] [--output <路径>]
+
+maafight generate --stage GT-1 --output script.json --pretty
+maafight generate --stage 3-8 --operators my_operators.json
 maafight generate --stage GT-1 --explain
-maafight generate --stage main_03-08 --operators my_operators.json
 ```
 
-`--data` 接受本地 PRTS.Map 格式的关卡 JSON 文件，绕过索引查找——适用于 PRTS.Map 未收录的早期活动（OF、MT、GT 等）。`--stage` 在此模式下设置输出脚本的关卡名称（可选，默认取文件名）。
+`--stage` 可以传游戏内关卡代号，例如 `GT-1`，也可以传内部 ID，例如 `a001_01`。
 
-初始化后，`generate` 会默认加载 `.maafight/operators.json`，只从你拥有的干员中选择。若没有初始化，生成行为保持原来的默认干员池逻辑。`--operators` 可作为临时覆盖，不会改写本地配置。
+`--data` 用于直接读取本地 PRTS.Map 关卡 JSON，适合调试未收录或索引不完整的关卡。
 
-如果某个职业没有可用干员，脚本会少生成对应部署；使用 `--explain` 时会在 `Operator gaps` 中提示缺口。
+### analyze
 
-### analyze — 不生成脚本，只分析关卡
+只分析关卡，不生成脚本。
 
 ```bash
-maafight analyze --stage <关卡ID> [--pretty]
-maafight analyze --data <本地JSON> [--pretty]
-maafight analyze --stage camp_01 --pretty
+maafight analyze --stage GT-1 --pretty
+maafight analyze --data ./level_GT-1.json --pretty
 ```
 
-输出：敌人构成、难度评级、干员需求、推荐策略、部署位置建议。
+输出包含敌人构成、难度评级、干员需求、关键时机和建议策略。
 
-### validate — 验证已有脚本
+### validate
+
+验证已有 copilot JSON。
 
 ```bash
-maafight validate --file <脚本路径>
 maafight validate --file script.json
 ```
 
-检查 action 类型合法性、部署坐标是否越界、格式是否正确。输出评分 0-100。
+会检查基础格式、action 合法性、部署坐标、MAA copilot v3 协议兼容性，并输出评分。
 
-### list — 列出可用关卡
+### list
 
-```bash
-maafight list [--search <关键词>] [--category <类别>] [--limit <数量>]
-maafight list --search boss            # 搜 BOSS 关
-maafight list --category weekly        # 周一资源本
-maafight list --category crisis --limit 20
-```
-
-类别：`main` `hard` `campaign` `weekly` `crisis` `activity`
-
-### info — 查看关卡详情
+搜索或列出关卡。
 
 ```bash
-maafight info --stage <关卡ID>
-maafight info --data <本地JSON>
-maafight info --stage crisis_v2_01-01
+maafight list --search GT
+maafight list --category main
+maafight list --category weekly --limit 20
 ```
 
-输出：地图尺寸、可部署点数、路线数、波次数、敌人种类等。
+常见类别：
 
-## 关卡 ID 速查
+```text
+main, hard, campaign, weekly, crisis, activity
+```
 
-**不要猜 ID，用搜索找到确定的 ID：**
+### info
+
+查看关卡详情。
 
 ```bash
-maafight list --search "关键词"     # 模糊搜索关卡名
-maafight list --category main       # 按类别浏览
-maafight info --stage <找到的ID>    # 确认关卡详情
+maafight info --stage GT-1
+maafight info --data ./level_GT-1.json
 ```
 
-### 常用 ID 格式
+输出地图尺寸、部署点、路线数、波次数、敌人类型、部署上限和初始费用。
 
-| 类别 | ID 格式 | 示例 | 搜索方式 |
-| --- | --- | --- | --- |
-| 主线 | `main_章-关` | `main_03-08` (碎骨) | `list --category main` |
-| 困难 | `hard_章-关` | `hard_05-04` | `list --category hard` |
-| 剿灭 | `camp_编号` | `camp_01` (切尔诺伯格) | `list --category campaign` |
-| 资源本 | `weekly_类型_编号` | `weekly_armor_1` (重甲) | `list --category weekly` |
-| 危机合约 | `crisis_v2_区域-关` | `crisis_v2_01-01` | `list --category crisis` |
-| 活动 | `活动ID_编号` | `a001_01` | `list --search 活动名` |
+## 关卡输入建议
 
-### 已知不支持
+优先使用游戏内可见关卡代号，例如：
 
-- **早期 SideStory**：OF (火蓝之心)、MT (玛莉娅·临光)、GT (骑兵与猎人)、DM (生于黑夜) 等未被 PRTS.Map 收录
-- 变通方案：获取 PRTS.Map 格式的关卡 JSON 文件后，使用 `--data` 参数直接生成
+```text
+GT-1
+0-1
+3-8
+H5-1
+```
 
-> 共收录 **3174** 个关卡，10 关实测验证全通过（[详情](docs/test-levels.md)）
+如果不知道准确关卡代号：
 
-## 工作原理
+```bash
+maafight list --search <关键词>
+maafight info --stage <查到的code或stageId>
+```
 
-每个关卡经过 5 步流水线处理：
+`list` 输出中的 `code` 是游戏内可见关卡代号，`stageId` 是 PRTS.Map 内部 ID。例如 `a001_01` 对应 `GT-1`。
 
-| 步骤 | 模块 | 在做什么 |
+更多实测关卡见 [docs/test-levels.md](docs/test-levels.md)。
+
+## 工作流程
+
+```text
+关卡 ID / 关卡代号
+  -> PRTSMapLoader 读取关卡 JSON
+  -> PRTSMapAdapter 转换为内部 MapData
+  -> BattleAnalyzer 规则分析敌人、路线和难度
+  -> ScriptGenerator 生成部署与技能动作
+  -> ScriptValidator / MAAProtocolValidator 校验
+  -> ScriptExporter 导出 MAA copilot JSON v3
+```
+
+当前分析和生成逻辑是规则驱动：
+
+- 使用 PRTS.Map 的真实地图、路线、波次和敌人属性。
+- 根据部署点、路线方向和分析结果推断部署顺序与朝向。
+- 根据默认干员池或玩家干员库选择候选干员。
+- 输出 JSON 供 MAA 导入执行。
+
+## 运行目录与环境变量
+
+普通开发运行时，默认目录基于当前项目目录。
+
+发布包运行时，`start-gui.bat` 会设置 `MAAFIGHT_HOME`，默认目录都落在解压目录内。
+
+| 变量 | 用途 | 默认 |
 | --- | --- | --- |
-| 1. 数据获取 | PRTSMapLoader | 从 PRTS.Map 下载关卡 JSON（地图瓦片、敌人路线、波次、属性）并缓存 |
-| 2. 格式适配 | PRTSMapAdapter | 游戏引擎格式 → 内部分析格式（可部署点、隘口、刷怪时间线） |
-| 3. 战术分析 | BattleAnalyzer | 分析敌人构成、计算 DPS 需求、评级难度、推荐干员组合 |
-| 4. 脚本生成 | ScriptGenerator | 干员选择 + 部署顺序 + 朝向推断 + 技能轴编排 |
-| 5. 验证导出 | ScriptValidator + ScriptExporter | 合法性校验 + MAA copilot v3 JSON 输出 |
+| `MAAFIGHT_HOME` | 本地运行根目录 | 当前工作目录 |
+| `MAAFIGHT_OUTPUT_DIR` | GUI 默认输出目录 | `$MAAFIGHT_HOME/output` |
+| `MAAFIGHT_CACHE_DIR` | PRTS.Map 缓存目录 | `$MAAFIGHT_HOME/cache` |
+| `MAAFIGHT_LOG_DIR` | GUI 日志目录 | `$MAAFIGHT_HOME/logs` |
+| `MAAFIGHT_WEB_ROOT` | GUI 前端静态资源目录 | 开发：`web/dist`；发布包：`app/web-dist` |
+| `MAAFIGHT_DATA_URL` | PRTS.Map 数据源 | `https://map.ark-nights.com` |
 
-### 难度评级
+GUI 生成时会实际写入后端文件系统。默认输出目录是 `output/`，页面成功后会显示完整保存路径。
 
-基于真实 HP/ATK/DEF 数据计算，不靠盲猜：
+## 日志与反馈
 
-- **easy** — 少量普通敌人
-- **medium** — 多波次或高血量
-- **hard** — 精英敌人混合
-- **extreme** — BOSS + 精英 + 高 DPS 需求
+GUI 启动和生成动作会写入：
 
-### 朝向推断
-
-根据敌人路线起点→终点向量自动推断干员朝向：
-
-```
-敌人从北向南 → 干员朝 Up（向上迎击）
-敌人从西向东 → 干员朝 Left（向左迎击）
+```text
+logs/gui.log
 ```
 
-## 环境变量
+日志会记录版本、端口、目录、关卡、编队模式、输出路径、warnings/errors 数量。
 
-| 变量 | 默认值 | 用途 |
-| --- | --- | --- |
-| `MAAFIGHT_CACHE_DIR` | `./cache/levels` | 关卡数据缓存 |
-| `MAAFIGHT_DATA_URL` | `https://map.ark-nights.com` | PRTS.Map 数据源 |
-| `MAAFIGHT_LOG_LEVEL` | `info` | 日志级别 |
+日志不会记录完整 operators JSON。
 
-## 干员练度接入
+内测反馈建议提供：
 
-如果你有 MAA 导出的干员数据，可以先初始化本地干员库：
+- GUI 里的“复制调试信息”。
+- `logs/gui.log`。
+- 出问题的关卡 ID、编队模式、页面 warnings/errors。
+- 如生成成功但效果不对，再提供对应 `output/*.json`。
 
-```bash
-maafight init --operators Arknights_OperBox_Export.json
-maafight operators info
-maafight generate --stage GT-1 --explain
-```
-
-之后 `generate` 会自动加载 `.maafight/operators.json`。需要临时覆盖时仍可使用 `--operators <path>`。
-
-干员导出格式见 [docs/maa-operator-export.md](docs/maa-operator-export.md)。
-
-## 开发
+## 开发与验证
 
 ```bash
 npm install
-npm run build          # TypeScript 编译
-npx jest --coverage    # 108 测试 + 覆盖率
-bash scripts/test-pipeline.sh   # 10 关实测脚本
+npm run build
+npm test
+node scripts/benchmark.js --skip-build
+npm run release:preview
 ```
 
-详细架构见 [docs/architecture.md](docs/architecture.md)。
+常用脚本：
 
-## 设计文档
+| 脚本 | 作用 |
+| --- | --- |
+| `npm run build` | 编译 TypeScript 并构建 Web GUI |
+| `npm test` | 运行 Jest 覆盖率测试 |
+| `npm run gui` | 构建并启动本地 GUI |
+| `npm run benchmark` | 跑关卡生成 benchmark |
+| `npm run release:preview` | 生成 Windows 内测包目录和 zip |
+
+## 项目结构
+
+```text
+src/
+  adapter/    PRTS.Map -> 内部 MapData 转换
+  battle/     分析、生成、验证、导出
+  core/       GUI/SDK 复用的 pipeline
+  gui/        Fastify 本地 GUI server
+  loader/     PRTS.Map 关卡与敌人数据加载
+  player/     MAA operators JSON 解析与本地配置
+  runtime/    MAAFIGHT_HOME、output/cache/logs 路径和日志
+  shared/     干员池与共享数据
+web/          Vite + React GUI
+scripts/      benchmark 与 release 打包脚本
+docs/         设计、审计、实测关卡和数据格式文档
+```
+
+## 相关文档
 
 | 文档 | 说明 |
 | --- | --- |
-| [架构总览](docs/architecture.md) | 模块划分、数据流、技术选型 |
-| [数据格式](docs/data-format.md) | 内部 MapData 与 copilot JSON 格式规范 |
-| [适配器设计](docs/prts-map-adapter.md) | PRTS.Map 格式 → 内部格式的转换逻辑 |
-| [战术分析](docs/battle-analyzer-v2.md) | 难度评级、DPS 计算、策略推荐 |
-| [CLI 设计](docs/cli-design.md) | 命令行接口设计决策 |
-| [审计报告](docs/audit-findings.md) | 测试覆盖率、Bug 跟踪、验收标准 |
-| [实测关卡](docs/test-levels.md) | 10 关实测结果 |
+| [docs/architecture.md](docs/architecture.md) | 架构与模块划分 |
+| [docs/data-format.md](docs/data-format.md) | 内部数据和 copilot JSON 格式 |
+| [docs/prts-map-adapter.md](docs/prts-map-adapter.md) | PRTS.Map 适配设计 |
+| [docs/battle-analyzer-v2.md](docs/battle-analyzer-v2.md) | 战术分析逻辑 |
+| [docs/cli-design.md](docs/cli-design.md) | CLI 设计 |
+| [docs/maa-operator-export.md](docs/maa-operator-export.md) | MAA 干员导出格式 |
+| [docs/test-levels.md](docs/test-levels.md) | 实测关卡结果 |
 
 ## 许可证
 

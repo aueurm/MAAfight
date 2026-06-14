@@ -17,6 +17,8 @@ coverage/
 test-output.json
 test-results/
 benchmark-results/
+release/
+logs/
 
 # 生成脚本
 output/

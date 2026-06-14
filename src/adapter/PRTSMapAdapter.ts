@@ -14,6 +14,32 @@ function tileKeyToType(key: string): string {
   return map[key] || "unknown";
 }
 
+function isMoveCheckpoint(type: unknown): boolean {
+  return type === "MOVE" || type === 0;
+}
+
+function isInactiveRouteMode(mode: unknown): boolean {
+  return mode === "E_NUM" || mode === 2;
+}
+
+function normalizeMotionMode(mode: unknown): "walk" | "fly" {
+  return mode === "FLY" || mode === 1 ? "fly" : "walk";
+}
+
+function isSpawnActionType(type: unknown): boolean {
+  return type === "SPAWN" || type === 0;
+}
+
+function normalizeHeightType(type: unknown): "highland" | "lowland" {
+  return type === "HIGHLAND" || type === 1 ? "highland" : "lowland";
+}
+
+function normalizeBuildableType(type: unknown): "melee" | "ranged" | "none" {
+  if (type === "MELEE" || type === 1) return "melee";
+  if (type === "RANGED" || type === 2) return "ranged";
+  return "none";
+}
+
 function adaptTiles(prts: PRTSLevelData): { tiles: TileInfo[][]; deploymentPoints: DeploymentPoint[] } {
   const tiles: TileInfo[][] = [];
   const deploymentPoints: DeploymentPoint[] = [];
@@ -27,16 +53,15 @@ function adaptTiles(prts: PRTSLevelData): { tiles: TileInfo[][]; deploymentPoint
 
       tiles[row][col] = {
         key: type,
-        heightType: tileDef.heightType === "HIGHLAND" ? "highland" : "lowland",
-        buildableType: tileDef.buildableType === "MELEE" ? "melee"
-          : tileDef.buildableType === "RANGED" ? "ranged" : "none",
+        heightType: normalizeHeightType(tileDef.heightType),
+        buildableType: normalizeBuildableType(tileDef.buildableType),
         row, col,
       };
 
-      if (tileDef.buildableType !== "NONE") {
+      if (tiles[row][col].buildableType !== "none") {
         deploymentPoints.push({
           row, col,
-          buildableType: tileDef.buildableType === "MELEE" ? "melee" : "ranged",
+          buildableType: tiles[row][col].buildableType as "melee" | "ranged",
         });
       }
     }
@@ -53,14 +78,14 @@ function adaptRoutes(prts: PRTSLevelData): { routes: EnemyRoute[]; strategicPoin
     const r = prts.routes[i];
     if (!r) continue;
     const checkpoints = (r.checkpoints || [])
-      .filter(cp => cp.type === "MOVE")
+      .filter(cp => isMoveCheckpoint(cp.type))
       .map(cp => ({ row: cp.position.row, col: cp.position.col }));
 
-    if (r.motionMode === "E_NUM" || checkpoints.length === 0) continue;
+    if (isInactiveRouteMode(r.motionMode) || checkpoints.length === 0) continue;
 
     routes.push({
       id: i,
-      motionMode: r.motionMode === "FLY" ? "fly" : "walk",
+      motionMode: normalizeMotionMode(r.motionMode),
       startPosition: { row: r.startPosition.row, col: r.startPosition.col },
       endPosition: { row: r.endPosition.row, col: r.endPosition.col },
       checkpoints,
@@ -107,7 +132,7 @@ function adaptWaves(prts: PRTSLevelData): WaveInfo[] {
       const enemySpawns: EnemySpawn[] = [];
 
       for (const action of frag.actions) {
-        if (action.actionType !== "SPAWN") continue;
+        if (!isSpawnActionType(action.actionType)) continue;
         enemySpawns.push({
           enemyId: action.key,
           count: action.count,
@@ -155,6 +180,7 @@ function buildHighThreatAreas(
   waves: WaveInfo[], routes: EnemyRoute[]
 ): HighThreatArea[] {
   const byRoute = new Map<number, { enemyTypes: Set<string>; count: number; firstTime: number }>();
+  const routeById = new Map(routes.map(route => [route.id, route]));
 
   let absoluteTime = 0;
   for (const wave of waves) {
@@ -175,7 +201,7 @@ function buildHighThreatAreas(
   }
 
   return Array.from(byRoute.entries()).map(([routeIdx, data]) => {
-    const route = routes[routeIdx];
+    const route = routeById.get(routeIdx);
     return {
       row: route?.startPosition.row || 0,
       col: route?.startPosition.col || 0,
@@ -216,13 +242,12 @@ function inferDeploymentOrder(
     let minRouteDist = Infinity;
     let earliestSpawn = Infinity;
 
-    for (let ri = 0; ri < routes.length; ri++) {
-      const route = routes[ri];
+    for (const route of routes) {
       for (const cp of route.checkpoints) {
         const dist = Math.abs(dp.row - cp.row) + Math.abs(dp.col - cp.col);
         if (dist < minRouteDist) {
           minRouteDist = dist;
-          earliestSpawn = earliestByRoute.get(ri) || Infinity;
+          earliestSpawn = earliestByRoute.get(route.id) || Infinity;
         }
       }
     }
@@ -263,7 +288,7 @@ export class PRTSMapAdapter {
     for (const wave of prtsData.waves) {
       for (const frag of wave.fragments) {
         for (const action of frag.actions) {
-          if (action.actionType === "SPAWN") enemySet.add(action.key);
+          if (isSpawnActionType(action.actionType)) enemySet.add(action.key);
         }
       }
     }

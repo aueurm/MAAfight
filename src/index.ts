@@ -11,9 +11,13 @@ import { exportToCopilotFormat } from "./battle/ScriptExporter";
 import { listStages, searchStages, listByCategory, resolveStage } from "./loader/levelIndex";
 import { OperatorBox } from "./player/OperatorBox";
 import { loadConfiguredOperatorBox, saveOperatorConfig } from "./player/PlayerConfig";
+import { startGuiServer } from "./gui/server";
+import { openUrl } from "./gui/openBrowser";
+import { getRuntimePaths } from "./runtime/paths";
+import { writeGuiLog } from "./runtime/logger";
 import type { MapData, BattleScript, PRTSLevelData, StageIndexEntry } from "./types";
 
-const CACHE_DIR = process.env.MAAFIGHT_CACHE_DIR || path.resolve(__dirname, "..", "cache", "levels");
+const CACHE_DIR = getRuntimePaths().cacheLevelsDir;
 const DATA_URL = process.env.MAAFIGHT_DATA_URL || "https://map.ark-nights.com";
 
 interface Args {
@@ -40,7 +44,7 @@ function parseArgs(argv: string[]): Args {
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
-    if (["generate", "list", "analyze", "validate", "info", "init", "operators"].includes(arg)) {
+    if (["generate", "list", "analyze", "validate", "info", "init", "operators", "gui"].includes(arg)) {
       args.command = arg;
       if (arg === "operators" && argv[i + 1] && !argv[i + 1].startsWith("-")) {
         args.subcommand = argv[++i];
@@ -82,7 +86,7 @@ function parseArgs(argv: string[]): Args {
 
   if (!args.command) {
     console.error("Usage: maafight <command> [options]");
-    console.error("Commands: generate, list, analyze, validate, info, init, operators");
+    console.error("Commands: generate, list, analyze, validate, info, init, operators, gui");
     console.error("Try: maafight --help");
     process.exit(1);
   }
@@ -100,6 +104,41 @@ function inferStageIdFromDataPath(dataPath: string): string {
 
 function getDisplayStageName(stageId: string, resolved: StageIndexEntry | null): string {
   return resolved?.code || resolved?.name || stageId;
+}
+
+export function countActiveRoutes(prtsData: Pick<PRTSLevelData, "routes">): number {
+  return (prtsData.routes || []).filter(r =>
+    r &&
+    r.motionMode !== "E_NUM" &&
+    r.motionMode !== 2 &&
+    (r.checkpoints || []).some(cp => cp.type === "MOVE" || cp.type === 0)
+  ).length;
+}
+
+function isSpawnActionType(type: unknown): boolean {
+  return type === "SPAWN" || type === 0;
+}
+
+function normalizeBuildableType(type: unknown): "melee" | "ranged" | "none" {
+  if (type === "MELEE" || type === 1) return "melee";
+  if (type === "RANGED" || type === 2) return "ranged";
+  return "none";
+}
+
+function countDeploymentTiles(prtsData: Pick<PRTSLevelData, "mapData">): { total: number; melee: number; ranged: number } {
+  let melee = 0;
+  let ranged = 0;
+
+  for (const row of prtsData.mapData.map) {
+    for (const tileIdx of row) {
+      const tile = prtsData.mapData.tiles[tileIdx];
+      const type = normalizeBuildableType(tile?.buildableType);
+      if (type === "melee") melee++;
+      if (type === "ranged") ranged++;
+    }
+  }
+
+  return { total: melee + ranged, melee, ranged };
 }
 
 function readStdin(): Promise<string> {
@@ -126,7 +165,7 @@ function loadOperatorBoxForGeneration(args: Args): { box: OperatorBox; source: s
     return { box: new OperatorBox(args.operators), source: args.operators, configured: false };
   }
 
-  const configured = loadConfiguredOperatorBox();
+  const configured = loadConfiguredOperatorBox(getRuntimePaths().homeDir);
   if (!configured) return null;
 
   return { box: configured.box, source: configured.operatorsPath, configured: true };
@@ -167,6 +206,7 @@ Commands:
   init       Initialize local player operator database
   operators Manage local player operator database
   generate   Generate copilot battle script for a stage
+  gui        Start local Web GUI preview
   list       List available stages
   analyze    Analyze a stage without generating script
   validate   Validate an existing copilot script
@@ -193,6 +233,7 @@ Examples:
   maafight init --operators Arknights_OperBox_Export.json
   maafight init --operators-stdin
   maafight operators info
+  maafight gui
   maafight generate --stage a001_01
   maafight generate --data ./level_OF-3.json --output script.json --pretty
   maafight list --search CE
@@ -232,7 +273,7 @@ async function cmdInit(args: Args): Promise<void> {
     }
   }
 
-  const saved = saveOperatorConfig(raw);
+  const saved = saveOperatorConfig(raw, getRuntimePaths().homeDir);
   console.log(`Initialized local operator database: ${saved.operatorsPath}`);
   console.log(`Config written to: ${saved.configPath}`);
   printOperatorBoxInfo(saved.box, saved.operatorsPath);
@@ -256,7 +297,7 @@ function cmdOperators(args: Args): void {
     box = new OperatorBox(args.operators);
     source = args.operators;
   } else {
-    const configured = loadConfiguredOperatorBox();
+    const configured = loadConfiguredOperatorBox(getRuntimePaths().homeDir);
     if (!configured) {
       console.error("Error: no local operator database found. Run: maafight init --operators <path>");
       process.exit(1);
@@ -488,13 +529,11 @@ async function cmdInfo(args: Args): Promise<void> {
   }
 
   const mapSize = `${prtsData.mapData.map.length} × ${prtsData.mapData.map[0]?.length || 0}`;
-  const deployable = prtsData.mapData.tiles.filter(t => t.buildableType !== "NONE");
-  const melee = deployable.filter(t => t.buildableType === "MELEE").length;
-  const ranged = deployable.filter(t => t.buildableType === "RANGED").length;
-  const routes = prtsData.routes.filter(r => r.motionMode !== "E_NUM").length;
+  const deployable = countDeploymentTiles(prtsData);
+  const routes = countActiveRoutes(prtsData);
   const enemies = new Set<string>();
   prtsData.waves.forEach(w => w.fragments.forEach(f => f.actions.forEach(a => {
-    if (a.actionType === "SPAWN") enemies.add(a.key);
+    if (isSpawnActionType(a.actionType)) enemies.add(a.key);
   })));
 
   const indexEntry = resolved || resolveStage(stageId);
@@ -504,7 +543,7 @@ async function cmdInfo(args: Args): Promise<void> {
   if (indexEntry?.name) console.log(`  Name:         ${indexEntry.name}`);
   console.log(`  Category:     ${indexEntry?.category || (args.data ? "local" : "unknown")}`);
   console.log(`  Map Size:     ${mapSize}`);
-  console.log(`  Deployable:   ${deployable.length} (${melee} melee, ${ranged} ranged)`);
+  console.log(`  Deployable:   ${deployable.total} (${deployable.melee} melee, ${deployable.ranged} ranged)`);
   console.log(`  Routes:       ${routes}`);
   console.log(`  Waves:        ${prtsData.waves.length}`);
   console.log(`  Enemy Types:  ${enemies.size}`);
@@ -514,6 +553,21 @@ async function cmdInfo(args: Args): Promise<void> {
 
   if (!args.quiet && indexEntry) {
     console.log(`  Data URL:     ${DATA_URL}/${indexEntry.filePath}`);
+  }
+}
+
+async function cmdGui(): Promise<void> {
+  const started = await startGuiServer();
+  console.log(`MAAfight GUI running at ${started.url}`);
+  try {
+    await openUrl(started.url);
+    writeGuiLog("browser_opened", { url: started.url });
+    console.log("Browser opened. Press Ctrl+C to stop the server.");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    writeGuiLog("browser_open_failed", { url: started.url, error: message });
+    console.error(`Could not open browser automatically: ${message}`);
+    console.error(`Open this URL manually: ${started.url}`);
   }
 }
 
@@ -542,6 +596,9 @@ async function main(): Promise<void> {
         break;
       case "info":
         await cmdInfo(args);
+        break;
+      case "gui":
+        await cmdGui();
         break;
       default:
         printHelp();
