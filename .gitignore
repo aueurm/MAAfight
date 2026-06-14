@@ -46,6 +46,7 @@ data/
 
 # 开发杂项
 map_ark_nights_preview.html
+AGENTS.md
 
 # IDE / 编辑器
 .vscode/
