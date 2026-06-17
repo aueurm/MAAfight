@@ -27,7 +27,11 @@ function asJson(value: unknown): string {
 }
 
 function suggestFileName(stage: string, stageName?: string): string {
-  const source = (stageName || stage || "script").trim();
+  const parts = [(stage || "script").trim()];
+  if (stageName?.trim() && stageName.trim() !== parts[0]) {
+    parts.push(stageName.trim());
+  }
+  const source = parts.join("_");
   return `${source.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")}.json`;
 }
 
@@ -61,7 +65,7 @@ export default function App() {
   const [selectedOperatorFileName, setSelectedOperatorFileName] = useState("");
   const [operatorStatus, setOperatorStatus] = useState<OperatorStatus | null>(null);
   const [showOperatorsPaste, setShowOperatorsPaste] = useState(false);
-  const [squadMode, setSquadMode] = useState<SquadMode>("hybrid");
+  const [squadMode, setSquadMode] = useState<SquadMode>("fixed");
   const [pretty, setPretty] = useState(true);
   const [outputDir, setOutputDir] = useState("");
   const [fileName, setFileName] = useState("");

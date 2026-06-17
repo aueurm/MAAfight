@@ -13,6 +13,7 @@ export function exportToCopilotFormat(script: BattleScript, options: ExportOptio
       const out: Record<string, unknown> = { name: op.name };
       if (op.skill !== undefined) out.skill = op.skill;
       if (op.skill_usage !== undefined) out.skill_usage = op.skill_usage;
+      if (op.skill_times !== undefined) out.skill_times = op.skill_times;
       if (op.requirements !== undefined) out.requirements = op.requirements;
       return out;
     }),
@@ -22,6 +23,7 @@ export function exportToCopilotFormat(script: BattleScript, options: ExportOptio
         const out: Record<string, unknown> = { name: op.name };
         if (op.skill !== undefined) out.skill = op.skill;
         if (op.skill_usage !== undefined) out.skill_usage = op.skill_usage;
+        if (op.skill_times !== undefined) out.skill_times = op.skill_times;
         if (op.requirements !== undefined) out.requirements = op.requirements;
         return out;
       }),
@@ -33,6 +35,7 @@ export function exportToCopilotFormat(script: BattleScript, options: ExportOptio
       if (a.direction !== undefined) out.direction = a.direction;
       if (a.skill !== undefined) out.skill = a.skill;
       if (a.skill_usage !== undefined) out.skill_usage = a.skill_usage;
+      if (a.skill_times !== undefined) out.skill_times = a.skill_times;
       if (a.target !== undefined) out.target = a.target;
       if (a.time !== undefined) out.time = a.time;
       return out;

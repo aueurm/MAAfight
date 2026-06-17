@@ -88,12 +88,23 @@ describe("generateScript", () => {
     const analysis = analyzeBattle(mapData);
     const script = generateScript("test-01", mapData, analysis);
 
-    expect(script.metadata.source).toBe("ai");
+    expect(script.metadata.source).toBe("maafight-rule");
     expect(script.metadata.difficulty).toBeDefined();
     expect(script.metadata.battlePlan).toBeDefined();
     expect(script.metadata.recommendedTasks).toContain("early_dp");
     expect(script.metadata.dpTimelineSummary?.entries.length).toBeGreaterThan(0);
     expect(script.generatedAt).toBeDefined();
+  });
+
+  it("should fill the squad list toward 12 real operators without deploying every operator", () => {
+    const mapData = makeMapData();
+    const analysis = analyzeBattle(mapData);
+    const script = generateScript("squad-fill", mapData, analysis);
+    const deployNames = new Set(script.actions.filter(action => action.type === "Deploy").map(action => action.name));
+
+    expect(script.opers).toHaveLength(12);
+    expect(script.opers.every(op => !/[:：/\[\]]/.test(op.name))).toBe(true);
+    expect(script.opers.length).toBeGreaterThan(deployNames.size);
   });
 
   it("should respect config options", () => {
@@ -589,6 +600,24 @@ describe("generateScript", () => {
     expect(topOper!.requirements!.elite).toBe(2);
     expect(topOper!.requirements!.level).toBe(90);
     expect(topOper!.requirements!.potential).toBe(3);
+  });
+
+  it("should output recommended module requirements from strength data when player module data is absent", () => {
+    const mapData = makeMapData({
+      deploymentOrder: [
+        { position: { row: 1, col: 2 }, role: "vanguard", priority: 100 },
+      ],
+    });
+    const analysis = analyzeBattle(mapData);
+    const playerOps = new Map<string, PlayerOperator>([
+      ["伊内丝", { id: "ines", name: "伊内丝", rarity: 6, own: true, elite: 2, level: 90, potential: 1 }],
+    ]);
+    const script = generateScript("module-recommend", mapData, analysis, { playerOperators: playerOps });
+    const oper = script.opers.find(o => o.name === "伊内丝");
+
+    expect(oper?.skill).toBe(2);
+    expect(oper?.requirements?.module).toBe(1);
+    expect(oper?.requirements?.module_level).toBe(3);
   });
 
   it("should record operator gaps when owned player data lacks a requested role", () => {

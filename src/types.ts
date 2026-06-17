@@ -390,11 +390,13 @@ export interface BattleScriptOper {
   name: string;
   skill?: number;
   skill_usage?: number;
+  skill_times?: number;
   requirements?: {
     elite: number;
     level: number;
     skill_level: number;
     module: number;
+    module_level?: number;
     potential: number;
   };
 }
@@ -406,6 +408,7 @@ export interface BattleScriptAction {
   direction?: string;
   skill?: number;
   skill_usage?: number;
+  skill_times?: number;
   target?: string;
   time?: number;
   pre_delay?: number;
@@ -487,6 +490,10 @@ export interface PlayerOperator {
   elite: number;
   level: number;
   potential: number;
+  skillLevel?: number;
+  module?: number;
+  moduleLevel?: number;
+  cost?: number;
 }
 
 // ====================== 关卡索引 ======================

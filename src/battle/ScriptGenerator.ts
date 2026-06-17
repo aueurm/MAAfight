@@ -1,6 +1,7 @@
 import type { BattleScript, EnemyRoute, MapData, PlayerOperator, TacticalAnalysis } from "../types";
 import { OPERATOR_POOLS, ROLE_NAMES, OperatorEntry } from "../shared/operatorDB";
 import { getOperatorProfile, type OperatorProfile, type TacticalFunction } from "../data/operatorProfiles";
+import { getOperatorStrengthProfile } from "./OperatorStrength";
 import { DPTimeline, estimateDeployCost } from "./DPTimeline";
 import { scoreOperatorStrength, type OperatorStrengthScore } from "./OperatorStrengthScorer";
 import { scoreDeploymentPositions, type PositionPurpose } from "./PositionScorer";
@@ -43,6 +44,15 @@ function inferDirection(
 
 type DeployType = "melee" | "ranged" | "both";
 type CandidateOperator = OperatorEntry & { role: string };
+type BattleScriptOperRequirements = NonNullable<BattleScript["opers"][number]["requirements"]>;
+
+interface SquadPick {
+  operator: CandidateOperator;
+  task: BattleTask;
+  role: string;
+  score: number;
+  strength?: OperatorStrengthScore;
+}
 
 interface TaskSlot {
   task: BattleTask;
@@ -74,6 +84,8 @@ const ROLE_DEPLOY_TYPE: Record<string, DeployType> = {
 const DEPLOY_ROLE_ORDER = [
   "vanguard", "guard", "tank", "sniper", "caster", "medic", "support", "specialist",
 ];
+
+const TARGET_SQUAD_SIZE = 12;
 
 const ROLE_DEFAULT_TASK: Record<string, BattleTask> = {
   vanguard: "early_dp",
@@ -500,20 +512,66 @@ function canDeployToPosition(operatorName: string, role: string, row: number, co
   return point.buildableType === deployType;
 }
 
+function parseSkillPriority(value: string | undefined): number | undefined {
+  const match = value?.match(/S([1-3])/i);
+  return match ? Number(match[1]) : undefined;
+}
+
+function chooseSkill(operator: CandidateOperator): number {
+  const profile = getOperatorStrengthProfile(operator.name);
+  return parseSkillPriority(profile?.skillPriority?.[0]) || operator.skill;
+}
+
+function moduleRecommendation(operatorName: string): { module: number; module_level: number } {
+  const priority = getOperatorStrengthProfile(operatorName)?.modulePriority;
+  if (priority === "core" || priority === "recommended") {
+    return { module: 1, module_level: 3 };
+  }
+  if (priority === "optional") {
+    return { module: 1, module_level: 1 };
+  }
+  return { module: 0, module_level: 0 };
+}
+
+function buildRequirements(operatorName: string, playerOps?: Map<string, PlayerOperator>): BattleScriptOperRequirements | undefined {
+  const po = playerOps?.get(operatorName);
+  if (!po) return undefined;
+
+  const recommended = moduleRecommendation(operatorName);
+  const module = po.module !== undefined ? po.module : recommended.module;
+  const moduleLevel = po.moduleLevel !== undefined ? po.moduleLevel : recommended.module_level;
+
+  return {
+    elite: po.elite,
+    level: po.level,
+    skill_level: po.skillLevel ?? 7,
+    module,
+    module_level: moduleLevel,
+    potential: po.potential,
+  };
+}
+
+function skillUsageForTask(task: BattleTask): number {
+  if (task === "support" || task === "fast_redeploy") return 0;
+  return 1;
+}
+
+function buildCopilotOper(operator: CandidateOperator, task: BattleTask, playerOps?: Map<string, PlayerOperator>): BattleScript["opers"][number] {
+  const entry: BattleScript["opers"][number] = {
+    name: operator.name,
+    skill: chooseSkill(operator),
+    skill_usage: skillUsageForTask(task),
+  };
+  const requirements = buildRequirements(operator.name, playerOps);
+  if (requirements) entry.requirements = requirements;
+  return entry;
+}
+
 function buildCopilotOperList(
-  operators: { name: string; skill: number }[],
+  picks: Array<{ operator: CandidateOperator; task: BattleTask }>,
   playerOps?: Map<string, PlayerOperator>
-): { name: string; skill: number; skill_usage: number; requirements?: { elite: number; level: number; skill_level: number; module: number; potential: number } }[] {
-  return operators.map(op => {
-    const po = playerOps?.get(op.name);
-    const entry: { name: string; skill: number; skill_usage: number; requirements?: { elite: number; level: number; skill_level: number; module: number; potential: number } } = {
-      name: op.name, skill: op.skill, skill_usage: 1,
-    };
-    if (po) {
-      entry.requirements = { elite: po.elite, level: po.level, skill_level: 7, module: 0, potential: po.potential };
-    }
-    return entry;
-  });
+): BattleScript["opers"] {
+  return picks.map(pick => buildCopilotOper(pick.operator, pick.task, playerOps));
 }
 
 function buildSelectionReason(
@@ -582,6 +640,136 @@ function addStrengthWarnings(selected: SelectedTask, warnings: string[]): void {
   if (strength.profile.tags.includes("high_precision_required")) {
     warnings.push(`${selected.operator.name} is marked high_precision_required; SkillDaemon timing may be less stable.`);
   }
+}
+
+function prioritizedSupplementTasks(analysis: TacticalAnalysis): BattleTask[] {
+  const tasks = analysis.battlePlan?.recommendedTasks || analysis.recommendedTasks || [];
+  return dedupeTasks([
+    ...tasks,
+    "early_dp",
+    "lane_block",
+    "lane_hold",
+    "healing",
+    "anti_air",
+    "boss_kill",
+    "arts_damage",
+    "physical_dps",
+    "fast_redeploy",
+    "support",
+  ]);
+}
+
+function dedupeTasks(tasks: BattleTask[]): BattleTask[] {
+  return [...new Set(tasks)];
+}
+
+function bestSupplementFit(input: {
+  candidate: CandidateOperator;
+  tasks: BattleTask[];
+  mapData: MapData;
+  analysis: TacticalAnalysis;
+  playerOps?: Map<string, PlayerOperator>;
+}): { task: BattleTask; role: string; score: number; strength?: OperatorStrengthScore } {
+  let best: { task: BattleTask; role: string; score: number; strength?: OperatorStrengthScore } | null = null;
+
+  for (const task of input.tasks) {
+    const roleCandidates = TASK_ROLE_CANDIDATES[task] || [input.candidate.role];
+    const scored = scoreCandidateForTask(
+      input.candidate,
+      task,
+      roleCandidates,
+      input.mapData,
+      input.analysis,
+      input.playerOps
+    );
+    if (scored.rejectedReason) continue;
+    if (!best || scored.score > best.score) {
+      best = { task, role: scored.role, score: scored.score, strength: scored.strength };
+    }
+  }
+
+  if (best) return best;
+  const task = ROLE_DEFAULT_TASK[input.candidate.role] || "support";
+  const strength = scoreOperatorStrength(input.candidate, task, { skillDaemonMode: true });
+  return {
+    task,
+    role: input.candidate.role,
+    score: clampScore(
+      strength.strengthScore * 0.45 +
+      strength.roleStrengthScore * 0.25 +
+      strength.automationScore * 0.15 +
+      playerInvestmentScore(input.candidate.name, input.playerOps) * 0.15
+    ),
+    strength,
+  };
+}
+
+function buildSquadPicks(input: {
+  candidates: CandidateOperator[];
+  selectedTasks: SelectedTask[];
+  mapData: MapData;
+  analysis: TacticalAnalysis;
+  playerOps?: Map<string, PlayerOperator>;
+  warnings: string[];
+}): SquadPick[] {
+  const picked = new Set<string>();
+  const squad: SquadPick[] = [];
+  const roleCounts = new Map<string, number>();
+
+  for (const selected of input.selectedTasks) {
+    if (picked.has(selected.operator.name)) continue;
+    picked.add(selected.operator.name);
+    squad.push({
+      operator: selected.operator,
+      task: selected.task,
+      role: selected.role,
+      score: selected.score,
+      strength: selected.strength,
+    });
+    roleCounts.set(selected.role, (roleCounts.get(selected.role) || 0) + 1);
+  }
+
+  const tasks = prioritizedSupplementTasks(input.analysis);
+  const ranked = input.candidates
+    .filter(candidate => !picked.has(candidate.name))
+    .filter(candidate => !input.playerOps || input.playerOps.size === 0 || input.playerOps.has(candidate.name))
+    .map(candidate => {
+      const fit = bestSupplementFit({
+        candidate,
+        tasks,
+        mapData: input.mapData,
+        analysis: input.analysis,
+        playerOps: input.playerOps,
+      });
+      const roleCoverageBonus = (roleCounts.get(fit.role) || 0) === 0 ? 10 : 0;
+      const investment = playerInvestmentScore(candidate.name, input.playerOps);
+      return {
+        candidate,
+        ...fit,
+        score: fit.score + roleCoverageBonus + investment * 0.08,
+        training: trainingScore(candidate.name, input.playerOps),
+      };
+    })
+    .sort((a, b) => b.score - a.score || b.training - a.training || a.candidate.tier - b.candidate.tier);
+
+  for (const item of ranked) {
+    if (squad.length >= TARGET_SQUAD_SIZE) break;
+    picked.add(item.candidate.name);
+    squad.push({
+      operator: item.candidate,
+      task: item.task,
+      role: item.role,
+      score: item.score,
+      strength: item.strength,
+    });
+    roleCounts.set(item.role, (roleCounts.get(item.role) || 0) + 1);
+  }
+
+  if (input.playerOps && input.playerOps.size > 0 && squad.length < TARGET_SQUAD_SIZE) {
+    input.warnings.push(`Player operator box only provided ${squad.length}/${TARGET_SQUAD_SIZE} usable squad operators from known pools.`);
+  }
+
+  return squad.slice(0, TARGET_SQUAD_SIZE);
 }
 
 function addDeployWithTimeline(input: {
@@ -694,10 +882,10 @@ export function generateScript(
     selectedTasks.length = 12;
   }
 
-  const selectedByRole = new Map<string, CandidateOperator[]>();
+  const selectedByRole = new Map<string, SelectedTask[]>();
   for (const selected of selectedTasks) {
     const list = selectedByRole.get(selected.role) || [];
-    list.push(selected.operator);
+    list.push(selected);
     selectedByRole.set(selected.role, list);
   }
 
@@ -706,9 +894,18 @@ export function generateScript(
     if (!selected || selected.length === 0) continue;
     groups.push({
       name: ROLE_NAMES[role] || role,
-      opers: buildCopilotOperList(selected.map(op => ({ name: op.name, skill: op.skill })), playerOps),
+      opers: buildCopilotOperList(selected.map(pick => ({ operator: pick.operator, task: pick.task })), playerOps),
     });
   }
+
+  const squadPicks = buildSquadPicks({
+    candidates,
+    selectedTasks,
+    mapData,
+    analysis: tacticalAnalysis,
+    playerOps,
+    warnings,
+  });
 
   const usedPositions = new Set<string>();
   const corePositions: Array<{ row: number; col: number }> = [];
@@ -788,33 +985,14 @@ export function generateScript(
     minimum_required: "v4.0.0",
     actions,
     doc: {
-      title: `${stageId} AI-Generated`,
+      title: `${stageId} MAAfight`,
       details: tacticalAnalysis.summary,
     },
     groups,
-    opers: (() => {
-      const seen = new Set<string>();
-      const result: BattleScript["opers"] = [];
-      for (const g of groups) {
-        for (const op of g.opers) {
-          if (!seen.has(op.name)) {
-            seen.add(op.name);
-            const po = playerOps?.get(op.name);
-            const entry: BattleScript["opers"][0] = { name: op.name, skill: op.skill, skill_usage: op.skill_usage };
-            if (po) {
-              entry.requirements = {
-                elite: po.elite, level: po.level, skill_level: 7, module: 0, potential: po.potential,
-              };
-            }
-            result.push(entry);
-          }
-        }
-      }
-      return result;
-    })(),
+    opers: buildCopilotOperList(squadPicks.map(pick => ({ operator: pick.operator, task: pick.task })), playerOps),
     generatedAt: new Date().toISOString(),
     metadata: {
-      source: "ai",
+      source: "maafight-rule",
       difficulty: tacticalAnalysis.requirements.difficultyRating,
       estimatedCost: tacticalAnalysis.requirements.expectedCost,
       playerOperatorsUsed: Boolean(playerOps && playerOps.size > 0),

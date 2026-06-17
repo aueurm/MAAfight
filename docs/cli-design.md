@@ -1,293 +1,252 @@
-# CLI 接口设计
+# CLI 与 GUI 使用说明
 
 ## 概述
 
-MAAfight 是纯 CLI 工具，通过命令行参数控制所有行为。MVP 阶段使用 `process.argv` 手动解析，后续可选 `commander`。
+MAAfight 提供 CLI 和本地 Web GUI 两种入口。
 
-## CLI 架构
+两者使用同一套生成主链路：
 
+```text
+PRTS.Map 数据 -> MapData -> TacticalAnalysis -> BattleScript -> MAA copilot JSON v3
 ```
+
+CLI 入口在 `src/index.ts`。GUI server 在 `src/gui/server.ts`，复用 `src/core/pipeline.ts`。
+
+MAAfight 只生成脚本草稿，不执行战斗，不调用 ADB，也不承诺生成脚本一定通关。
+
+## 快速命令
+
+```bash
+npm install
+npm run build
+npm run gui
+
+node dist/index.js generate --stage GT-1 --output script.json --pretty
+node dist/index.js validate --file script.json
+```
+
+安装或 `npm link` 后可直接使用：
+
+```bash
+maafight gui
+maafight generate --stage GT-1 --output script.json --pretty
+```
+
+## 命令总览
+
+```text
 maafight <command> [options]
 ```
 
-## 命令
+| 命令 | 作用 |
+| --- | --- |
+| `generate` | 生成 MAA copilot JSON v3 |
+| `analyze` | 只输出战斗分析结果 |
+| `validate` | 验证已有脚本 |
+| `list` | 搜索或列出关卡 |
+| `info` | 查看关卡基础信息 |
+| `init` | 初始化本地玩家干员库 |
+| `operators info` | 查看玩家干员库统计 |
+| `gui` | 启动本地 Web GUI |
 
-### `generate` — 生成战斗脚本
+## `generate`
 
-核心命令，执行完整流水线。
+生成作战脚本。
 
-```
-maafight generate --stage <stageId> [options]
-```
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `--stage` | string | 是 | 关卡标识, 支持多种格式 (见下方) |
-| `--output`, `-o` | string | 否 | 输出文件路径, 默认 stdout |
-| `--no-cache` | flag | 否 | 强制从网络重新下载关卡数据 |
-| `--config` | string | 否 | 脚本生成配置 JSON 文件路径 |
-| `--pretty` | flag | 否 | 美化 JSON 输出 (默认紧凑) |
-| `--quiet` | flag | 否 | 只输出 JSON, 不输出日志 |
-
-#### Stage ID 格式
-
-```
-maafight generate --stage a001_01           # PRTS.Map 内部 ID
-maafight generate --stage OF-1              # 玩家可见代号
-maafight generate --stage "activities/a001/level_a001_01.json"  # 完整路径
-maafight generate --stage 0-1               # 主线代号
-maafight generate --stage CE-5              # 物资筹备
+```bash
+maafight generate --stage <关卡ID或关卡代号> [options]
+maafight generate --data <本地PRTS.Map JSON> [options]
 ```
 
-#### 输出格式
+常用示例：
 
-成功时输出 copilot JSON 到 stdout (或 `--output` 指定文件):
-
-```json
-{
-  "stage_name": "a001_01",
-  "minimum_required": "v4.0.0",
-  "doc": {
-    "title": "a001_01 AI-Generated",
-    "details": "swarm composition with 18 enemies, rated easy"
-  },
-  "opers": [],
-  "groups": [
-    {
-      "name": "先锋",
-      "opers": [
-        { "name": "推进之王", "skill": 2, "skill_usage": 1 },
-        { "name": "风笛", "skill": 2, "skill_usage": 1 }
-      ]
-    }
-  ],
-  "actions": [
-    { "type": "SpeedUp" },
-    { "type": "Deploy", "name": "推进之王", "location": [3, 5], "direction": "Right" },
-    { "type": "SkillDaemon" }
-  ],
-  "version": 3
-}
+```bash
+maafight generate --stage GT-1 --output script.json --pretty
+maafight generate --stage 3-8 --operators Arknights_OperBox_Export.json
+maafight generate --stage GT-1 --explain
+maafight generate --data ./level_custom.json --stage CUSTOM-1 --output custom.json
 ```
 
-失败时返回非零 exit code + stderr 错误信息:
+常用参数：
 
-```
-Error: Stage "UNKNOWN-1" not found in level index
-Try: maafight list --search "UNKNOWN" to find matching stages
-```
+| 参数 | 说明 |
+| --- | --- |
+| `--stage`, `-s` | 关卡代号、内部 ID 或索引可解析输入 |
+| `--data`, `-d` | 使用本地 PRTS.Map JSON，跳过索引下载 |
+| `--output`, `-o` | 输出文件路径；未指定时输出到 stdout |
+| `--pretty` | 美化 JSON |
+| `--no-cache` | 强制重新下载关卡 JSON |
+| `--operators` | 使用 MAA 干员识别导出的 JSON |
+| `--config` | 读取生成器配置 JSON |
+| `--explain` | 将规划解释、风险和部署原因输出到 stderr |
+| `--quiet` | 减少非 JSON 日志 |
 
-### `list` — 列出支持的关卡
+当 `--output` 未指定时，stdout 应保持 JSON 可解析；warning 和 explain 文本走 stderr。
 
-```
-maafight list [options]
-```
+默认导出使用固定编队模式：`opers` 尽量补满 12 名真实干员，`actions[].name` 默认引用真实干员名，`groups` 为空。需要候选替换时再显式选择 `groups` 模式。
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `--search`, `-s` | string | 模糊搜索关卡名 |
-| `--category`, `-c` | string | 按分类过滤: main, activity, crisis, roguelike, weekly |
-| `--limit` | number | 最大输出数, 默认 50 |
+未指定输出文件名时，GUI / pipeline 会优先使用“关卡编号 + 关卡名”的文件名，例如 `CF-9_决战！燃烧的狩魂！.json`。
 
-#### 输出示例
+导出字段约束见 [MAA Copilot 导出契约](maa-copilot-export-contract.md)。尤其注意：不要把 `先锋：伊内丝 / 风笛`、`[Lv.7]`、`不使用模组` 这类展示文本写进任何干员 `name` 字段。
 
-```
-$ maafight list --search "CE-"
+## `analyze`
 
-  stageId      code     category    name
-  ──────────────────────────────────────────
-  weekly_ce_1   CE-1    weekly     货物运送 CE-1
-  weekly_ce_2   CE-2    weekly     货物运送 CE-2
-  weekly_ce_3   CE-3    weekly     货物运送 CE-3
-  weekly_ce_4   CE-4    weekly     货物运送 CE-4
-  weekly_ce_5   CE-5    weekly     货物运送 CE-5
+只分析关卡，不生成脚本。
+
+```bash
+maafight analyze --stage GT-1 --pretty
+maafight analyze --data ./level_GT-1.json --pretty
 ```
 
-### `analyze` — 仅执行战术分析
+输出包含：
 
-```
-maafight analyze --stage <stageId> [--no-cache]
-```
+- 敌人组成。
+- 难度评级。
+- 职业需求。
+- 关键时机。
+- `pressureWindows`。
+- `recommendedTasks`。
+- `battlePlan`。
 
-输出 TacticalAnalysis JSON，不生成脚本:
+## `validate`
 
-```
-$ maafight analyze --stage a001_01
-{
-  "summary": "swarm composition with 18 enemies, rated easy",
-  "enemyComposition": {
-    "totalCount": 18,
-    "normalCount": 15,
-    "eliteCount": 3,
-    "bossCount": 0,
-    "compositionType": "mixed",
-    "totalHP": 35000,
-    "averageDEF": 120
-  },
-  "requirements": {
-    "vanguardCount": 2,
-    "medicCount": 1,
-    "tankCount": 1,
-    ...
-  }
-}
+验证已有 copilot JSON。
+
+```bash
+maafight validate --file script.json
 ```
 
-### `validate` — 验证已有脚本
+验证包括两层：
 
-```
-maafight validate --file <script.json>
-```
+- `ScriptValidator`：检查内部结构、坐标和 action 合法性。
+- `MAAProtocolValidator`：检查 MAA copilot v3 协议兼容性。
 
-### `info` — 查看关卡详情
+协议 warning 不等于脚本一定不可用。它用于提示 MAA schema 或执行侧可能不支持的字段和 action。
 
-```
-maafight info --stage <stageId>
-```
+## `list`
 
-输出关卡基本信息:
+搜索或列出关卡。
 
-```
-$ maafight info --stage a001_01
-
-  Stage: a001_01
-  Category: main
-  Map Size: 7 x 10
-  Deployable: 12 (8 melee, 4 ranged)
-  Enemy Types: 3
-  Boss: None
-  Max Deploy Limit: 8
-  Life Points: 10
-  Initial Cost: 10
+```bash
+maafight list --search GT
+maafight list --category main
+maafight list --category weekly --limit 20
 ```
 
----
+常见类别：
+
+```text
+main, hard, campaign, weekly, crisis, activity
+```
+
+`list` 输出中的 `code` 通常是游戏内可见关卡代号，`stageId` 是 PRTS.Map 内部 ID。
+
+## `info`
+
+查看关卡基础信息。
+
+```bash
+maafight info --stage GT-1
+maafight info --data ./level_GT-1.json
+```
+
+输出地图尺寸、部署点数量、路线数、波次数、敌人类型、部署上限和初始费用。
+
+## `init` 与 `operators info`
+
+初始化本地玩家干员库：
+
+```bash
+maafight init --operators Arknights_OperBox_Export.json
+maafight init --operators-stdin
+```
+
+初始化后写入：
+
+```text
+.maafight/
+  config.json
+  operators.json
+```
+
+查看统计：
+
+```bash
+maafight operators info
+maafight operators info --operators Arknights_OperBox_Export.json
+```
+
+生成时如果未显式传 `--operators`，会尝试加载 `.maafight/operators.json`。没有本地干员库时，生成器回退到默认干员池。
+
+## `gui`
+
+启动本地 Web GUI。
+
+```bash
+npm run gui
+maafight gui
+```
+
+默认端口：
+
+```text
+http://localhost:14514
+```
+
+如果端口被占用，会尝试 `14515` 到 `14523`。
+
+GUI 目前是本地生成控制台，支持：
+
+- 关卡输入和候选提示。
+- operators JSON 文件选择、路径输入、粘贴保存。
+- 编队模式：默认 `fixed`，可显式选择 `groups` 或 `hybrid`。
+- pretty JSON 开关。
+- 输出目录和文件名设置。
+- 分析、生成、验证。
+- JSON 预览和复制。
+- 复制调试信息。
+
+## Windows 内测包
+
+生成内测包：
+
+```bash
+npm run release:preview
+```
+
+生成结果：
+
+```text
+release/
+  MAAfight-GUI-v{version}-preview-win-x64/
+  MAAfight-GUI-v{version}-preview-win-x64.zip
+```
+
+测试者解压后双击 `start-gui.bat`，浏览器会打开本地 GUI。
+
+`start-gui.bat` 会设置：
+
+- `MAAFIGHT_HOME`
+- `MAAFIGHT_OUTPUT_DIR`
+- `MAAFIGHT_CACHE_DIR`
+- `MAAFIGHT_LOG_DIR`
+- `MAAFIGHT_WEB_ROOT`
+
+如果包内存在 `runtime/node.exe`，会优先使用它；否则使用系统 `node`。
 
 ## 环境变量
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `MAAFIGHT_CACHE_DIR` | 缓存目录 | `./cache` |
-| `MAAFIGHT_DATA_URL` | PRTS.Map 数据源 URL | `https://map.ark-nights.com` |
-| `MAAFIGHT_LOG_LEVEL` | 日志级别 | `info` |
-
----
+| 变量 | 用途 | 默认 |
+| --- | --- | --- |
+| `MAAFIGHT_HOME` | 本地运行根目录 | 当前工作目录 |
+| `MAAFIGHT_OUTPUT_DIR` | GUI 默认输出目录 | `$MAAFIGHT_HOME/output` |
+| `MAAFIGHT_CACHE_DIR` | PRTS.Map 缓存目录 | `$MAAFIGHT_HOME/cache` |
+| `MAAFIGHT_LOG_DIR` | GUI 日志目录 | `$MAAFIGHT_HOME/logs` |
+| `MAAFIGHT_WEB_ROOT` | GUI 前端静态资源目录 | 开发：`web/dist`；发布包：`app/web-dist` |
+| `MAAFIGHT_DATA_URL` | PRTS.Map 数据源 | `https://map.ark-nights.com` |
 
 ## 退出码
 
-| Code | 含义 |
-|------|------|
-| 0 | 成功 |
-| 1 | 一般错误 (参数无效等) |
-| 2 | 关卡未找到 |
-| 3 | 网络错误 (无法下载数据) |
-| 4 | 脚本生成失败 (无法满足需求) |
-| 5 | 脚本验证失败 |
+当前 CLI 主要以 `0` 表示成功，非 `0` 表示参数、文件、网络、解析或生成过程失败。
 
----
-
-## 实现骨架
-
-```typescript
-// src/index.ts
-import { PRTSMapLoader } from "./loader/PRTSMapLoader";
-import { PRTSMapAdapter } from "./adapter/PRTSMapAdapter";
-import { analyzeBattle } from "./battle/BattleAnalyzer";
-import { generateScript } from "./battle/ScriptGenerator";
-import { validateScript } from "./battle/ScriptValidator";
-import { exportToCopilotFormat } from "./battle/ScriptExporter";
-
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-
-  switch (args.command) {
-    case "generate":
-      await cmdGenerate(args);
-      break;
-    case "list":
-      cmdList(args);
-      break;
-    case "analyze":
-      await cmdAnalyze(args);
-      break;
-    case "validate":
-      cmdValidate(args);
-      break;
-    case "info":
-      await cmdInfo(args);
-      break;
-    default:
-      printHelp();
-      process.exit(1);
-  }
-}
-
-async function cmdGenerate(args: Args) {
-  const loader = new PRTSMapLoader();
-  const adapter = new PRTSMapAdapter(loader);
-
-  const prtsData = await loader.load(args.stage, { noCache: args.noCache });
-  const mapData = adapter.adapt(prtsData, args.stage);
-  const analysis = analyzeBattle(mapData);
-  const config = args.config ? JSON.parse(fs.readFileSync(args.config, "utf-8")) : {};
-  const script = generateScript(args.stage, mapData, analysis, config);
-  const validation = validateScript(script);
-
-  if (!validation.valid && !args.quiet) {
-    console.error("Warning: Script validation had errors:");
-    validation.errors.forEach(e => console.error(`  - [${e.code}] ${e.message}`));
-  }
-
-  const output = exportToCopilotFormat(script, { compress: !args.pretty });
-
-  if (args.output) {
-    fs.writeFileSync(args.output, output);
-    if (!args.quiet) console.error(`Script written to: ${args.output}`);
-  } else {
-    console.log(output);
-  }
-}
-
-// 手动参数解析 (MVP)
-function parseArgs(argv: string[]): Args {
-  const args: Args = { command: "", stage: "", noCache: false, pretty: false, quiet: false };
-
-  let i = 0;
-  while (i < argv.length) {
-    const arg = argv[i];
-    if (arg === "generate" || arg === "list" || arg === "analyze" || arg === "validate" || arg === "info") {
-      args.command = arg;
-    } else if (arg === "--stage" || arg === "-s") {
-      args.stage = argv[++i];
-    } else if (arg === "--output" || arg === "-o") {
-      args.output = argv[++i];
-    } else if (arg === "--no-cache") {
-      args.noCache = true;
-    } else if (arg === "--pretty") {
-      args.pretty = true;
-    } else if (arg === "--quiet") {
-      args.quiet = true;
-    }
-    i++;
-  }
-
-  if (!args.command) {
-    console.error("Usage: maafight <command> [options]");
-    console.error("Commands: generate, list, analyze, validate, info");
-    process.exit(1);
-  }
-
-  return args;
-}
-
-main().catch(err => {
-  console.error(err.message);
-  process.exit(1);
-});
-```
-
-## 文件扩展名约定
-
-- PRTS.Map 关卡 JSON 缓存: `<cacheDir>/levels/<path>.json`
-- 输出脚本: `<stageId>_ai.json` (如未指定 `--output`)
-- 配置 JSON: `<user指定>.json`
+不要依赖细分退出码做稳定集成；如果需要机器读取结果，优先读取 stdout JSON 或 `validate` 输出。

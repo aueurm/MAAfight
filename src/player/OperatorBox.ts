@@ -17,6 +17,12 @@ type RawPlayerOperator = Partial<PlayerOperator> & {
   id?: string;
   name?: string;
   own?: boolean;
+  skill_level?: number;
+  skillLevel?: number;
+  module?: number;
+  module_level?: number;
+  moduleLevel?: number;
+  cost?: number;
 };
 
 const ROLE_KEYS: (keyof OperatorRoleStats)[] = [
@@ -30,9 +36,16 @@ const ROLE_KEYS: (keyof OperatorRoleStats)[] = [
   "specialist",
 ];
 
+function numberField(...values: Array<unknown>): number | undefined {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
 function normalizeOperator(op: RawPlayerOperator): PlayerOperator | null {
   if (!op.own || !op.name) return null;
-  return {
+  const normalized: PlayerOperator = {
     id: op.id || op.name,
     name: op.name,
     rarity: op.rarity || 0,
@@ -41,6 +54,15 @@ function normalizeOperator(op: RawPlayerOperator): PlayerOperator | null {
     level: op.level || 0,
     potential: op.potential || 0,
   };
+  const skillLevel = numberField(op.skillLevel, op.skill_level);
+  const module = numberField(op.module);
+  const moduleLevel = numberField(op.moduleLevel, op.module_level);
+  const cost = numberField(op.cost);
+  if (skillLevel !== undefined) normalized.skillLevel = skillLevel;
+  if (module !== undefined) normalized.module = module;
+  if (moduleLevel !== undefined) normalized.moduleLevel = moduleLevel;
+  if (cost !== undefined) normalized.cost = cost;
+  return normalized;
 }
 
 export class OperatorBox {

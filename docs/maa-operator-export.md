@@ -34,6 +34,10 @@ MAA 的 **干员识别 (OperBox Recognition)** 功能通过图像识别扫描玩
 | `elite` | int | ✓ | ✗ | 精英化等级 (0=未精英, 1=精一, 2=精二) |
 | `level` | int | ✓ | ✗ | 干员等级 (1-90) |
 | `potential` | int | ✓ | ✗ | 潜能数 (0-6) |
+| `skill_level` / `skillLevel` | int | 视版本而定 | ✗ | 技能等级 / 专精等级，存在时优先用于 `requirements.skill_level` |
+| `module` | int | 视版本而定 | ✗ | 模组编号，存在时优先用于 `requirements.module` |
+| `module_level` / `moduleLevel` | int | 视版本而定 | ✗ | 模组等级，存在时优先用于 `requirements.module_level` |
+| `cost` | int | 视版本而定 | ✗ | 部署费用，存在时优先用于粗费用估算 |
 
 ### 示例
 
@@ -84,7 +88,7 @@ MAA 的 **干员识别 (OperBox Recognition)** 功能通过图像识别扫描玩
 
 ---
 
-## 与 MAAfight 的集成思路
+## 与 MAAfight 的集成
 
 MAAfight 已有 `src/shared/operatorDB.ts` 定义干员池（按职业/星级），copilot 脚本格式已支持 `requirements` 字段：
 
@@ -98,28 +102,52 @@ MAAfight 已有 `src/shared/operatorDB.ts` 定义干员池（按职业/星级）
     "level": 90,
     "skill_level": 10,
     "module": 1,
+    "module_level": 3,
     "potential": 1
   }
 }
 ```
 
-**集成步骤**（设计层面）：
+当前已经集成到 CLI、GUI 和 pipeline。
 
-1. **导入 MAA 导出文件** — 读取 `Arknights_OperBox_Export.json`，过滤 `own: true` 得到玩家拥有清单
-2. **生成时匹配** — ScriptGenerator 生成脚本时，根据玩家练度筛选候选干员、确定部署优先级
-3. **按练度排序** — 高练度干员优先部署，避免推荐玩家未练的干员
-4. **填充 opers** — 当前 `opers: []` 为空（不限制干员池），可从玩家清单聚合
+使用方式：
+
+```bash
+maafight generate --stage GT-1 --operators Arknights_OperBox_Export.json
+maafight init --operators Arknights_OperBox_Export.json
+maafight operators info
+```
+
+GUI 也支持选择、输入路径或粘贴 operators JSON。
+
+集成行为：
+
+1. 读取 MAA 导出 JSON，过滤 `own: true` 得到玩家拥有清单。
+2. 生成时优先从玩家拥有干员中选择。
+3. 综合稀有度、精英化、等级、任务适配、离线强度先验和自动化适配度排序。
+4. 默认 `fixed` 模式下，`opers` 尽量补满 12 名真实干员；未部署的干员只作为编队补位，不生成部署动作。
+5. 玩家干员库不足时，通过 `metadata.operatorGaps` 记录缺口，并保留兜底生成能力。
+6. 本地初始化后，`.maafight/operators.json` 会作为默认干员库加载。
+7. 如果玩家数据缺少模组信息，MAAfight 允许根据 `operatorStrength.cn.json` 的 `modulePriority` 输出推荐模组字段。
+
+导出到 MAA copilot 时，干员库只用于选择真实干员和填充 `requirements`。不得把职业、候选列表、练度展示或模组展示拼进 `opers[].name`。完整约束见 [MAA Copilot 导出契约](maa-copilot-export-contract.md)。
+
+注意：包含 `stage_name`、`actions`、`groups` 的文件是 MAA copilot 作业文件，不是 operators JSON。不要用作业文件作为玩家干员库样本。
 
 ### 关键映射
 
 | MAA 导出 | MAAfight 内部 | copilot 格式 |
 |----------|---------------|--------------|
 | `id` | 干员唯一标识 | — |
-| `name` | 干员名 | `opers[].name` |
+| `name` | 干员名 | `opers[].name` / `groups[].opers[].name` |
 | `elite` | 精英化等级 | `requirements.elite` |
 | `level` | 等级 | `requirements.level` |
 | `rarity` | 稀有度 | 用于优先级排序 |
 | `potential` | 潜能 | `requirements.potential` |
+| `skill_level` / `skillLevel` | 技能等级 / 专精 | `requirements.skill_level` |
+| `module` | 模组编号 | `requirements.module` |
+| `module_level` / `moduleLevel` | 模组等级 | `requirements.module_level` |
+| `cost` | 部署费用 | 粗费用时间线 |
 
 ---
 

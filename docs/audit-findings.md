@@ -1,108 +1,101 @@
-# MAAfight 审计报告
+# 审计与质量记录
 
-> 重审: 2026-05-23 (第六轮) | 基准: 86 测试全绿, TypeScript 编译通过, `npm run build` 成功, 覆盖率 92.1% stmts / 85.3% branch
+## 定位
 
-## 执行摘要
+本文不是实时测试报告，而是长期维护用的质量记录。
 
-所有已知 Bug 和正确性隐患已清零。残余 4 项为防御性回退分支和网络层测试缺口，不影响功能正确性。核心流水线端到端可运行。
+当前准确状态应以本地命令为准：
 
----
-
-## 实现进度
-
-| 模块 | 文件 | 语句/分支覆盖 | 状态 |
-| --- | --- | --- | --- |
-| 类型定义 | `src/types.ts` | — | 完成 |
-| 干员数据库 | `src/shared/operatorDB.ts` | 100% / 100% | 完成 |
-| BattleAnalyzer | `src/battle/BattleAnalyzer.ts` | 99.4% / 86.8% | 完成 |
-| ScriptGenerator | `src/battle/ScriptGenerator.ts` | 94.2% / 85.7% | 完成 |
-| ScriptValidator | `src/battle/ScriptValidator.ts` | 100% / 97.6% | 完成 |
-| ScriptExporter | `src/battle/ScriptExporter.ts` | 96.9% / 82.1% | 完成 |
-| OperatorBox | `src/player/OperatorBox.ts` | 88.9% / 50.0% | 完成 |
-| CLI 入口 | `src/index.ts` | — | 完成 |
-| 关卡索引 | `src/loader/levelIndex.ts` | 100% / 92.9% | 完成 |
-| 格式适配器 | `src/adapter/PRTSMapAdapter.ts` | 99.3% / 90.9% | 完成 |
-| 地图加载器 | `src/loader/PRTSMapLoader.ts` | 36.7% / 61.4%* | 完成 |
-
-> \* Loader 低覆盖率是 HTTP 网络代码路径无 mock，核心逻辑通过 adapter 集成测试覆盖
-
----
-
-## 覆盖趋势
-
-| 轮次 | 测试数 | Stmts | Branch | 关键变化 |
-| --- | --- | --- | --- | --- |
-| 初始 | 53 | 89.8% | 80.3% | P0/P1 修复完成 |
-| 第三轮 | 65 | 92.5% | 84.1% | P2 全修, levelIndex 独立测试 |
-| 第五轮 | 76 | 92.8% | 85.7% | ScriptGenerator 方向全覆盖, Q4 opers 聚合 |
-| **第六轮** | **86** | **92.1%** | **85.3%** | OperatorBox 模块, 额外边界测试 |
-
----
-
-## 仅余 — 低优先级
-
-### Q1: ScriptGenerator 防御性回退分支（不可触发）
-
-`OPERATOR_POOLS[role] || []` 和 `ROLE_NAMES[role] || role` 在当前代码中不可触发 — `byRole` 的 key 与 `OPERATOR_POOLS`/`ROLE_NAMES` 完全对齐。属于防御性编码，可留空。
-
-### Q2: ScriptValidator tiles 子分支（单行残留）
-
-分支覆盖 97.6%，单行 `tiles[0]?.length` 的 optional chaining 子分支未独立触发。功能上所有 OOB 场景均已覆盖。
-
-### Q3: CLI 无自动化测试
-
-`validate` 最易加测试（纯文件 I/O）。`generate`/`analyze` 依赖网络，需 mock。
-
-### Q4: PRTSMapLoader 网络路径无测试
-
-HTTP 下载、redirect、超时等分支未覆盖 (36.7%)。需 mock `https.get`，投入产出比低。
-
----
-
-## 执行优先级
-
-```text
-Q3 (CLI 测试)       → 低优先级，手动验收即可
-Q4 (Loader 测试)    → 需要 mock 框架，可推迟
-Q1+Q2 (防御分支)    → 不可触发，留空即可
+```bash
+npm run build
+npm test
+node scripts/benchmark.js --skip-build
 ```
 
----
+如果这些命令输出与本文冲突，以命令输出为准，并更新本文。
 
-## 验收标准
+## 当前质量边界
 
-- [x] P0/P1 Bug 全部修复 (6/6)
-- [x] P2 正确性隐患全部修复 (3/3)
-- [x] 架构问题全部修复 (3/3)
-- [x] `npm run build` 成功
-- [x] TypeScript 编译通过
-- [x] 86 测试全绿
-- [x] 覆盖率 > 85% branch
-- [x] adapter 端到端流水线集成测试通过
-- [x] BattleAnalyzer v2 使用真实 HP/ATK/DEF
-- [x] 关卡索引 3174 关
-- [x] CLI 加载敌人数据库
-- [x] WaveInfo 保留 postDelay
-- [x] isElite 优先用标签
-- [x] ScriptGenerator 全方向覆盖
-- [x] ScriptValidator OOB 全覆盖
-- [x] opers 字段从 groups 聚合
-- [x] levelIndex 独立测试覆盖 100%
-- [x] 10 关实测全通过 (100/100 验证)
-- [x] PRTS.Map URL 路径适配 (`/data/levels/`)
-- [x] overwrittenData null 空安全
-- [x] routes null 条目跳过
+MAAfight 的验证目标是：
 
-**所有已知问题已清零。核心流水线可端到端运行。**
+- 能从 PRTS.Map 数据生成结构合法的 MAA copilot JSON v3。
+- 能用内部验证器发现明显字段、坐标和 action 问题。
+- 能用协议验证器提示 MAA copilot 兼容性风险。
+- 能通过 metadata 和 explain 暴露规划依据、warning 和 operator gaps。
 
----
+验证目标不是：
 
-## 实测发现 (第六轮)
+- 证明脚本一定通关。
+- 模拟真实战斗结果。
+- 覆盖 MAA 实际执行中的识别延迟、点击延迟、帧率、倍速和技能时机误差。
 
-实测 10 关时发现 3 个运行时 Bug，均已修复：
+## 已覆盖的质量点
 
-| Bug | 位置 | 原因 | 修复 |
-| --- | --- | --- | --- |
-| URL 404 | PRTSMapLoader L65 | PRTS.Map 路径加了 `/data/levels/` 前缀 | URL 拼接前加前缀 |
-| null.attributes | PRTSMapAdapter L264 | 关卡 `enemyDbRefs[].overwrittenData` 可为 null | `?.attributes` |
-| null.checkpoints | PRTSMapAdapter L53 | 关卡 `routes[]` 含 null 条目 | `if (!r) continue` |
+- `PRTSMapAdapter` 支持字符串枚举和数字枚举形式的 PRTS.Map 数据。
+- `routes` 中的 `null` 条目会被跳过。
+- `enemyDbRefs[].overwrittenData` 缺失或为 `null` 时使用安全回退。
+- `WaveInfo` 保留 `postDelay`。
+- `BattleAnalyzer` 在敌人详情缺失时仍能 fallback。
+- `BattlePlanner` 输出 `pressureWindows` 和 `recommendedTasks`。
+- `ScriptGenerator` 支持玩家干员库、任务化选人、粗费用和部署点评分。
+- 玩家干员库不足时保留 `operatorGaps`。
+- `ScriptValidator` 覆盖 action 类型、坐标越界和不可部署点等错误。
+- `MAAProtocolValidator` 对协议兼容性风险输出 warning，包括展示文本污染 `name` 字段和部署名未声明等问题。
+- `PlanningReport` 汇总 confidence、known risks、protocol warnings 和部署解释。
+- GUI server、player config、operator strength、level index 等模块有对应测试文件。
+
+## 仍需关注
+
+### 协议兼容性
+
+MAA 官方协议和项目内部 action 之间仍可能存在差异。
+
+特别需要关注：
+
+- `Wait`
+- `SkillUse`
+- `requirements`
+- `time_elapsed`
+- 编队模式下 `groups` / `opers` 的语义
+
+这些问题应通过 `MAAProtocolValidator` 暴露，不应静默吞掉。
+
+涉及 `opers`、`groups`、`actions[].name`、默认 fixed 12 人编队、模组推荐或 SkillDaemon 策略的改动，必须先对照 [MAA Copilot 导出契约](maa-copilot-export-contract.md)。
+
+### 网络与缓存
+
+`PRTSMapLoader` 依赖远端静态 JSON 和本地缓存。网络失败、重定向、超时、缓存损坏等路径需要持续实测。
+
+### 规则规划质量
+
+`pressureWindows`、`recommendedTasks`、粗费用和部署点评分都是启发式。
+
+它们应该通过更多关卡 benchmark 和 GUI 调试信息迭代，不应被包装成通关证明。
+
+### 干员数据
+
+离线强度数据和默认干员池都需要人工维护。
+
+低置信度或争议较大的条目应在 `src/data/operatorStrength.cn.json` 中标记，并通过 metadata 给出可解释信息。
+
+## 实测记录
+
+当前实测关卡列表见 [实测关卡列表](test-levels.md)。
+
+扩展实测集时优先加入：
+
+- 飞行压力明显的关卡。
+- 高防 / 高抗关卡。
+- Boss 关卡。
+- 多路线和多蓝门关卡。
+- 有特殊地块或 rune 的关卡。
+
+## 更新规则
+
+1. 不写固定测试数量，除非刚刚在同一变更中运行并记录命令输出。
+
+2. 不写“所有问题已清零”。
+
+3. 不把 benchmark 通过解释成脚本可通关。
+
+4. 文档只保留当前维护有价值的信息，历史修复清单通过 git 历史查询。

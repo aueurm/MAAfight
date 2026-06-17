@@ -93,6 +93,31 @@ describe("OperatorBox", () => {
     });
   });
 
+  it("parseJson() should preserve optional skill, module, and cost fields", () => {
+    const parsed = OperatorBox.parseJson(JSON.stringify([
+      {
+        id: "ines",
+        name: "伊内丝",
+        rarity: 6,
+        own: true,
+        elite: 2,
+        level: 90,
+        potential: 1,
+        skill_level: 10,
+        module: 1,
+        module_level: 3,
+        cost: 11,
+      },
+    ]));
+
+    expect(parsed[0]).toEqual(expect.objectContaining({
+      skillLevel: 10,
+      module: 1,
+      moduleLevel: 3,
+      cost: 11,
+    }));
+  });
+
   it("roleCounts() should count owned operators by role pool membership", () => {
     const vanguard = OPERATOR_POOLS.vanguard[0].name;
     const medic = OPERATOR_POOLS.medic[0].name;

@@ -60,6 +60,7 @@ describe("GUI server routes", () => {
     expect(body.defaultCacheDir).toBe(path.join(homeDir, "cache"));
     expect(body.defaultCacheLevelsDir).toBe(path.join(homeDir, "cache", "levels"));
     expect(body.defaultLogDir).toBe(path.join(homeDir, "logs"));
+    expect(body.defaultSquadMode).toBe("fixed");
     expect(fs.existsSync(path.join(homeDir, "output"))).toBe(true);
     expect(fs.existsSync(path.join(homeDir, "cache"))).toBe(true);
     expect(fs.existsSync(path.join(homeDir, "logs"))).toBe(true);
@@ -123,6 +124,8 @@ describe("GUI server routes", () => {
     expect(Array.isArray(generated.opers)).toBe(true);
     expect(Array.isArray(generated.groups)).toBe(true);
     expect(Array.isArray(generated.actions)).toBe(true);
+    expect(body.script.groups).toEqual([]);
+    expect(body.script.metadata.squadMode).toBe("fixed");
     expect(body.script.metadata.battlePlan).toBeDefined();
     expect(body.script.metadata.recommendedTasks.length).toBeGreaterThan(0);
     expect(body.script.metadata.operatorSelectionTrace.length).toBeGreaterThan(0);

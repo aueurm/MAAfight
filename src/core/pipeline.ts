@@ -93,7 +93,7 @@ export interface StageSuggestion {
 export const DEFAULT_CACHE_DIR = getRuntimePaths().cacheLevelsDir;
 export const DEFAULT_DATA_URL = process.env.MAAFIGHT_DATA_URL || "https://map.ark-nights.com";
 export const DEFAULT_OUTPUT_DIR = getRuntimePaths().outputDir;
-export const DEFAULT_SQUAD_MODE: SquadMode = "hybrid";
+export const DEFAULT_SQUAD_MODE: SquadMode = "fixed";
 export const SUPPORTED_SQUAD_MODES: SquadMode[] = ["fixed", "groups", "hybrid"];
 
 function inferStageIdFromDataPath(dataPath: string): string {
@@ -111,8 +111,9 @@ function sanitizeFileName(name: string): string {
 }
 
 export function makeDefaultScriptFileName(stageName: string, resolved?: StageIndexEntry | null): string {
-  const parts = [stageName];
-  if (resolved?.name && resolved.name !== stageName) {
+  const primary = resolved?.code || stageName || resolved?.stageId || "script";
+  const parts = [primary];
+  if (resolved?.name && resolved.name !== primary) {
     parts.push(resolved.name);
   }
   return sanitizeFileName(`${parts.join("_")}.json`);

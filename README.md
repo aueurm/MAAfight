@@ -17,6 +17,7 @@ MAAfight 只负责生成脚本。它不执行战斗，不调用 ADB，不做图�
 - 支持 MAA 干员识别导出的 operators JSON，用于优先选择玩家拥有的干员。
 - 支持 `.maafight/operators.json` 本地干员库，初始化后生成时自动加载。
 - 支持 GUI 里粘贴 operators JSON 并保存为默认干员库。
+- 默认导出 fixed 12 人编队，`opers` 使用真实干员名，`groups` 仅显式模式使用。
 - 支持生成日志与“复制调试信息”，便于内测反馈。
 
 ## 快速开始
@@ -56,7 +57,7 @@ GUI 第一版是“生成控制台”，包含：
 
 - 关卡 ID / 关卡名输入与候选提示。
 - operators JSON 文件选择、路径输入、JSON 粘贴保存。
-- 编队模式：固定编队（fixed）、分组替换（groups）、混合模式（hybrid）。
+- 编队模式：默认固定编队（fixed），可显式选择分组替换（groups）或混合模式（hybrid）。
 - pretty JSON 开关。
 - 输出目录和文件名设置。
 - 分析关卡、生成脚本、验证脚本、打开输出目录。
@@ -145,6 +146,8 @@ maafight operators info --operators Arknights_OperBox_Export.json
 ```
 
 如果没有初始化，生成器会退回默认干员池。当前选人逻辑仍是规则驱动和预设池驱动，不是 AI 自动理解每个账号的完整打法。
+
+默认生成会尽量补满 12 名真实干员。不会部署的补位干员只进入 `opers`，不自动生成部署动作。`groups` 只在显式模式下用于候选替换。
 
 ## CLI 命令
 
@@ -331,12 +334,17 @@ docs/         设计、审计、实测关卡和数据格式文档
 
 | 文档 | 说明 |
 | --- | --- |
+| [docs/README.md](docs/README.md) | 文档索引和阅读顺序 |
 | [docs/architecture.md](docs/architecture.md) | 架构与模块划分 |
+| [docs/algorithm-boundary.md](docs/algorithm-boundary.md) | 算法边界与路线 |
+| [docs/maa-copilot-export-contract.md](docs/maa-copilot-export-contract.md) | MAA copilot 导出契约与防错清单 |
 | [docs/data-format.md](docs/data-format.md) | 内部数据和 copilot JSON 格式 |
 | [docs/prts-map-adapter.md](docs/prts-map-adapter.md) | PRTS.Map 适配设计 |
 | [docs/battle-analyzer-v2.md](docs/battle-analyzer-v2.md) | 战术分析逻辑 |
 | [docs/cli-design.md](docs/cli-design.md) | CLI 设计 |
 | [docs/maa-operator-export.md](docs/maa-operator-export.md) | MAA 干员导出格式 |
+| [docs/maa-copilot-format-review.md](docs/maa-copilot-format-review.md) | MAA copilot 格式复盘与生成策略 |
+| [docs/operator-strength-data.md](docs/operator-strength-data.md) | 干员强度数据维护 |
 | [docs/test-levels.md](docs/test-levels.md) | 实测关卡结果 |
 
 ## 许可证

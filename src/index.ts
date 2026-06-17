@@ -198,7 +198,7 @@ function warnIfOperatorNamesDoNotMatchPools(box: OperatorBox): void {
 }
 
 function printHelp(): void {
-  console.log(`MAAfight - AI-driven Arknights copilot battle script generator
+  console.log(`MAAfight - rule-based Arknights MAA copilot script generator
 
 Usage: maafight <command> [options]
 

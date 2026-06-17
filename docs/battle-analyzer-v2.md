@@ -1,307 +1,186 @@
-# BattleAnalyzer v2 增强设计
+# BattleAnalyzer 与轻量规划
 
-## 概述
+## 背景
 
-v1 (battle-ipc.js) 的 `analyzeBattle` 通过 `spawnCount` (高威胁区域位置数) 来盲猜敌人组成。v2 利用 PRTS.Map 提供的精确敌人属性 (HP/ATK/DEF) 和出怪时间线，做真实难度评估。
+早期 `BattleAnalyzer` 主要根据出怪数量和高威胁区域做职业需求估算。当前版本已经扩展为“分析 + 轻量规划”两段：
 
-## v1 的问题
-
-```typescript
-// v1 的问题: 基于 spawnCount 盲猜
-const spawnCount = (mapData.highThreatAreas || []).reduce(
-  (sum, area) => sum + (area.positions || []).length, 0
-);
-
-if (spawnCount > 10) { bossCount = floor(spawnCount * 0.05); }  // 纯猜测!
+```text
+MapData
+  -> BattleAnalyzer
+  -> TacticalAnalysis
+  -> BattlePlanner
+  -> pressureWindows / recommendedTasks / positionHints
 ```
 
-- 无法区分 Boss (HP 50000) 和杂兵 (HP 1000)
-- 难度评级不可靠
-- DPS 需求无法计算
+这仍然是规则化分析，不是 AI / LLM，也不是完整战斗模拟。
 
-## v2 增强点
+## 输入
 
-### 1. 精确敌人组成
+`BattleAnalyzer` 的输入是 `MapData`：
 
-```typescript
-// v2: 读取每只敌人的精确属性
-function analyzeEnemyComposition(mapData: MapData): EnemyComposition {
-  const bosses: EnemyDetail[] = [];
-  const elites: EnemyDetail[] = [];
-  const normals: EnemyDetail[] = [];
+- 地图瓦片和可部署点。
+- 敌人路线。
+- 出怪时间线。
+- 敌人 HP / ATK / DEF / RES / Boss / Elite 信息。
+- 关卡部署上限、初始费用、自然回费间隔。
 
-  for (const spawn of mapData.spawnTimeline) {
-    const detail = mapData.enemyDetails.find(e => e.id === spawn.enemyId);
-    if (!detail) continue;
+当敌人详情缺失时，分析器使用保守默认值，保证仍能生成合法 JSON。
 
-    if (detail.isBoss) bosses.push(detail);
-    else if (detail.isElite) elites.push(detail);
-    else normals.push(detail);
-  }
+## 输出
 
-  const totalHP = [...bosses, ...elites, ...normals].reduce((s, e) => s + e.maxHp, 0);
-  const totalCount = bosses.length + elites.length + normals.length;
+核心输出是 `TacticalAnalysis`：
 
-  let compositionType: EnemyComposition["compositionType"];
-  if (bosses.length > 0) compositionType = "boss_rush";
-  else if (normals.length > 20) compositionType = "swarm";
-  else if (elites.length > 3) compositionType = "mixed";
-  else compositionType = "single";
+- `enemyComposition`：敌人总数、普通 / 精英 / Boss 数、总 HP、平均 DEF。
+- `requirements`：职业数量需求，作为 fallback 继续保留。
+- `keyTimings`：首批敌人、高压窗口、Boss 等关键时机。
+- `threatPriorities`：高防、高攻、飞行、Boss 等威胁提示。
+- `suggestedStrategy`：规则化策略标签和说明。
+- `dpsRequirement`：Boss 输出窗口的粗略估算。
+- `battlePlan`：轻量规划结果。
+- `pressureWindows`：按时间窗口聚合的压力信息。
+- `recommendedTasks`：供生成器消费的任务队列。
 
-  return {
-    totalCount,
-    normalCount: normals.length,
-    eliteCount: elites.length,
-    bossCount: bosses.length,
-    compositionType,
-    totalHP,
-    averageDEF: [...bosses, ...elites].reduce((s, e) => s + e.def, 0) / (bosses.length + elites.length || 1),
-  };
-}
-```
+## Pressure Windows
 
-### 2. DPS 需求计算
+`pressureWindows` 按固定时间窗口统计出怪压力。
+
+每个窗口记录：
+
+- 开始和结束时间。
+- 敌人数。
+- 总 HP。
+- 总 ATK。
+- 是否有飞行敌人。
+- 是否有精英敌人。
+- 是否有 Boss。
+- 压力分数。
+
+示意：
 
 ```typescript
-function calculateDPSRequirement(
-  enemies: EnemyDetail[],
-  spawnTimeline: SpawnEvent[],
-  options: MapOptions
-): DPSRequirement | undefined {
-  const bosses = enemies.filter(e => e.isBoss);
-  if (bosses.length === 0) return undefined;
-
-  const totalBossHP = bosses.reduce((sum, b) => sum + b.maxHp, 0);
-
-  // 估算 Boss 有效输出窗口: 假设 Boss 在中期出现
-  const bossSpawns = spawnTimeline.filter(s =>
-    enemies.find(e => e.id === s.enemyId && e.isBoss)
-  );
-  const firstBossTime = Math.min(...bossSpawns.map(s => s.time));
-  const lastBossTime = Math.max(...bossSpawns.map(s => s.time));
-
-  // 输出窗口: 从首只 Boss 到关卡结束(假设为最后出怪时间 + 60秒)
-  const windowEnd = lastBossTime + 60;
-  const burstWindow = Math.max(30, windowEnd - firstBossTime);
-  const requiredDPS = totalBossHP / burstWindow;
-
-  return {
-    totalBossHP,
-    burstWindowSeconds: burstWindow,
-    requiredDPS,
-    recommendedOperators: recommendHighDPS(requiredDPS),
-  };
-}
-
-function recommendHighDPS(requiredDPS: number): string[] {
-  // 基于干员数据库推荐 (硬编码数据, 后续对接 PRTS)
-  if (requiredDPS > 1500) return ["银灰(真银斩)", "史尔特尔(黄昏)", "玛恩纳(未照耀的荣光)"];
-  if (requiredDPS > 800) return ["艾雅法拉(火山)", "能天使(过载模式)", "棘刺(至高之术)"];
-  return ["常规输出干员即可应对"];
+{
+  start: 30,
+  end: 45,
+  enemyCount: 8,
+  totalHp: 24000,
+  totalAtk: 2800,
+  hasFlying: true,
+  hasElite: false,
+  hasBoss: false,
+  pressureScore: 63
 }
 ```
 
-### 3. 精确时间线分析
+压力分数只用于排序、提示和任务推导，不代表通关概率。
 
-```typescript
-function analyzeTimings(spawnTimeline: SpawnEvent[]): KeyTiming[] {
-  const timings: KeyTiming[] = [];
+## Recommended Tasks
 
-  // 首次出怪时间
-  const firstSpawn = spawnTimeline[0];
-  if (firstSpawn) {
-    timings.push({
-      time: firstSpawn.time,
-      description: "首批敌人出现",
-      recommendedAction: "部署先锋获取费用",
-      operatorType: "vanguard",
-    });
-  }
+`recommendedTasks` 用任务队列替代固定职业顺序。
 
-  // 找出敌人密度峰值 (滑动窗口内最多出怪数)
-  const peakTime = findPeakTime(spawnTimeline);
-  if (peakTime) {
-    timings.push({
-      time: peakTime.time,
-      description: `出怪高峰 (${peakTime.count} 只/分钟)`,
-      recommendedAction: "全员部署完毕, 技能准备就绪",
-      operatorType: "medic",
-    });
-  }
+当前任务类型：
 
-  // Boss 出现时间
-  for (const event of spawnTimeline) {
-    const detail = /* enemyDetail lookup */;
-    if (detail?.isBoss) {
-      timings.push({
-        time: event.time,
-        description: `Boss 出现: ${detail.name}`,
-        recommendedAction: "集中火力, 激活核心技能",
-        operatorType: "tank",
-      });
-    }
-  }
+- `early_dp`
+- `lane_block`
+- `lane_hold`
+- `anti_air`
+- `physical_dps`
+- `arts_damage`
+- `healing`
+- `boss_kill`
+- `elite_control`
+- `support`
+- `fast_redeploy`
 
-  return timings.sort((a, b) => a.time - b.time);
-}
+推导依据包括：
 
-function findPeakTime(timeline: SpawnEvent[]): { time: number; count: number } | null {
-  const windowSize = 30; // 30秒窗口
-  let maxCount = 0, peakTime = 0;
+- 职业需求 fallback。
+- 高压窗口数量。
+- 飞行路线或飞行敌人窗口。
+- 高 DEF / 高 HP / Boss。
+- 精英敌人窗口。
+- 多路线压力。
+- 部署上限。
 
-  for (const event of timeline) {
-    const count = timeline.filter(
-      e => e.time >= event.time && e.time < event.time + windowSize
-    ).length;
-    if (count > maxCount) { maxCount = count; peakTime = event.time; }
-  }
+任务队列会按优先级排序，并截断到关卡部署上限附近，避免生成过长队列。
 
-  return maxCount > 0 ? { time: peakTime, count: maxCount } : null;
-}
-```
+## 与 ScriptGenerator 的关系
 
-### 4. 增强难度评级
+`ScriptGenerator` 优先使用：
 
-```typescript
-function rateDifficulty(composition: EnemyComposition, options: MapOptions): DifficultyRating {
-  let score = 0;
-  let rating: DifficultyRating["rating"] = "easy";
+1. `analysis.battlePlan.recommendedTasks`
+2. `analysis.recommendedTasks`
+3. `analysis.requirements`
+4. `mapData.deploymentOrder`
 
-  // 评分因子
-  if (composition.totalHP > 100000) score += 3;
-  else if (composition.totalHP > 50000) score += 2;
-  else if (composition.totalHP > 20000) score += 1;
+这保证了新增规划信息缺失时仍能回退到旧逻辑。
 
-  if (composition.bossCount > 1) score += 3;
-  else if (composition.bossCount > 0) score += 2;
+生成器会根据任务选择候选职业和功能标签。例如：
 
-  if (composition.eliteCount > 5) score += 2;
-  else if (composition.eliteCount > 3) score += 1;
+- `early_dp` 更偏向先锋和回费。
+- `anti_air` 更偏向狙击、防空和空中目标。
+- `arts_damage` 更偏向术师和法伤。
+- `healing` 更偏向医疗。
+- `boss_kill` 更偏向爆发输出。
 
-  if (composition.totalCount > 50) score += 2;
-  else if (composition.totalCount > 30) score += 1;
+## 粗费用时间线
 
-  // 生存压力: 高防敌人多则物理队压力大
-  if (composition.averageDEF > 500) score += 1;
+生成器使用 `DPTimeline` 做粗费用估算。
 
-  // 部署限制
-  if (options.characterLimit < 8) score += 1;
+估算规则：
 
-  if (score >= 7) rating = "extreme";
-  else if (score >= 4) rating = "hard";
-  else if (score >= 2) rating = "medium";
+- 初始费用来自 `mapData.options.initialCost`。
+- 自然回费由 `costIncreaseTime` 估算。
+- 干员费用优先读取玩家干员数据中的 `cost`，否则使用职业默认费用。
+- 如果连续部署会明显费用不足，则推迟下一个部署时间。
 
-  return { rating, score };
-}
-```
+该时间线用于减少明显不合理的连续部署动作，不模拟击杀回费、先锋技能回费或关卡特殊费用规则。
 
-### 5. 地图推荐
+## 部署点评分
 
-```typescript
-// 基于可部署点位和路径分析, 推荐每个位置的部署角色
-function recommendPositions(mapData: MapData): MapRecommendation[] {
-  const recommendations: MapRecommendation[] = [];
+`PositionScorer` 为部署点打分：
 
-  for (const dp of mapData.deploymentPoints) {
-    // 计算该位置到最近敌人路径的距离
-    const nearRoutes = mapData.routes.filter(r =>
-      r.checkpoints.some(cp => manhattanDistance(cp, dp) <= 2)
-    );
+- 地面单位优先靠近敌人路径、蓝门和隘口。
+- 远程单位优先覆盖更多敌人路线。
+- 医疗优先覆盖已规划的核心阻挡位。
+- 已使用点位会被跳过。
+- 点位不足时回退到 `deploymentOrder`。
 
-    if (nearRoutes.length === 0) {
-      recommendations.push({
-        position: { row: dp.row, col: dp.col },
-        recommendedRole: "support",
-        priority: 1,
-        reason: "远离主要交火区域, 适合部署辅助/医疗",
-      });
-      continue;
-    }
+评分结果写入 `metadata.positionScoreSummary` 和 `metadata.deploymentReasons`。
 
-    // 在敌人路径上的近战位 → 重装
-    if (dp.buildableType === "melee" && nearRoutes.length >= 2) {
-      recommendations.push({
-        position: { row: dp.row, col: dp.col },
-        recommendedRole: "tank",
-        priority: 3,
-        reason: "多路线交汇近战位, 重装最佳部署点",
-      });
-    }
-    // 在敌人路径上的近战位 → 近卫/先锋
-    else if (dp.buildableType === "melee") {
-      recommendations.push({
-        position: { row: dp.row, col: dp.col },
-        recommendedRole: "guard",
-        priority: 2,
-        reason: "路径近战位, 适合输出干员",
-      });
-    }
-    // 高台位靠近路径 → 狙击/术师
-    else if (dp.buildableType === "ranged" && nearRoutes.length > 0) {
-      recommendations.push({
-        position: { row: dp.row, col: dp.col },
-        recommendedRole: nearRoutes.length > 1 ? "caster" : "sniper",
-        priority: 3,
-        reason: nearRoutes.length > 1 ? "多路线覆盖, AOE 术师最佳位置" : "直线覆盖, 狙击理想位置",
-      });
-    }
-  }
+## 干员选择
 
-  return recommendations.sort((a, b) => b.priority - a.priority);
-}
-```
+干员选择综合：
 
-## 迁移兼容性
+- 当前任务。
+- 候选职业。
+- 功能标签。
+- 离线强度先验。
+- 玩家干员库练度。
+- 自动化适配度。
+- 粗费用。
 
-v2 `analyzeBattle` 保持与 v1 相同的函数签名，确保 ScriptGenerator 无需改动：
+如果玩家干员库不足，生成器保留 `operatorGaps` 行为，并继续尽量生成可验证的 JSON。
 
-```typescript
-// 签名完全兼容 v1
-function analyzeBattle(mapData: MapData): TacticalAnalysis {
-  const composition = analyzeEnemyComposition(mapData);
-  const dpsReq = calculateDPSRequirement(mapData.enemyDetails, mapData.spawnTimeline, mapData.options);
-  const timings = analyzeTimings(mapData.spawnTimeline);
-  const { rating } = rateDifficulty(composition, mapData.options);
-  const strategy = selectStrategy(composition);
+## 边界
 
-  // 干员需求
-  const requirements = {
-    vanguardCount: Math.min(2, Math.max(1, Math.ceil(mapData.spawnTimeline.length / 20))),
-    medicCount: composition.bossCount > 0 ? 2 : 1,
-    tankCount: mapData.strategicPoints.filter(p => p.type === "chokepoint").length > 0
-      ? Math.min(2, mapData.strategicPoints.filter(p => p.type === "chokepoint").length) : 1,
-    sniperCount: composition.compositionType === "swarm" ? 2 : 1,
-    casterCount: composition.eliteCount > 2 ? 1 : 0,
-    supportCount: 0,
-    specialRequirements: buildSpecialRequirements(composition, dpsReq),
-    expectedCost: calculateCost(requirements),
-    difficultyRating: rating,
-  };
+当前分析器不做：
 
-  return {
-    summary: `${composition.compositionType.replace("_", " ")} composition with ${composition.totalCount} enemies, rated ${rating}`,
-    enemyComposition: composition,
-    requirements,
-    keyTimings: timings,
-    threatPriorities: buildThreats(composition, mapData.enemyDetails),
-    suggestedStrategy: strategy,
-    dpsRequirement: dpsReq,
-    spawnTimeline: mapData.spawnTimeline,
-    mapRecommendations: recommendPositions(mapData),
-    notes: buildNotes(composition, requirements),
-  };
-}
-```
+- 干员攻击循环模拟。
+- 技能轴模拟。
+- 天赋、模组、召唤物模拟。
+- 连续敌人移动与真实阻挡模拟。
+- 索敌、治疗目标、前摇和攻速模拟。
+- 击杀回费和先锋技能回费模拟。
 
-## 测试计划
+完整边界见 [算法边界与路线说明](algorithm-boundary.md)。
 
-1. **测试数据** — 使用已下载的 `level_a001_01.json` 作为标准测试输入
-2. **验证点**:
-   - 敌人 HP 总和 > 0 (不是盲猜)
-   - Boss 识别正确 (isBoss = true 的敌人被正确标记)
-   - 难度评级有区分度 (不同关卡不同评分)
-   - 与 v1 输出结构兼容 (ScriptGenerator 不报错)
-3. **边界情况**:
-   - 无 Boss 关卡: `dpsRequirement` 应为 undefined
-   - 单路线关卡: `strategicPoints.chokepoint` 为空
-   - 0 秒出怪: `spawnTimeline[0].time === 0`
+## 测试关注点
+
+测试应覆盖：
+
+- 敌人详情完整时，HP / ATK / DEF 参与分析。
+- 敌人详情缺失时，fallback 不崩溃。
+- `pressureWindows` 能统计飞行、精英、Boss。
+- `recommendedTasks` 能根据飞行、Boss、高防等压力变化。
+- 生成器在新字段缺失时仍能生成合法 JSON。
+- `operatorGaps`、费用时间线、点位评分写入 metadata。

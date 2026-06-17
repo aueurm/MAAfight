@@ -83,3 +83,11 @@ MAAfight 仍然不做完整战斗模拟，不模拟普攻、技能轴、天赋�
 有玩家干员库时，只会从玩家拥有干员中选择。没有高强度候选时，仍允许低强度或缺数据干员兜底，但会在 `metadata.warnings` 和 `metadata.operatorSelectionTrace` 中说明原因。
 
 `metadata.operatorSelectionTrace` 用于 GUI 展示和调试，不会写入 MAA copilot 导出 JSON 的协议字段。
+
+强度数据也会影响默认技能和推荐模组：
+
+- `skillPriority` 用于优先选择导出的 `skill`。
+- `modulePriority` 可转成推荐 `requirements.module` / `requirements.module_level`。
+- `high_precision_required` 只能用于风险提示和排序，不得单独作为“禁止交给 `SkillDaemon`”的理由。
+
+具体导出约束见 [MAA Copilot 导出契约](maa-copilot-export-contract.md)。

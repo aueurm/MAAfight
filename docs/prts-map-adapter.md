@@ -44,7 +44,13 @@ class PRTSMapLoader {
 
 ### 关卡索引结构
 
-从 JS bundle 提取的全部 2160 关，结构化存储：
+从 PRTS.Map 索引整理出的关卡条目，结构化存储在 `src/loader/levelIndex.ts`。
+
+关卡数量会随索引更新变化，文档不固定写死数量。需要确认时运行：
+
+```bash
+maafight list --limit 1
+```
 
 ```typescript
 // src/loader/levelIndex.ts
@@ -73,8 +79,7 @@ cache/
 ├── levels/
 │   ├── activities/a001/level_a001_01.json
 │   └── ...
-├── enemy_database.json
-└── index.json                   # 缓存元数据 (下载时间、版本)
+└── enemy_database.json
 ```
 
 ### 实现要点
@@ -94,7 +99,7 @@ async load(stageId: string, options?: { noCache?: boolean }): Promise<PRTSLevelD
     return JSON.parse(fs.readFileSync(cachePath, "utf-8"));
   }
 
-  const url = `https://map.ark-nights.com/${entry.filePath}`;
+  const url = `https://map.ark-nights.com/data/levels/${entry.filePath}`;
   const data = await this.httpGet(url);
   this.ensureCacheDir(path.dirname(cachePath));
   fs.writeFileSync(cachePath, JSON.stringify(data));
