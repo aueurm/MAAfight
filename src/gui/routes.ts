@@ -10,7 +10,13 @@ import {
   validateScriptJson,
 } from "../core/pipeline";
 import { openOutputDirectory } from "./openBrowser";
-import { getDefaultOperatorsPath, loadConfiguredOperatorBox, saveOperatorConfig } from "../player/PlayerConfig";
+import {
+  getDefaultOperatorsPath,
+  loadConfiguredOperatorBox,
+  loadLastOutputDir,
+  saveLastOutputDir,
+  saveOperatorConfig,
+} from "../player/PlayerConfig";
 import { writeGuiLog } from "../runtime/logger";
 import { getRuntimePaths } from "../runtime/paths";
 import type { AnalyzeRequest, GenerateRequest, OpenOutputDirRequest, SaveOperatorsRequest, ValidateRequest } from "./types";
@@ -48,11 +54,12 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
     const runtime = getRuntimePaths();
     const cwd = configCwd || runtime.homeDir;
     const configured = loadConfiguredOperatorBox(cwd);
+    const lastOutputDir = loadLastOutputDir(cwd);
     return {
       success: true,
       version: packageVersion(),
       homeDir: runtime.homeDir,
-      defaultOutputDir: runtime.outputDir,
+      defaultOutputDir: lastOutputDir || runtime.outputDir,
       defaultCacheDir: runtime.cacheDir,
       defaultCacheLevelsDir: runtime.cacheLevelsDir,
       defaultLogDir: runtime.logDir,
@@ -106,17 +113,20 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
         return { success: false, warnings: [], errors: ["stage is required"] };
       }
       const runtime = getRuntimePaths();
+      const cwd = configCwd || runtime.homeDir;
+      const outputDir = body.outputDir || loadLastOutputDir(cwd) || runtime.outputDir;
       const result = await generateStage({
         stage: body.stage,
         operatorsJson: body.operatorsJson,
         operatorFilePath: body.operatorFilePath,
         squadMode: body.squadMode || DEFAULT_SQUAD_MODE,
         pretty: body.pretty,
-        outputDir: body.outputDir || runtime.outputDir,
+        outputDir,
         fileName: body.fileName,
       }, {
         cacheDir: runtime.cacheLevelsDir,
       });
+      saveLastOutputDir(result.outputDir, cwd);
       writeGuiLog("generate_success", {
         stage: body.stage,
         squadMode: body.squadMode || DEFAULT_SQUAD_MODE,
@@ -161,6 +171,7 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
       }
       const outputDir = path.resolve(body.outputDir);
       await openDir(outputDir);
+      saveLastOutputDir(outputDir, configCwd || getRuntimePaths().homeDir);
       return { success: true, warnings: [], errors: [], outputDir };
     } catch (err) {
       reply.code(400);

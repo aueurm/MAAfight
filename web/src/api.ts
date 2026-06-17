@@ -65,6 +65,10 @@ export interface SaveOperatorsResponse extends ApiBase {
   count?: number;
 }
 
+export interface OpenOutputDirResponse extends ApiBase {
+  outputDir?: string;
+}
+
 export interface GenerateRequest {
   stage: string;
   operatorsJson?: string;
@@ -107,8 +111,8 @@ export async function validateScript(scriptJson: string): Promise<ValidateRespon
   return postJson<ValidateResponse>("/api/validate", { scriptJson });
 }
 
-export async function openOutputDir(outputDir: string): Promise<ApiBase> {
-  return postJson<ApiBase>("/api/open-output-dir", { outputDir });
+export async function openOutputDir(outputDir: string): Promise<OpenOutputDirResponse> {
+  return postJson<OpenOutputDirResponse>("/api/open-output-dir", { outputDir });
 }
 
 export async function saveOperatorsJson(operatorsJson: string): Promise<SaveOperatorsResponse> {

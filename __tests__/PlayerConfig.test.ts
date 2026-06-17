@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { loadConfiguredOperatorBox, saveOperatorConfig } from "../src/player/PlayerConfig";
+import { loadConfiguredOperatorBox, loadLastOutputDir, saveLastOutputDir, saveOperatorConfig } from "../src/player/PlayerConfig";
 import { OPERATOR_POOLS } from "../src/shared/operatorDB";
 
 function makeTmpDir(): string {
@@ -52,6 +52,22 @@ describe("PlayerConfig", () => {
     expect(loaded).not.toBeNull();
     expect(loaded!.box.size).toBe(1);
     expect(loaded!.box.has(ownedName)).toBe(true);
+  });
+
+  it("should remember last output directory and preserve it when saving operators", () => {
+    tmpDir = makeTmpDir();
+    const outputDir = path.join(tmpDir, "custom-output");
+    const ownedName = OPERATOR_POOLS.vanguard[0].name;
+
+    saveLastOutputDir(outputDir, tmpDir);
+    saveOperatorConfig(JSON.stringify([
+      { id: "owned", name: ownedName, rarity: 6, own: true, elite: 2, level: 90, potential: 1 },
+    ]), tmpDir);
+
+    expect(loadLastOutputDir(tmpDir)).toBe(outputDir);
+    const config = JSON.parse(fs.readFileSync(path.join(tmpDir, ".maafight", "config.json"), "utf-8"));
+    expect(config.operatorsPath).toBe("operators.json");
+    expect(config.lastOutputDir).toBe(outputDir);
   });
 
   it("should return null when local config is absent", () => {

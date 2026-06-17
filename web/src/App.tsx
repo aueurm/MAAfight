@@ -201,6 +201,7 @@ export default function App() {
         setErrors(response.errors || ["生成失败"]);
         return;
       }
+      if (response.outputDir) setOutputDir(response.outputDir);
       setJsonPreview(response.json || asJson(response.script));
       if (!fileName.trim() && response.fileName) setFileName(response.fileName);
     } catch (err) {
@@ -241,7 +242,11 @@ export default function App() {
     setErrors([]);
     try {
       const response = await openOutputDir(result?.outputDir || outputDir);
-      if (!response.success) setErrors(response.errors || ["打开输出目录失败"]);
+      if (!response.success) {
+        setErrors(response.errors || ["打开输出目录失败"]);
+        return;
+      }
+      if (response.outputDir) setOutputDir(response.outputDir);
     } catch (err) {
       setErrors([String(err)]);
     } finally {

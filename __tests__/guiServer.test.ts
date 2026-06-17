@@ -4,10 +4,12 @@ import * as path from "path";
 import type { FastifyInstance } from "fastify";
 import { createGuiServer } from "../src/gui/server";
 
-async function makeApp(): Promise<FastifyInstance> {
+async function makeApp(options: { configCwd?: string } = {}): Promise<FastifyInstance> {
+  const configCwd = options.configCwd || fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-config-"));
   return createGuiServer({
     webRoot: path.join(__dirname, "missing-web"),
     openDir: async () => undefined,
+    configCwd,
   });
 }
 
@@ -95,7 +97,8 @@ describe("GUI server routes", () => {
   });
 
   it("should create outputDir when generating a script", async () => {
-    const app = await makeApp();
+    const configCwd = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-config-"));
+    const app = await makeApp({ configCwd });
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-"));
     const outputDir = path.join(tmpRoot, "nested", "output");
     const fileName = "gui-test.json";
@@ -110,9 +113,11 @@ describe("GUI server routes", () => {
         fileName,
       },
     });
+    const configRes = await app.inject({ method: "GET", url: "/api/config" });
     await app.close();
 
     const body = JSON.parse(res.body);
+    const configBody = JSON.parse(configRes.body);
     expect(res.statusCode).toBe(200);
     expect(body.success).toBe(true);
     expect(body.outputPath).toBe(path.join(outputDir, fileName));
@@ -129,6 +134,7 @@ describe("GUI server routes", () => {
     expect(body.script.metadata.battlePlan).toBeDefined();
     expect(body.script.metadata.recommendedTasks.length).toBeGreaterThan(0);
     expect(body.script.metadata.operatorSelectionTrace.length).toBeGreaterThan(0);
+    expect(configBody.defaultOutputDir).toBe(outputDir);
   });
 
   it("should generate group-based scripts when squadMode is groups", async () => {
@@ -177,6 +183,34 @@ describe("GUI server routes", () => {
     const body = JSON.parse(res.body);
     expect(body.success).toBe(false);
     expect(body.errors[0]).toContain("Output directory does not exist");
+  });
+
+  it("should remember the last opened output directory", async () => {
+    const configCwd = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-config-"));
+    const opened: string[] = [];
+    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-open-output-"));
+    const app = await createGuiServer({
+      webRoot: path.join(__dirname, "missing-web"),
+      configCwd,
+      openDir: async dir => {
+        opened.push(dir);
+      },
+    });
+
+    const openRes = await app.inject({
+      method: "POST",
+      url: "/api/open-output-dir",
+      payload: { outputDir },
+    });
+    const configRes = await app.inject({ method: "GET", url: "/api/config" });
+    await app.close();
+
+    const openBody = JSON.parse(openRes.body);
+    const configBody = JSON.parse(configRes.body);
+    expect(openRes.statusCode).toBe(200);
+    expect(openBody.success).toBe(true);
+    expect(opened).toEqual([outputDir]);
+    expect(configBody.defaultOutputDir).toBe(outputDir);
   });
 
   it("should save pasted operators and expose configured status", async () => {
