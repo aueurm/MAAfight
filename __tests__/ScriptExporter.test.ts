@@ -1,4 +1,4 @@
-import { exportToCopilotFormat } from "../src/battle/ScriptExporter";
+import { exportToCopilotFormat } from "../src/copilot/ScriptExporter";
 import type { BattleScript } from "../src/types";
 
 function makeScript(overrides: Partial<BattleScript> = {}): BattleScript {
@@ -87,22 +87,47 @@ describe("exportToCopilotFormat", () => {
     const json = exportToCopilotFormat(makeScript());
     const parsed = JSON.parse(json);
     const deployAction = parsed.actions.find((a: { type: string }) => a.type === "Deploy");
-    expect(deployAction.location).toEqual([3, 2]);
+    expect(deployAction.location).toEqual([2, 3]);
     expect(deployAction.direction).toBe("Right");
   });
 
-  it("should export Wait action with time field", () => {
+  it("should preserve standard action conditions and delays", () => {
     const script = makeScript({
       actions: [
-        { type: "SpeedUp" },
-        { type: "Wait", time: 5 },
-        { type: "SkillDaemon" },
+        {
+          type: "Deploy",
+          name: "推进之王",
+          location: [3, 2],
+          direction: "Right",
+          costs: 12,
+          cost_changes: 3,
+          kills: 4,
+          cooling: 1,
+          time_elapsed: 5000,
+          pre_delay: 100,
+          post_delay: 200,
+          skip_if_not_ready: false,
+          distance: [1, -1],
+          doc: "deploy",
+          doc_color: "orange",
+        },
       ],
     });
     const json = exportToCopilotFormat(script);
     const parsed = JSON.parse(json);
-    const waitAction = parsed.actions.find((a: { type: string }) => a.type === "Wait");
-    expect(waitAction.time).toBe(5);
+    expect(parsed.actions[0]).toMatchObject({
+      costs: 12,
+      cost_changes: 3,
+      kills: 4,
+      cooling: 1,
+      time_elapsed: 5000,
+      pre_delay: 100,
+      post_delay: 200,
+      skip_if_not_ready: false,
+      distance: [1, -1],
+      doc: "deploy",
+      doc_color: "orange",
+    });
   });
 
   it("should handle empty doc title and details", () => {

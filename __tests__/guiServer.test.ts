@@ -22,7 +22,7 @@ describe("GUI server routes", () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.success).toBe(true);
-    expect(body.version).toBe("1.0.0-alpha");
+    expect(body.version).toBe("2.0.0-alpha.0");
   });
 
   it("should serve built web assets instead of SPA fallback html", async () => {
@@ -62,7 +62,9 @@ describe("GUI server routes", () => {
     expect(body.defaultCacheDir).toBe(path.join(homeDir, "cache"));
     expect(body.defaultCacheLevelsDir).toBe(path.join(homeDir, "cache", "levels"));
     expect(body.defaultLogDir).toBe(path.join(homeDir, "logs"));
-    expect(body.defaultSquadMode).toBe("fixed");
+    expect(body.engine).toBe("v2");
+    expect(body.defaultSquadMode).toBeUndefined();
+    expect(body.supportedGenerators).toBeUndefined();
     expect(fs.existsSync(path.join(homeDir, "output"))).toBe(true);
     expect(fs.existsSync(path.join(homeDir, "cache"))).toBe(true);
     expect(fs.existsSync(path.join(homeDir, "logs"))).toBe(true);
@@ -130,43 +132,37 @@ describe("GUI server routes", () => {
     expect(Array.isArray(generated.groups)).toBe(true);
     expect(Array.isArray(generated.actions)).toBe(true);
     expect(body.script.groups).toEqual([]);
-    expect(body.script.metadata.squadMode).toBe("fixed");
-    expect(body.script.metadata.battlePlan).toBeDefined();
-    expect(body.script.metadata.recommendedTasks.length).toBeGreaterThan(0);
-    expect(body.script.metadata.operatorSelectionTrace.length).toBeGreaterThan(0);
+    expect(body.script.metadata.source).toBe("maafight-v2-corpus");
+    expect(body.script.metadata.candidateScore).toBeGreaterThan(0);
+    expect(body.analysis.pressureWindows.length).toBeGreaterThan(0);
+    expect(body.scriptHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(body.modelVersion).toMatch(/^corpus-prior-v1-/);
+    expect(generated.opers.every((operator: { requirements?: unknown }) => operator.requirements === undefined)).toBe(true);
+    expect(generated.actions.some((action: { type: string }) => action.type === "Wait")).toBe(false);
     expect(configBody.defaultOutputDir).toBe(outputDir);
   });
 
-  it("should generate group-based scripts when squadMode is groups", async () => {
-    const app = await makeApp();
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-groups-"));
-    const outputDir = path.join(tmpRoot, "output");
-
-    const res = await app.inject({
+  it("should record and summarize battle feedback", async () => {
+    const configCwd = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-feedback-"));
+    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-feedback-output-"));
+    const app = await makeApp({ configCwd });
+    const generateRes = await app.inject({
       method: "POST",
       url: "/api/generate",
-      payload: {
-        stage: "GT-1",
-        pretty: true,
-        outputDir,
-        fileName: "groups.json",
-        squadMode: "groups",
-      },
+      payload: { stage: "GT-1", outputDir, fileName: "feedback.json" },
     });
+    const generated = JSON.parse(generateRes.body);
+    const feedbackRes = await app.inject({
+      method: "POST",
+      url: "/api/feedback",
+      payload: { scriptHash: generated.scriptHash, killed: 42, total: 42 },
+    });
+    const summaryRes = await app.inject({ method: "GET", url: `/api/feedback/summary?stage=${generated.stageId}` });
     await app.close();
 
-    const body = JSON.parse(res.body);
-    expect(res.statusCode).toBe(200);
-    expect(body.success).toBe(true);
-    expect(body.script.opers).toEqual([]);
-    expect(body.script.groups.length).toBeGreaterThan(0);
-
-    const groupNames = new Set(body.script.groups.map((g: { name: string }) => g.name));
-    const deployNames = body.script.actions
-      .filter((a: { type: string }) => a.type === "Deploy")
-      .map((a: { name: string }) => a.name);
-    expect(deployNames.length).toBeGreaterThan(0);
-    expect(deployNames.every((name: string) => groupNames.has(name))).toBe(true);
+    expect(feedbackRes.statusCode).toBe(200);
+    expect(JSON.parse(feedbackRes.body).record.ratio).toBe(1);
+    expect(JSON.parse(summaryRes.body).summary).toMatchObject({ count: 1, usableCount: 1, fullClearCount: 1 });
   });
 
   it("should return error for invalid output directory without crashing", async () => {
@@ -239,7 +235,7 @@ describe("GUI server routes", () => {
     expect(saveBody.success).toBe(true);
     expect(saveBody.count).toBe(1);
     expect(fs.existsSync(saveBody.operatorsPath)).toBe(true);
-    expect(configBody.version).toBe("1.0.0-alpha");
+    expect(configBody.version).toBe("2.0.0-alpha.0");
     expect(configBody.defaultOutputDir).toBe(path.join(process.cwd(), "output"));
     expect(configBody.defaultCacheDir).toBe(path.join(process.cwd(), "cache"));
     expect(configBody.defaultCacheLevelsDir).toBe(path.join(process.cwd(), "cache", "levels"));

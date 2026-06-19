@@ -128,9 +128,9 @@ GUI 也支持选择、输入路径或粘贴 operators JSON。
 4. 默认 `fixed` 模式下，`opers` 尽量补满 12 名真实干员；未部署的干员只作为编队补位，不生成部署动作。
 5. 玩家干员库不足时，通过 `metadata.operatorGaps` 记录缺口，并保留兜底生成能力。
 6. 本地初始化后，`.maafight/operators.json` 会作为默认干员库加载。
-7. 如果玩家数据缺少模组信息，MAAfight 允许根据 `operatorStrength.cn.json` 的 `modulePriority` 输出推荐模组字段。
+7. 默认省略 `requirements`；只有显式 `requirementsMode: "player"` 时才导出玩家 JSON 中实际存在的数据。
 
-导出到 MAA copilot 时，干员库只用于选择真实干员和填充 `requirements`。不得把职业、候选列表、练度展示或模组展示拼进 `opers[].name`。完整约束见 [MAA Copilot 导出契约](maa-copilot-export-contract.md)。
+导出到 MAA copilot 时，干员库用于选择真实干员；显式 `player` 模式还可填充真实 `requirements`。不得把职业、候选列表、练度展示或模组展示拼进 `opers[].name`。完整约束见 [MAA Copilot 导出契约](maa-copilot-export-contract.md)。
 
 注意：包含 `stage_name`、`actions`、`groups` 的文件是 MAA copilot 作业文件，不是 operators JSON。不要用作业文件作为玩家干员库样本。
 

@@ -3,10 +3,8 @@ import * as path from "path";
 import type { FastifyInstance } from "fastify";
 import {
   analyzeStage,
-  DEFAULT_SQUAD_MODE,
   generateStage,
   searchStageSuggestions,
-  SUPPORTED_SQUAD_MODES,
   validateScriptJson,
 } from "../core/pipeline";
 import { openOutputDirectory } from "./openBrowser";
@@ -19,7 +17,8 @@ import {
 } from "../player/PlayerConfig";
 import { writeGuiLog } from "../runtime/logger";
 import { getRuntimePaths } from "../runtime/paths";
-import type { AnalyzeRequest, GenerateRequest, OpenOutputDirRequest, SaveOperatorsRequest, ValidateRequest } from "./types";
+import { FeedbackStore, hashOperatorBox } from "../feedback/FeedbackStore";
+import type { AnalyzeRequest, FeedbackRequest, GenerateRequest, OpenOutputDirRequest, SaveOperatorsRequest, ValidateRequest } from "./types";
 
 export interface GuiRouteOptions {
   openDir?: (outputDir: string) => Promise<void>;
@@ -64,8 +63,7 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
       defaultCacheLevelsDir: runtime.cacheLevelsDir,
       defaultLogDir: runtime.logDir,
       defaultOperatorsPath: getDefaultOperatorsPath(cwd),
-      defaultSquadMode: DEFAULT_SQUAD_MODE,
-      supportedSquadModes: SUPPORTED_SQUAD_MODES,
+      engine: "v2",
       configuredOperators: configured ? {
         operatorsPath: configured.operatorsPath,
         count: configured.box.size,
@@ -119,17 +117,19 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
         stage: body.stage,
         operatorsJson: body.operatorsJson,
         operatorFilePath: body.operatorFilePath,
-        squadMode: body.squadMode || DEFAULT_SQUAD_MODE,
         pretty: body.pretty,
         outputDir,
         fileName: body.fileName,
+        newCandidate: body.newCandidate,
+        requirementsMode: body.requirementsMode,
       }, {
         cacheDir: runtime.cacheLevelsDir,
+        stateDir: cwd,
       });
       saveLastOutputDir(result.outputDir, cwd);
       writeGuiLog("generate_success", {
         stage: body.stage,
-        squadMode: body.squadMode || DEFAULT_SQUAD_MODE,
+        engine: "v2",
         outputPath: result.outputPath,
         warningCount: result.warnings.length + result.validation.warnings.length + result.protocol.warnings.length,
         errorCount: result.validation.errors.length + result.protocol.errors.length,
@@ -138,7 +138,7 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
     } catch (err) {
       writeGuiLog("generate_failed", {
         stage: body.stage,
-        squadMode: body.squadMode || DEFAULT_SQUAD_MODE,
+        engine: "v2",
         errorCount: 1,
         error: errorMessage(err),
       });
@@ -160,6 +160,39 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
       reply.code(400);
       return fail(err);
     }
+  });
+
+  app.post<{ Body: FeedbackRequest }>("/api/feedback", async (request, reply) => {
+    try {
+      const body = request.body || {};
+      if (!body.scriptHash?.trim()) {
+        reply.code(400);
+        return { success: false, warnings: [], errors: ["scriptHash is required"] };
+      }
+      const cwd = configCwd || getRuntimePaths().homeDir;
+      const configured = loadConfiguredOperatorBox(cwd);
+      const record = new FeedbackStore(cwd).recordFeedback({
+        scriptHash: body.scriptHash,
+        killed: body.killed as number,
+        total: body.total,
+        notes: body.notes,
+        currentOperatorBoxHash: hashOperatorBox(configured?.box.playerMap),
+      });
+      return { success: true, warnings: [], errors: [], record };
+    } catch (err) {
+      reply.code(400);
+      return fail(err);
+    }
+  });
+
+  app.get<{ Querystring: { stage?: string } }>("/api/feedback/summary", async request => {
+    const cwd = configCwd || getRuntimePaths().homeDir;
+    return {
+      success: true,
+      warnings: [],
+      errors: [],
+      summary: new FeedbackStore(cwd).summary(request.query.stage),
+    };
   });
 
   app.post<{ Body: OpenOutputDirRequest }>("/api/open-output-dir", async (request, reply) => {

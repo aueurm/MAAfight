@@ -1,6 +1,12 @@
 import type { StageIndexEntry } from "../types";
 import levelPaths from "./levelPaths.json";
-import { resolveByCode, searchStages as stageSearch, getAllCodes, resolveStage as stageResolve } from "./stageIndex";
+import {
+  resolveByCode,
+  resolveByFilePath,
+  searchStages as stageSearch,
+  getAllCodes,
+  resolveStage as stageResolve,
+} from "./stageIndex";
 
 function parseStageId(filePath: string): string {
   const match = filePath.match(/level_(.+)\.json$/);
@@ -22,7 +28,7 @@ function inferCategory(filePath: string): string {
 function buildIndex(): StageIndexEntry[] {
   return (levelPaths as string[]).map(filePath => {
     const stageId = parseStageId(filePath);
-    const meta = stageResolve(stageId);
+    const meta = stageResolve(stageId) || resolveByFilePath(filePath);
     return {
       stageId,
       filePath,
@@ -43,8 +49,15 @@ export function resolveStage(id: string): StageIndexEntry | null {
 
   if (direct) {
     if (direct.code) return direct;
-    const enriched = stageResolve(id);
-    if (enriched) return enriched;
+    const enriched = stageResolve(id) || resolveByFilePath(direct.filePath);
+    if (enriched) {
+      return {
+        ...direct,
+        code: enriched.code,
+        name: enriched.name,
+        levelId: enriched.levelId,
+      };
+    }
     return direct;
   }
 

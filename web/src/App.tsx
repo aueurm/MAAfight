@@ -1,19 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import {
   analyzeStage,
-  generateScript,
+  generateCopilot,
   getConfig,
   openOutputDir,
+  recordFeedback,
   saveOperatorsJson,
   searchStageSuggestions,
   validateScript,
   type ConfigResponse,
   type GenerateResponse,
-  type SquadMode,
+  type RequirementsMode,
   type StageSuggestion,
 } from "./api";
 
-type ActionName = "analyze" | "generate" | "validate" | "open" | "browse" | "saveOperators" | null;
+type ActionName = "analyze" | "generate" | "validate" | "open" | "browse" | "saveOperators" | "feedback" | null;
 
 interface OperatorStatus {
   operatorsPath: string;
@@ -37,13 +38,12 @@ function suggestFileName(stage: string, stageName?: string): string {
 
 function compactAnalysis(response: GenerateResponse | null): string {
   const analysis = response?.analysis as any;
-  if (!analysis) return "";
-  const composition = analysis.enemyComposition || {};
+  if (!response || !analysis) return "";
   return [
     `Stage: ${response.stageName || response.stageId || ""}`,
-    `Difficulty: ${analysis.requirements?.difficultyRating || analysis.difficultyRating || "unknown"}`,
-    `Composition: ${composition.compositionType || "unknown"} / ${composition.totalCount ?? 0} enemies`,
-    `Strategy: ${analysis.suggestedStrategy?.name || "unknown"}`,
+    `Difficulty: ${analysis.difficulty || "unknown"}`,
+    `Enemies: ${analysis.enemyCount ?? 0}; lanes: ${analysis.laneCount ?? 0}`,
+    `Pressure windows: ${analysis.pressureWindows?.length ?? 0}`,
   ].join("\n");
 }
 
@@ -65,7 +65,8 @@ export default function App() {
   const [selectedOperatorFileName, setSelectedOperatorFileName] = useState("");
   const [operatorStatus, setOperatorStatus] = useState<OperatorStatus | null>(null);
   const [showOperatorsPaste, setShowOperatorsPaste] = useState(false);
-  const [squadMode, setSquadMode] = useState<SquadMode>("fixed");
+  const [requirementsMode, setRequirementsMode] = useState<RequirementsMode>("none");
+  const [newCandidate, setNewCandidate] = useState(false);
   const [pretty, setPretty] = useState(true);
   const [outputDir, setOutputDir] = useState("");
   const [fileName, setFileName] = useState("");
@@ -76,6 +77,10 @@ export default function App() {
   const [loading, setLoading] = useState<ActionName>(null);
   const [copiedJson, setCopiedJson] = useState(false);
   const [copiedDebug, setCopiedDebug] = useState(false);
+  const [feedbackKilled, setFeedbackKilled] = useState("");
+  const [feedbackTotal, setFeedbackTotal] = useState("");
+  const [feedbackNotes, setFeedbackNotes] = useState("");
+  const [feedbackStatus, setFeedbackStatus] = useState("");
   const operatorFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -84,7 +89,6 @@ export default function App() {
         setConfigInfo(config);
         setOutputDir(config.defaultOutputDir);
         setDefaultOperatorPath(config.defaultOperatorsPath || "");
-        setSquadMode(config.defaultSquadMode);
         if (config.configuredOperators) {
           setOperatorFilePath(config.configuredOperators.operatorsPath);
           setOperatorStatus({
@@ -187,13 +191,14 @@ export default function App() {
     setCopiedJson(false);
     setCopiedDebug(false);
     try {
-      const response = await generateScript({
+      const response = await generateCopilot({
         stage,
         ...operatorPayload(),
-        squadMode,
         pretty,
         outputDir,
         fileName: fileName.trim() || undefined,
+        newCandidate,
+        requirementsMode,
       });
       setWarnings(response.warnings || []);
       setResult(response);
@@ -203,7 +208,38 @@ export default function App() {
       }
       if (response.outputDir) setOutputDir(response.outputDir);
       setJsonPreview(response.json || asJson(response.script));
+      const enemyTotal = (response.analysis as any)?.enemyCount;
+      if (Number.isInteger(enemyTotal) && enemyTotal > 0) setFeedbackTotal(String(enemyTotal));
+      setFeedbackStatus("");
       if (!fileName.trim() && response.fileName) setFileName(response.fileName);
+    } catch (err) {
+      setErrors([String(err)]);
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function runFeedback() {
+    if (!result?.scriptHash) {
+      setErrors(["当前结果没有可关联的脚本 hash"]);
+      return;
+    }
+    const killed = Number(feedbackKilled);
+    const total = feedbackTotal.trim() ? Number(feedbackTotal) : undefined;
+    setLoading("feedback");
+    setErrors([]);
+    try {
+      const response = await recordFeedback({
+        scriptHash: result.scriptHash,
+        killed,
+        total,
+        notes: feedbackNotes,
+      });
+      if (!response.success || !response.record) {
+        setErrors(response.errors || ["反馈保存失败"]);
+        return;
+      }
+      setFeedbackStatus(`已记录歼灭率 ${(response.record.ratio * 100).toFixed(1)}%${response.record.usableForLearning ? "，将用于后续候选" : "，仅用于统计"}`);
     } catch (err) {
       setErrors([String(err)]);
     } finally {
@@ -333,7 +369,7 @@ export default function App() {
       cacheDir: configInfo?.defaultCacheDir,
       logDir: configInfo?.defaultLogDir,
       stage,
-      squadMode,
+      engine: "v2",
       pretty,
       fileName: fileName || result?.fileName,
       warningCount: warnings.length,
@@ -484,12 +520,16 @@ export default function App() {
           )}
 
           <label>
-            <span>编队模式</span>
-            <select value={squadMode} onChange={e => setSquadMode(e.target.value as SquadMode)}>
-              <option value="fixed">固定编队（fixed）</option>
-              <option value="groups">分组替换（groups）</option>
-              <option value="hybrid">混合模式（hybrid）</option>
+            <span>练度字段</span>
+            <select value={requirementsMode} onChange={e => setRequirementsMode(e.target.value as RequirementsMode)}>
+              <option value="none">默认省略 requirements</option>
+              <option value="player">导出玩家真实数据</option>
             </select>
+          </label>
+
+          <label className="toggle">
+            <input type="checkbox" checked={newCandidate} onChange={e => setNewCandidate(e.target.checked)} />
+            <span>忽略已成功版本，生成新候选</span>
           </label>
 
           <label className="toggle">
@@ -535,7 +575,29 @@ export default function App() {
           {result?.success && errors.length === 0 && <div className="alert success"><p>成功</p></div>}
           {analysisSummary && <pre className="summary">{analysisSummary}</pre>}
           {result?.explain && <pre className="summary">{result.explain}</pre>}
-          {result?.validation && <pre className="summary">{asJson(result.validation)}</pre>}
+          {result?.validation !== undefined && <pre className="summary">{asJson(result.validation)}</pre>}
+          {result?.scriptHash && (
+            <div className="paste-panel">
+              <span className="section-label">实战反馈</span>
+              <p className="hint">候选评分：{result.candidateScore?.toFixed(2) ?? "-"}；模型：{result.modelVersion || "-"}</p>
+              <label>
+                <span>击杀数</span>
+                <input value={feedbackKilled} onChange={e => setFeedbackKilled(e.target.value)} inputMode="numeric" />
+              </label>
+              <label>
+                <span>敌人总数</span>
+                <input value={feedbackTotal} onChange={e => setFeedbackTotal(e.target.value)} inputMode="numeric" />
+              </label>
+              <label>
+                <span>备注</span>
+                <input value={feedbackNotes} onChange={e => setFeedbackNotes(e.target.value)} />
+              </label>
+              <button type="button" onClick={runFeedback} disabled={loading !== null || !feedbackKilled.trim()}>
+                {loading === "feedback" ? "保存中..." : "记录实战结果"}
+              </button>
+              {feedbackStatus && <p className="saved">{feedbackStatus}</p>}
+            </div>
+          )}
         </div>
       </section>
 

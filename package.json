@@ -1,19 +1,22 @@
 {
   "name": "maafight",
-  "version": "1.0.0-alpha",
-  "description": "Preview local Arknights MAA copilot script generator (CLI + GUI)",
+  "version": "2.0.0-alpha.0",
+  "description": "Corpus-driven Arknights MAA copilot v2 generator (CLI + GUI)",
   "main": "dist/index.js",
   "bin": {
     "maafight": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc && npm run build:web",
-    "build:node": "tsc",
+    "build": "npm run build:node && npm run build:web",
+    "build:node": "node scripts/clean-dist.js && tsc",
     "build:web": "vite build --config web/vite.config.ts",
     "gui": "npm run build && node dist/index.js gui",
     "release:preview": "npm run build && node scripts/release-preview.js",
     "start": "node dist/index.js",
     "benchmark": "node scripts/benchmark.js",
+    "corpus:audit": "node scripts/build-corpus-model.js --audit-only",
+    "model:build": "node scripts/build-corpus-model.js",
+    "combat-data:build": "node scripts/build-operator-combat-model.js",
     "verify": "tsc && jest --coverage && node scripts/benchmark.js --skip-build",
     "test": "jest --coverage",
     "test:watch": "jest --watch"

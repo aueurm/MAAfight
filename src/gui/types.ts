@@ -1,4 +1,4 @@
-import type { SquadMode } from "../core/pipeline";
+import type { RequirementsMode } from "../core/pipeline";
 
 export interface ApiSuccess<T> {
   success: true;
@@ -22,10 +22,18 @@ export interface AnalyzeRequest {
 }
 
 export interface GenerateRequest extends AnalyzeRequest {
-  squadMode?: SquadMode;
   pretty?: boolean;
   outputDir?: string;
   fileName?: string;
+  newCandidate?: boolean;
+  requirementsMode?: RequirementsMode;
+}
+
+export interface FeedbackRequest {
+  scriptHash?: string;
+  killed?: number;
+  total?: number;
+  notes?: string;
 }
 
 export interface ValidateRequest {

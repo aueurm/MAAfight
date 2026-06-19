@@ -2,12 +2,10 @@ import * as fs from "fs";
 import * as path from "path";
 import { PRTSMapLoader } from "./loader/PRTSMapLoader";
 import { PRTSMapAdapter } from "./adapter/PRTSMapAdapter";
-import { analyzeBattle } from "./battle/BattleAnalyzer";
-import { generateScript, type GeneratorConfig } from "./battle/ScriptGenerator";
-import { validateScript } from "./battle/ScriptValidator";
-import { validateMAAProtocol } from "./battle/MAAProtocolValidator";
-import { buildPlanningReport, formatPlanningReport } from "./battle/PlanningReport";
-import { exportToCopilotFormat } from "./battle/ScriptExporter";
+import { validateScript } from "./copilot/ScriptValidator";
+import { validateMAAProtocol } from "./copilot/MAAProtocolValidator";
+import { exportToCopilotFormat } from "./copilot/ScriptExporter";
+import { computeScriptHash, extractStageFacts, generateCopilotScript } from "./engine";
 import { listStages, searchStages, listByCategory, resolveStage } from "./loader/levelIndex";
 import { OperatorBox } from "./player/OperatorBox";
 import { loadConfiguredOperatorBox, saveOperatorConfig } from "./player/PlayerConfig";
@@ -15,7 +13,8 @@ import { startGuiServer } from "./gui/server";
 import { openUrl } from "./gui/openBrowser";
 import { getRuntimePaths } from "./runtime/paths";
 import { writeGuiLog } from "./runtime/logger";
-import type { MapData, BattleScript, PRTSLevelData, StageIndexEntry } from "./types";
+import { FeedbackStore, hashOperatorBox, hashScriptJson } from "./feedback/FeedbackStore";
+import type { BattleScript, PRTSLevelData, StageIndexEntry } from "./types";
 
 const CACHE_DIR = getRuntimePaths().cacheLevelsDir;
 const DATA_URL = process.env.MAAFIGHT_DATA_URL || "https://map.ark-nights.com";
@@ -31,12 +30,16 @@ interface Args {
   category?: string;
   limit?: number;
   file?: string;
-  config?: string;
   operators?: string;
   operatorsStdin?: boolean;
   data?: string;
   explain?: boolean;
   subcommand?: string;
+  newCandidate?: boolean;
+  requirementsMode?: "none" | "player";
+  killed?: number;
+  total?: number;
+  notes?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -44,9 +47,9 @@ function parseArgs(argv: string[]): Args {
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
-    if (["generate", "list", "analyze", "validate", "info", "init", "operators", "gui"].includes(arg)) {
+    if (["generate", "list", "analyze", "validate", "info", "init", "operators", "feedback", "gui"].includes(arg)) {
       args.command = arg;
-      if (arg === "operators" && argv[i + 1] && !argv[i + 1].startsWith("-")) {
+      if ((arg === "operators" || arg === "feedback") && argv[i + 1] && !argv[i + 1].startsWith("-")) {
         args.subcommand = argv[++i];
       }
     } else if (arg === "--stage" || arg === "-s") {
@@ -67,8 +70,6 @@ function parseArgs(argv: string[]): Args {
       args.limit = parseInt(argv[++i], 10);
     } else if (arg === "--file" || arg === "-f") {
       args.file = argv[++i];
-    } else if (arg === "--config") {
-      args.config = argv[++i];
     } else if (arg === "--operators") {
       args.operators = argv[++i];
     } else if (arg === "--operators-stdin") {
@@ -77,6 +78,18 @@ function parseArgs(argv: string[]): Args {
       args.data = argv[++i];
     } else if (arg === "--explain") {
       args.explain = true;
+    } else if (arg === "--new-candidate") {
+      args.newCandidate = true;
+    } else if (arg === "--requirements") {
+      const value = argv[++i];
+      if (value !== "none" && value !== "player") throw new Error(`Unsupported requirements mode: ${value}`);
+      args.requirementsMode = value;
+    } else if (arg === "--killed") {
+      args.killed = Number.parseInt(argv[++i], 10);
+    } else if (arg === "--total") {
+      args.total = Number.parseInt(argv[++i], 10);
+    } else if (arg === "--notes") {
+      args.notes = argv[++i];
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -86,7 +99,7 @@ function parseArgs(argv: string[]): Args {
 
   if (!args.command) {
     console.error("Usage: maafight <command> [options]");
-    console.error("Commands: generate, list, analyze, validate, info, init, operators, gui");
+    console.error("Commands: generate, list, analyze, validate, info, init, operators, feedback, gui");
     console.error("Try: maafight --help");
     process.exit(1);
   }
@@ -119,13 +132,15 @@ function isSpawnActionType(type: unknown): boolean {
   return type === "SPAWN" || type === 0;
 }
 
-function normalizeBuildableType(type: unknown): "melee" | "ranged" | "none" {
+function normalizeBuildableType(type: unknown): "melee" | "ranged" | "all" | "none" {
   if (type === "MELEE" || type === 1) return "melee";
   if (type === "RANGED" || type === 2) return "ranged";
+  if (type === "ALL") return "all";
   return "none";
 }
 
 function countDeploymentTiles(prtsData: Pick<PRTSLevelData, "mapData">): { total: number; melee: number; ranged: number } {
+  let total = 0;
   let melee = 0;
   let ranged = 0;
 
@@ -135,10 +150,15 @@ function countDeploymentTiles(prtsData: Pick<PRTSLevelData, "mapData">): { total
       const type = normalizeBuildableType(tile?.buildableType);
       if (type === "melee") melee++;
       if (type === "ranged") ranged++;
+      if (type === "all") {
+        melee++;
+        ranged++;
+      }
+      if (type !== "none") total++;
     }
   }
 
-  return { total: melee + ranged, melee, ranged };
+  return { total, melee, ranged };
 }
 
 function readStdin(): Promise<string> {
@@ -198,13 +218,14 @@ function warnIfOperatorNamesDoNotMatchPools(box: OperatorBox): void {
 }
 
 function printHelp(): void {
-  console.log(`MAAfight - rule-based Arknights MAA copilot script generator
+  console.log(`MAAfight v2 - corpus-driven MAA copilot script generator
 
 Usage: maafight <command> [options]
 
 Commands:
   init       Initialize local player operator database
   operators Manage local player operator database
+  feedback  Record or summarize real battle kill results
   generate   Generate copilot battle script for a stage
   gui        Start local Web GUI preview
   list       List available stages
@@ -222,11 +243,15 @@ Options:
   --category, -c <cat> Filter by category (main, hard, campaign, weekly, crisis, activity)
   --limit <n>         Max results for list command (default: 50)
   --file, -f <path>   Input script file for validate command
-  --config <path>      Generator config JSON file
   --operators <path>   MAA operator export JSON for personalized script
   --operators-stdin    Read MAA operator export JSON from stdin for init
   --data, -d <path>    Use local PRTS.Map JSON file instead of index lookup
   --explain            Print planning confidence, risks, and deployment reasons
+  --new-candidate      Ignore a previous 100% result and search again
+  --requirements <mode> none (default) or player
+  --killed <n>         Killed enemies for feedback record
+  --total <n>          Total enemies for feedback record (optional when known)
+  --notes <text>       Optional feedback note
   --help, -h           Show this help
 
 Examples:
@@ -235,6 +260,8 @@ Examples:
   maafight operators info
   maafight gui
   maafight generate --stage a001_01
+  maafight feedback record --file script.json --killed 35 --total 42
+  maafight feedback summary --stage GT-1
   maafight generate --data ./level_OF-3.json --output script.json --pretty
   maafight list --search CE
   maafight list --category weekly
@@ -343,49 +370,98 @@ async function cmdGenerate(args: Args): Promise<void> {
   await loader.loadEnemyDatabase();
   const displayName = getDisplayStageName(stageId, resolved);
   const mapData = adapter.adapt(prtsData, stageId, displayName);
-  const analysis = analyzeBattle(mapData);
-
-  let config: GeneratorConfig = {};
-  if (args.config && fs.existsSync(args.config)) {
-    config = JSON.parse(fs.readFileSync(args.config, "utf-8"));
-  }
-
+  const facts = extractStageFacts(mapData);
   const operatorSource = loadOperatorBoxForGeneration(args);
+  const playerOperators = operatorSource?.box.playerMap;
   if (operatorSource) {
     const mode = operatorSource.configured ? "local operator database" : "player data";
     if (!args.quiet) {
       console.error(`Loaded ${operatorSource.box.size} owned operators from ${mode}: ${operatorSource.source}`);
     }
-    config = { ...config, playerOperators: operatorSource.box.playerMap };
   }
+  const feedbackStore = new FeedbackStore(getRuntimePaths().homeDir);
+  const operatorBoxHash = hashOperatorBox(playerOperators);
+  let reusedFromGenerationId: string | undefined;
+  let script: BattleScript;
+  let modelVersion: string;
+  let combatDataVersion: string;
+  let combatCoverage: number;
+  let candidateScore: number;
+  let scoreBreakdown: Record<string, number>;
 
-  const script = generateScript(displayName, mapData, analysis, config);
+  const successful = !args.newCandidate ? feedbackStore.successfulGeneration(stageId, operatorBoxHash) : undefined;
+  if (successful?.engineVersion === "v2") {
+    script = JSON.parse(JSON.stringify(successful.script)) as BattleScript;
+    reusedFromGenerationId = successful.generationId;
+    modelVersion = successful.modelVersion;
+    combatDataVersion = successful.combatDataVersion;
+    combatCoverage = successful.combatCoverage;
+    candidateScore = successful.candidateScore;
+    scoreBreakdown = successful.scoreBreakdown;
+    if (!args.quiet) console.error(`Reused 100% feedback generation: ${successful.generationId}`);
+  } else {
+    const result = generateCopilotScript(displayName, mapData, {
+      playerOperators,
+      requirementsMode: args.requirementsMode || "none",
+      excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash),
+      feedbackAdjustment: (_script, _hash, breakdown) => feedbackStore.feedbackAdjustment(stageId, operatorBoxHash, { ...breakdown }),
+    });
+    script = result.script;
+    modelVersion = result.modelVersion;
+    combatDataVersion = result.combatModelVersion;
+    combatCoverage = result.combatCoverage;
+    candidateScore = result.score;
+    scoreBreakdown = { ...result.breakdown };
+    if (!args.quiet) result.warnings.forEach(warning => console.error(`Warning: ${warning}`));
+  }
   const validation = validateScript(script, mapData);
   const protocol = validateMAAProtocol(script);
-  const report = buildPlanningReport({ mapData, analysis, script, validation, protocol });
-
-  if (!validation.valid && !args.quiet) {
-    console.error("Warning: Script validation had errors:");
-    validation.errors.forEach(e => console.error(`  - [${e.code}] ${e.message}`));
-  }
-  if (!protocol.valid && !args.quiet) {
-    console.error("Warning: MAA protocol validation had errors:");
-    protocol.errors.forEach(e => console.error(`  - [${e.code}] ${e.message}`));
+  if (!validation.valid || !protocol.valid) {
+    const errors = [...validation.errors.map(error => error.message), ...protocol.errors.map(error => error.message)];
+    throw new Error(`V2 candidate failed validation: ${errors.join("; ")}`);
   }
 
   if (args.explain) {
-    process.stderr.write(formatPlanningReport(report, script) + "\n");
+    process.stderr.write([
+      `Stage: ${displayName}`,
+      `Facts: ${facts.summary}`,
+      `Candidate score: ${candidateScore.toFixed(2)} (ranking only, not a clear rate)`,
+    ].join("\n") + "\n");
   }
 
+  const scriptHash = computeScriptHash(script);
+  const generationId = feedbackStore.createGenerationId();
+  script.metadata = { ...script.metadata, generationId, scriptHash };
   const output = exportToCopilotFormat(script, { compress: !args.pretty });
+  const outputPath = args.output ? path.resolve(args.output) : "";
 
   if (args.output) {
+    fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
     fs.writeFileSync(args.output, output, "utf-8");
     if (!args.quiet) console.error(`Script written to: ${args.output}`);
   } else {
     process.stdout.write(output);
     if (!args.quiet) process.stdout.write("\n");
   }
+  feedbackStore.appendGeneration({
+    schemaVersion: 1,
+    generationId,
+    scriptHash,
+    stageId,
+    stageName: displayName,
+    operatorBoxHash,
+    engineVersion: "v2",
+    modelVersion,
+    combatDataVersion,
+    candidateScore,
+    scoreBreakdown,
+    combatCoverage,
+    enemyTotal: facts.enemyCount,
+    outputPath,
+    script,
+    reusedFromGenerationId,
+    createdAt: new Date().toISOString(),
+  });
 }
 
 function cmdList(args: Args): void {
@@ -456,7 +532,7 @@ async function cmdAnalyze(args: Args): Promise<void> {
   await loader.loadEnemyDatabase();
   const displayName = getDisplayStageName(stageId, resolved);
   const mapData = adapter.adapt(prtsData, stageId, displayName);
-  const analysis = analyzeBattle(mapData);
+  const analysis = extractStageFacts(mapData);
 
   if (args.operators && fs.existsSync(args.operators)) {
     const box = new OperatorBox(args.operators);
@@ -571,6 +647,33 @@ async function cmdGui(): Promise<void> {
   }
 }
 
+function cmdFeedback(args: Args): void {
+  const store = new FeedbackStore(getRuntimePaths().homeDir);
+  if (args.subcommand === "summary") {
+    console.log(JSON.stringify(store.summary(args.stage), null, 2));
+    return;
+  }
+  if (args.subcommand !== "record") {
+    throw new Error("Usage: maafight feedback record|summary [options]");
+  }
+  if (!args.file || !fs.existsSync(args.file)) {
+    throw new Error("--file <script.json> is required for feedback record");
+  }
+  if (!Number.isInteger(args.killed)) {
+    throw new Error("--killed <n> is required for feedback record");
+  }
+  const rawJson = fs.readFileSync(args.file, "utf8");
+  const operatorSource = loadOperatorBoxForGeneration(args);
+  const record = store.recordFeedback({
+    scriptHash: hashScriptJson(rawJson),
+    killed: args.killed!,
+    total: args.total,
+    notes: args.notes,
+    currentOperatorBoxHash: hashOperatorBox(operatorSource?.box.playerMap),
+  });
+  console.log(JSON.stringify(record, null, 2));
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
@@ -581,6 +684,9 @@ async function main(): Promise<void> {
         break;
       case "operators":
         cmdOperators(args);
+        break;
+      case "feedback":
+        cmdFeedback(args);
         break;
       case "generate":
         await cmdGenerate(args);

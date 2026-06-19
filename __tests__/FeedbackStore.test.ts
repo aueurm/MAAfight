@@ -1,0 +1,93 @@
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import { FeedbackStore, hashOperatorBox } from "../src/feedback/FeedbackStore";
+import type { BattleScript, PlayerOperator } from "../src/types";
+
+function script(): BattleScript {
+  return {
+    stage_name: "TEST-1",
+    minimum_required: "v6.0.0",
+    actions: [{ type: "Deploy", name: "芬", location: [1, 2], direction: "Right", costs: 9 }],
+    doc: { title: "test", details: "" },
+    groups: [],
+    opers: [{ name: "芬", skill: 1 }],
+    generatedAt: "2026-06-18T00:00:00.000Z",
+    metadata: { source: "test" },
+    version: 3,
+  };
+}
+
+describe("FeedbackStore", () => {
+  let cwd: string;
+  let store: FeedbackStore;
+
+  beforeEach(() => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-feedback-"));
+    store = new FeedbackStore(cwd);
+  });
+
+  afterEach(() => fs.rmSync(cwd, { recursive: true, force: true }));
+
+  it("should exclude partial scripts and reuse full clear scripts", () => {
+    const box = new Map<string, PlayerOperator>([["芬", { id: "fen", name: "芬", rarity: 3, own: true, elite: 1, level: 55, potential: 6 }]]);
+    const boxHash = hashOperatorBox(box);
+    const base = script();
+    store.appendGeneration({
+      schemaVersion: 1,
+      generationId: "generation-1",
+      scriptHash: "hash-1",
+      stageId: "stage-1",
+      stageName: "TEST-1",
+      operatorBoxHash: boxHash,
+      engineVersion: "v2",
+      modelVersion: "model",
+      combatDataVersion: "combat",
+      candidateScore: 70,
+      scoreBreakdown: { combat: 70 },
+      combatCoverage: 0,
+      enemyTotal: 10,
+      outputPath: "",
+      script: base,
+      createdAt: "2026-06-18T00:00:00.000Z",
+    });
+    store.recordFeedback({ scriptHash: "hash-1", killed: 8, currentOperatorBoxHash: boxHash });
+    expect(store.excludedHashes("stage-1", boxHash)).toContain("hash-1");
+    expect(store.successfulGeneration("stage-1", boxHash)).toBeUndefined();
+
+    store.recordFeedback({ scriptHash: "hash-1", killed: 10, currentOperatorBoxHash: boxHash });
+    expect(store.successfulGeneration("stage-1", boxHash)?.generationId).toBe("generation-1");
+    expect(store.summary("stage-1")).toMatchObject({ count: 2, usableCount: 2, fullClearCount: 1 });
+  });
+
+  it("should keep changed operator-box feedback out of learning", () => {
+    store.appendGeneration({
+      schemaVersion: 1,
+      generationId: "generation-2",
+      scriptHash: "hash-2",
+      stageId: "stage-2",
+      stageName: "TEST-2",
+      operatorBoxHash: "old-box",
+      engineVersion: "v2",
+      modelVersion: "model",
+      combatDataVersion: "combat",
+      candidateScore: 60,
+      scoreBreakdown: {},
+      combatCoverage: 0,
+      enemyTotal: 5,
+      outputPath: "",
+      script: script(),
+      createdAt: "2026-06-18T00:00:00.000Z",
+    });
+    const record = store.recordFeedback({ scriptHash: "hash-2", killed: 5, currentOperatorBoxHash: "new-box" });
+    expect(record.operatorBoxChanged).toBe(true);
+    expect(record.usableForLearning).toBe(false);
+    expect(store.successfulGeneration("stage-2", "old-box")).toBeUndefined();
+  });
+
+  it("should skip malformed JSONL lines", () => {
+    fs.mkdirSync(path.dirname(store.feedbackPath), { recursive: true });
+    fs.writeFileSync(store.feedbackPath, "not-json\n", "utf8");
+    expect(store.loadFeedback().warnings).toHaveLength(1);
+  });
+});

@@ -2,14 +2,14 @@ import * as fs from "fs";
 import * as path from "path";
 import { PRTSMapLoader } from "../src/loader/PRTSMapLoader";
 import { PRTSMapAdapter } from "../src/adapter/PRTSMapAdapter";
-import { analyzeBattle } from "../src/battle/BattleAnalyzer";
-import { generateScript } from "../src/battle/ScriptGenerator";
-import { validateScript } from "../src/battle/ScriptValidator";
-import { exportToCopilotFormat } from "../src/battle/ScriptExporter";
+import { extractStageFacts, generateCopilotScript } from "../src/engine";
+import { validateScript } from "../src/copilot/ScriptValidator";
+import { exportToCopilotFormat } from "../src/copilot/ScriptExporter";
 import type { PRTSLevelData, MapData } from "../src/types";
 
 const LEVEL_PATH = path.resolve(__dirname, "..", "cache", "levels", "activities", "a001", "level_a001_01.json");
 const BOSS_RUSH_LEVEL_PATH = path.resolve(__dirname, "..", "cache", "levels", "activities", "act1bossrush", "level_bossrush1_01.json");
+const ALL_TILE_LEVEL_PATH = path.resolve(__dirname, "..", "cache", "levels", "activities", "act12side", "level_act12side_06.json");
 const ENEMY_DB_PATH = path.resolve(__dirname, "..", "cache", "enemy_database.json");
 
 function loadLevelData(): PRTSLevelData {
@@ -96,20 +96,10 @@ describe("PRTSMapAdapter", () => {
     expect(mapData.options.maxCost).toBe(99);
   });
 
-  it("should generate deployment order", () => {
-    const mapData = adapter.adapt(prtsData, "a001_01");
-
-    expect(mapData.deploymentOrder).toBeDefined();
-    expect(mapData.deploymentOrder!.length).toBeGreaterThan(0);
-    const first = mapData.deploymentOrder![0];
-    expect(first.role).toBeDefined();
-    expect(first.priority).toBeGreaterThan(0);
-  });
-
   it("should parse numeric enum routes and spawn actions from boss rush data", () => {
     const bossRushData = loadBossRushLevelData();
     const mapData = adapter.adapt(bossRushData, "bossrush1_01");
-    const analysis = analyzeBattle(mapData);
+    const facts = extractStageFacts(mapData);
 
     expect(mapData.routes.length).toBeGreaterThan(0);
     expect(mapData.routes.some(route => route.motionMode === "fly")).toBe(true);
@@ -117,11 +107,19 @@ describe("PRTSMapAdapter", () => {
     expect(mapData.deploymentPoints.length).toBeLessThan(mapData.tiles.length * mapData.tiles[0].length);
     expect(mapData.spawnTimeline.length).toBeGreaterThan(0);
     expect(mapData.enemyDetails.length).toBeGreaterThan(0);
-    expect(analysis.enemyComposition.totalCount).toBeGreaterThan(0);
+    expect(facts.enemyCount).toBeGreaterThan(0);
+    expect(mapData.enemyDetails.some(enemy => enemy.isBoss)).toBe(true);
+    expect(facts.bossCount).toBeGreaterThan(0);
+  });
+
+  it("should preserve ALL tiles as flexible deployment points", () => {
+    const allTileData = JSON.parse(fs.readFileSync(ALL_TILE_LEVEL_PATH, "utf8")) as PRTSLevelData;
+    const mapData = adapter.adapt(allTileData, "act12side_06");
+    expect(mapData.deploymentPoints.some(point => point.buildableType === "all")).toBe(true);
   });
 });
 
-describe("Full pipeline with real PRTS data", () => {
+describe("V2 pipeline with real PRTS data", () => {
   let mapData: MapData;
 
   beforeAll(async () => {
@@ -133,117 +131,24 @@ describe("Full pipeline with real PRTS data", () => {
     mapData = adapter.adapt(prtsData, "a001_01");
   });
 
-  it("should analyze battle and produce valid analysis", () => {
-    const analysis = analyzeBattle(mapData);
+  it("should run adapt, v2 generation, validation, and export", () => {
+    const result = generateCopilotScript("GT-1", mapData);
+    const validation = validateScript(result.script, mapData);
+    const parsed = JSON.parse(exportToCopilotFormat(result.script));
 
-    expect(analysis.summary).toBeDefined();
-    expect(analysis.enemyComposition.totalCount).toBeGreaterThan(0);
-    expect(analysis.requirements.difficultyRating).toBeDefined();
-    expect(analysis.suggestedStrategy.name).toBeDefined();
-  });
-
-  it("should generate a script from analysis", () => {
-    const analysis = analyzeBattle(mapData);
-    const script = generateScript("a001_01", mapData, analysis);
-
-    expect(script.stage_name).toBe("a001_01");
-    expect(script.actions.length).toBeGreaterThan(0);
-    expect(script.groups.length).toBeGreaterThan(0);
-
-    // Should include SpeedUp and SkillDaemon
-    expect(script.actions.some(a => a.type === "SpeedUp")).toBe(true);
-    expect(script.actions.some(a => a.type === "SkillDaemon")).toBe(true);
-  });
-
-  it("should validate script and pass", () => {
-    const analysis = analyzeBattle(mapData);
-    const script = generateScript("a001_01", mapData, analysis);
-    const result = validateScript(script, mapData);
-
-    expect(result.valid).toBe(true);
-    expect(result.errors.length).toBe(0);
-  });
-
-  it("should export valid copilot JSON", () => {
-    const analysis = analyzeBattle(mapData);
-    const script = generateScript("a001_01", mapData, analysis);
-    const json = exportToCopilotFormat(script);
-    const parsed = JSON.parse(json);
-
-    expect(parsed.stage_name).toBe("a001_01");
-    expect(parsed.version).toBe(3);
-    expect(Array.isArray(parsed.actions)).toBe(true);
-    expect(Array.isArray(parsed.groups)).toBe(true);
-  });
-
-  it("should flag INVALID_ACTION_TYPE for bad action", () => {
-    const analysis = analyzeBattle(mapData);
-    const script = generateScript("a001_01", mapData, analysis);
-    script.actions.push({ type: "BadAction" } as any);
-    const result = validateScript(script, mapData);
-    expect(result.errors.some(e => e.code === "INVALID_ACTION_TYPE")).toBe(true);
-  });
-
-  it("should flag LOCATION_OUT_OF_BOUNDS for out-of-range coords", () => {
-    const analysis = analyzeBattle(mapData);
-    const script = generateScript("a001_01", mapData, analysis);
-    script.actions.push({ type: "Deploy", name: "test", location: [999, 999], direction: "Right" } as any);
-    const result = validateScript(script, mapData);
-    expect(result.errors.some(e => e.code === "LOCATION_OUT_OF_BOUNDS")).toBe(true);
-  });
-
-  it("should warn LOCATION_NOT_DEPLOYABLE for non-deployable tile", () => {
-    const analysis = analyzeBattle(mapData);
-    const script = generateScript("a001_01", mapData, analysis);
-    const tiles = mapData.tiles;
-    let nonDeployRow = -1, nonDeployCol = -1;
-    for (let r = 0; r < tiles.length && nonDeployRow < 0; r++) {
-      for (let c = 0; c < tiles[r].length && nonDeployCol < 0; c++) {
-        if (tiles[r][c].buildableType === "none") {
-          nonDeployRow = r; nonDeployCol = c;
-        }
-      }
-    }
-    if (nonDeployRow >= 0) {
-      script.actions.push({ type: "Deploy", name: "test", location: [nonDeployRow, nonDeployCol], direction: "Right" } as any);
-      const result = validateScript(script, mapData);
-      expect(result.warnings.some(w => w.code === "LOCATION_NOT_DEPLOYABLE")).toBe(true);
-    }
-  });
-
-  it("should not error OOB when mapData has no tiles", () => {
-    const analysis = analyzeBattle(mapData);
-    const script = generateScript("a001_01", mapData, analysis);
-    script.actions.push({ type: "Deploy", name: "test", location: [999, 999], direction: "Right" } as any);
-    const result = validateScript(script, { ...mapData, tiles: undefined as any });
-    expect(result.errors.filter(e => e.code === "LOCATION_OUT_OF_BOUNDS").length).toBe(0);
-  });
-
-  it("should flag OOB for negative row coordinate", () => {
-    const analysis = analyzeBattle(mapData);
-    const script = generateScript("a001_01", mapData, analysis);
-    script.actions.push({ type: "Deploy", name: "test", location: [-1, 0], direction: "Right" } as any);
-    const result = validateScript(script, mapData);
-    expect(result.errors.some(e => e.code === "LOCATION_OUT_OF_BOUNDS")).toBe(true);
-  });
-
-  it("should flag OOB for negative column coordinate", () => {
-    const analysis = analyzeBattle(mapData);
-    const script = generateScript("a001_01", mapData, analysis);
-    script.actions.push({ type: "Deploy", name: "test", location: [0, -1], direction: "Right" } as any);
-    const result = validateScript(script, mapData);
-    expect(result.errors.some(e => e.code === "LOCATION_OUT_OF_BOUNDS")).toBe(true);
-  });
-
-  it("should end-to-end: adapt → analyze → generate → validate → export", () => {
-    const analysis = analyzeBattle(mapData);
-    const script = generateScript("a001_01", mapData, analysis);
-    const validation = validateScript(script, mapData);
-    const json = exportToCopilotFormat(script);
-
+    expect(result.facts.enemyCount).toBeGreaterThan(0);
+    expect(result.script.groups).toEqual([]);
     expect(validation.valid).toBe(true);
-    expect(validation.score).toBeGreaterThanOrEqual(60);
-    const parsed = JSON.parse(json);
+    expect(parsed.stage_name).toBe("GT-1");
     expect(parsed.actions.length).toBeGreaterThan(0);
+  });
+
+  it("should reject invalid action and deployment coordinates", () => {
+    const script = generateCopilotScript("GT-1", mapData).script;
+    script.actions.push({ type: "BadAction" });
+    script.actions.push({ type: "Deploy", name: "推进之王", location: [999, 999], direction: "Right" });
+    const validation = validateScript(script, mapData);
+    expect(validation.errors.some(error => error.code === "INVALID_ACTION_TYPE")).toBe(true);
+    expect(validation.errors.some(error => error.code === "LOCATION_OUT_OF_BOUNDS")).toBe(true);
   });
 });

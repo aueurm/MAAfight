@@ -3,12 +3,11 @@ import * as path from "path";
 import { PRTSMapLoader } from "../loader/PRTSMapLoader";
 import { PRTSMapAdapter } from "../adapter/PRTSMapAdapter";
 import { resolveStage, searchStages } from "../loader/levelIndex";
-import { analyzeBattle } from "../battle/BattleAnalyzer";
-import { generateScript, type GeneratorConfig } from "../battle/ScriptGenerator";
-import { validateScript } from "../battle/ScriptValidator";
-import { validateMAAProtocol } from "../battle/MAAProtocolValidator";
-import { buildPlanningReport, formatPlanningReport } from "../battle/PlanningReport";
-import { exportToCopilotFormat } from "../battle/ScriptExporter";
+import { validateScript } from "../copilot/ScriptValidator";
+import { validateMAAProtocol } from "../copilot/MAAProtocolValidator";
+import { exportToCopilotFormat } from "../copilot/ScriptExporter";
+import { computeScriptHash, extractStageFacts, generateCopilotScript, type StageFacts } from "../engine";
+import { FeedbackStore, hashOperatorBox } from "../feedback/FeedbackStore";
 import { OperatorBox } from "../player/OperatorBox";
 import { loadConfiguredOperatorBox } from "../player/PlayerConfig";
 import { getRuntimePaths } from "../runtime/paths";
@@ -18,11 +17,10 @@ import type {
   PRTSLevelData,
   PlayerOperator,
   StageIndexEntry,
-  TacticalAnalysis,
   ValidationResult,
 } from "../types";
 
-export type SquadMode = "fixed" | "groups" | "hybrid";
+export type RequirementsMode = "none" | "player";
 
 export interface OperatorInput {
   operatorsJson?: string;
@@ -32,6 +30,7 @@ export interface OperatorInput {
 export interface PipelineOptions {
   cacheDir?: string;
   dataUrl?: string;
+  stateDir?: string;
 }
 
 export interface AnalyzeStageInput extends OperatorInput {
@@ -40,25 +39,21 @@ export interface AnalyzeStageInput extends OperatorInput {
 
 export interface GenerateStageInput extends OperatorInput {
   stage: string;
-  squadMode?: SquadMode;
   pretty?: boolean;
   outputDir?: string;
   fileName?: string;
+  newCandidate?: boolean;
+  requirementsMode?: RequirementsMode;
 }
 
 export interface ValidateScriptInput {
   scriptJson: string;
 }
 
-export interface PipelineWarning {
-  code?: string;
-  message: string;
-}
-
 export interface AnalyzeStageResult {
   stageId: string;
   stageName: string;
-  analysis: TacticalAnalysis;
+  analysis: StageFacts;
   warnings: string[];
 }
 
@@ -71,6 +66,11 @@ export interface GenerateStageResult extends AnalyzeStageResult {
   validation: ValidationResult;
   protocol: ReturnType<typeof validateMAAProtocol>;
   explain: string;
+  generationId: string;
+  scriptHash: string;
+  candidateScore: number;
+  modelVersion: string;
+  combatCoverage: number;
 }
 
 export interface ValidateScriptResult {
@@ -93,8 +93,6 @@ export interface StageSuggestion {
 export const DEFAULT_CACHE_DIR = getRuntimePaths().cacheLevelsDir;
 export const DEFAULT_DATA_URL = process.env.MAAFIGHT_DATA_URL || "https://map.ark-nights.com";
 export const DEFAULT_OUTPUT_DIR = getRuntimePaths().outputDir;
-export const DEFAULT_SQUAD_MODE: SquadMode = "fixed";
-export const SUPPORTED_SQUAD_MODES: SquadMode[] = ["fixed", "groups", "hybrid"];
 
 function inferStageIdFromDataPath(dataPath: string): string {
   return path.basename(dataPath, ".json").replace(/^level_/, "");
@@ -113,47 +111,33 @@ function sanitizeFileName(name: string): string {
 export function makeDefaultScriptFileName(stageName: string, resolved?: StageIndexEntry | null): string {
   const primary = resolved?.code || stageName || resolved?.stageId || "script";
   const parts = [primary];
-  if (resolved?.name && resolved.name !== primary) {
-    parts.push(resolved.name);
-  }
+  if (resolved?.name && resolved.name !== primary) parts.push(resolved.name);
   return sanitizeFileName(`${parts.join("_")}.json`);
 }
 
-function parseOperatorInput(input: OperatorInput): { playerOperators?: Map<string, PlayerOperator>; warnings: string[] } {
+function parseOperatorInput(
+  input: OperatorInput,
+  stateDir = getRuntimePaths().homeDir
+): { playerOperators?: Map<string, PlayerOperator>; warnings: string[] } {
   const warnings: string[] = [];
-
   if (input.operatorsJson?.trim()) {
-    if (input.operatorFilePath?.trim()) {
-      warnings.push("operatorsJson and operatorFilePath were both provided; using pasted operatorsJson.");
-    }
+    if (input.operatorFilePath?.trim()) warnings.push("operatorsJson and operatorFilePath were both provided; using pasted operatorsJson.");
     const operators = OperatorBox.parseJson(input.operatorsJson);
     return { playerOperators: OperatorBox.fromOperators(operators).playerMap, warnings };
   }
-
   if (input.operatorFilePath?.trim()) {
     const operatorPath = path.resolve(input.operatorFilePath);
-    if (!fs.existsSync(operatorPath)) {
-      throw new Error(`Operator file not found: ${operatorPath}`);
-    }
+    if (!fs.existsSync(operatorPath)) throw new Error(`Operator file not found: ${operatorPath}`);
     return { playerOperators: new OperatorBox(operatorPath).playerMap, warnings };
   }
-
-  const configured = loadConfiguredOperatorBox(getRuntimePaths().homeDir);
-  if (configured) {
-    return { playerOperators: configured.box.playerMap, warnings };
-  }
-
-  return { warnings };
+  const configured = loadConfiguredOperatorBox(stateDir);
+  return configured ? { playerOperators: configured.box.playerMap, warnings } : { warnings };
 }
 
 function splitStageParts(entry: StageIndexEntry): { series: string; number: string } {
   const key = (entry.code || entry.stageId).toUpperCase();
   const letters = key.match(/[A-Z]+/)?.[0] || key.split(/[-_]/)[0] || key;
-  const numbers = key.match(/\d+/g) || [];
-  return {
-    series: letters.slice(0, 2),
-    number: numbers.join("-"),
-  };
+  return { series: letters.slice(0, 2), number: (key.match(/\d+/g) || []).join("-") };
 }
 
 function stageSearchScore(entry: StageIndexEntry, query: string): number {
@@ -161,7 +145,6 @@ function stageSearchScore(entry: StageIndexEntry, query: string): number {
   const code = (entry.code || "").toLowerCase();
   const stageId = entry.stageId.toLowerCase();
   const name = (entry.name || "").toLowerCase();
-
   if (code === q || stageId === q) return 0;
   if (code.startsWith(q)) return 1;
   if (stageId.startsWith(q)) return 2;
@@ -174,141 +157,137 @@ function stageSearchScore(entry: StageIndexEntry, query: string): number {
 
 export function searchStageSuggestions(query: string, limit = 24): StageSuggestion[] {
   const q = query.trim();
-  if (q.length < 1) return [];
-
+  if (!q) return [];
   return searchStages(q)
-    .sort((a, b) => {
-      const score = stageSearchScore(a, q) - stageSearchScore(b, q);
-      if (score !== 0) return score;
-      return (a.code || a.stageId).localeCompare(b.code || b.stageId);
-    })
+    .sort((a, b) => stageSearchScore(a, q) - stageSearchScore(b, q)
+      || (a.code || a.stageId).localeCompare(b.code || b.stageId))
     .slice(0, Math.max(1, Math.min(limit, 100)))
-    .map(entry => {
-      const { series, number } = splitStageParts(entry);
-      return {
-        stageId: entry.stageId,
-        stageName: getDisplayStageName(entry.stageId, entry),
-        code: entry.code,
-        name: entry.name,
-        category: entry.category,
-        filePath: entry.filePath,
-        series,
-        number,
-      };
-    });
-}
-
-function applySquadMode(script: BattleScript, squadMode: SquadMode): BattleScript {
-  const next: BattleScript = {
-    ...script,
-    actions: script.actions.map(action => ({ ...action })),
-    groups: script.groups.map(group => ({
-      ...group,
-      opers: group.opers.map(op => ({ ...op })),
-    })),
-    opers: script.opers.map(op => ({ ...op })),
-    metadata: { ...script.metadata, squadMode },
-  };
-
-  if (squadMode === "fixed") {
-    next.groups = [];
-    return next;
-  }
-
-  if (squadMode === "groups") {
-    const operatorToGroup = new Map<string, string>();
-    for (const group of next.groups) {
-      for (const op of group.opers) {
-        if (!operatorToGroup.has(op.name)) {
-          operatorToGroup.set(op.name, group.name);
-        }
-      }
-    }
-
-    next.opers = [];
-    next.actions = next.actions.map(action => {
-      if (action.type !== "Deploy" || !action.name) return action;
-      const groupName = operatorToGroup.get(action.name);
-      return groupName ? { ...action, name: groupName } : action;
-    });
-  }
-
-  return next;
-}
-
-async function loadStage(stage: string, options: PipelineOptions): Promise<{
-  prtsData: PRTSLevelData;
-  stageId: string;
-  resolved: StageIndexEntry | null;
-  loader: PRTSMapLoader;
-}> {
-  const loader = new PRTSMapLoader(options.cacheDir || DEFAULT_CACHE_DIR, options.dataUrl || DEFAULT_DATA_URL);
-  const resolved = resolveStage(stage);
-  const prtsData = await loader.load(stage);
-  return {
-    prtsData,
-    stageId: resolved ? resolved.stageId : inferStageIdFromDataPath(stage),
-    resolved,
-    loader,
-  };
+    .map(entry => ({
+      stageId: entry.stageId,
+      stageName: getDisplayStageName(entry.stageId, entry),
+      code: entry.code,
+      name: entry.name,
+      category: entry.category,
+      filePath: entry.filePath,
+      ...splitStageParts(entry),
+    }));
 }
 
 async function buildStageContext(stage: string, options: PipelineOptions): Promise<{
   mapData: MapData;
-  analysis: TacticalAnalysis;
+  facts: StageFacts;
   stageId: string;
   stageName: string;
   resolved: StageIndexEntry | null;
 }> {
-  const { prtsData, stageId, resolved, loader } = await loadStage(stage, options);
+  const loader = new PRTSMapLoader(options.cacheDir || DEFAULT_CACHE_DIR, options.dataUrl || DEFAULT_DATA_URL);
+  const resolved = resolveStage(stage);
+  const prtsData: PRTSLevelData = await loader.load(stage);
+  const stageId = resolved?.stageId || inferStageIdFromDataPath(stage);
   await loader.loadEnemyDatabase();
-  const adapter = new PRTSMapAdapter(loader);
   const stageName = getDisplayStageName(stageId, resolved);
-  const mapData = adapter.adapt(prtsData, stageId, stageName);
-  const analysis = analyzeBattle(mapData);
-  return { mapData, analysis, stageId, stageName, resolved };
+  const mapData = new PRTSMapAdapter(loader).adapt(prtsData, stageId, stageName);
+  return { mapData, facts: extractStageFacts(mapData), stageId, stageName, resolved };
 }
 
 export async function analyzeStage(input: AnalyzeStageInput, options: PipelineOptions = {}): Promise<AnalyzeStageResult> {
-  if (!input.stage?.trim()) {
-    throw new Error("stage is required");
-  }
-  const { warnings } = parseOperatorInput(input);
-  const { analysis, stageId, stageName } = await buildStageContext(input.stage.trim(), options);
-  return { stageId, stageName, analysis, warnings };
+  if (!input.stage?.trim()) throw new Error("stage is required");
+  const { warnings } = parseOperatorInput(input, options.stateDir);
+  const { facts, stageId, stageName } = await buildStageContext(input.stage.trim(), options);
+  return { stageId, stageName, analysis: facts, warnings };
+}
+
+function formatEngineExplain(facts: StageFacts, score: number, warnings: string[]): string {
+  return [
+    `Stage: ${facts.stageId}`,
+    `Facts: ${facts.summary}`,
+    `Candidate score: ${score.toFixed(2)} (ranking only, not a clear rate)`,
+    ...warnings.map(warning => `Warning: ${warning}`),
+  ].join("\n");
 }
 
 export async function generateStage(input: GenerateStageInput, options: PipelineOptions = {}): Promise<GenerateStageResult> {
-  if (!input.stage?.trim()) {
-    throw new Error("stage is required");
+  if (!input.stage?.trim()) throw new Error("stage is required");
+  const parsedOperators = parseOperatorInput(input, options.stateDir);
+  const warnings = [...parsedOperators.warnings];
+  const { mapData, facts, stageId, stageName, resolved } = await buildStageContext(input.stage.trim(), options);
+  const feedbackStore = new FeedbackStore(options.stateDir || getRuntimePaths().homeDir);
+  const operatorBoxHash = hashOperatorBox(parsedOperators.playerOperators);
+  const successful = !input.newCandidate ? feedbackStore.successfulGeneration(stageId, operatorBoxHash) : undefined;
+
+  let script: BattleScript;
+  let modelVersion: string;
+  let combatDataVersion: string;
+  let combatCoverage: number;
+  let candidateScore: number;
+  let scoreBreakdown: Record<string, number>;
+  let reusedFromGenerationId: string | undefined;
+
+  if (successful && successful.engineVersion === "v2") {
+    script = JSON.parse(JSON.stringify(successful.script)) as BattleScript;
+    modelVersion = successful.modelVersion;
+    combatDataVersion = successful.combatDataVersion;
+    combatCoverage = successful.combatCoverage;
+    candidateScore = successful.candidateScore;
+    scoreBreakdown = successful.scoreBreakdown;
+    reusedFromGenerationId = successful.generationId;
+    warnings.push(`Reused a 100% v2 generation ${successful.generationId}.`);
+  } else {
+    const result = generateCopilotScript(stageName, mapData, {
+      playerOperators: parsedOperators.playerOperators,
+      requirementsMode: input.requirementsMode || "none",
+      excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash),
+      feedbackAdjustment: (_script, _hash, breakdown) => feedbackStore.feedbackAdjustment(stageId, operatorBoxHash, { ...breakdown }),
+    });
+    script = result.script;
+    modelVersion = result.modelVersion;
+    combatDataVersion = result.combatModelVersion;
+    combatCoverage = result.combatCoverage;
+    candidateScore = result.score;
+    scoreBreakdown = { ...result.breakdown };
+    warnings.push(...result.warnings);
   }
-  if (input.squadMode && !SUPPORTED_SQUAD_MODES.includes(input.squadMode)) {
-    throw new Error(`Unsupported squadMode: ${input.squadMode}`);
-  }
 
-  const { playerOperators, warnings } = parseOperatorInput(input);
-  const { mapData, analysis, stageId, stageName, resolved } = await buildStageContext(input.stage.trim(), options);
-
-  const config: GeneratorConfig = {};
-  if (playerOperators) config.playerOperators = playerOperators;
-
-  const squadMode = input.squadMode || DEFAULT_SQUAD_MODE;
-  const script = applySquadMode(generateScript(stageName, mapData, analysis, config), squadMode);
   const validation = validateScript(script, mapData);
   const protocol = validateMAAProtocol(script);
-  const report = buildPlanningReport({ mapData, analysis, script, validation, protocol });
-  const json = exportToCopilotFormat(script, { compress: !input.pretty });
+  if (!validation.valid || !protocol.valid) {
+    const errors = [...validation.errors.map(error => error.message), ...protocol.errors.map(error => error.message)];
+    throw new Error(`V2 candidate failed validation: ${errors.join("; ")}`);
+  }
 
   const outputDir = path.resolve(input.outputDir || DEFAULT_OUTPUT_DIR);
   const fileName = sanitizeFileName(input.fileName || makeDefaultScriptFileName(stageName, resolved));
   const outputPath = path.join(outputDir, fileName);
+  const scriptHash = computeScriptHash(script);
+  const generationId = feedbackStore.createGenerationId();
+  script.metadata = { ...script.metadata, generationId, scriptHash };
+  const json = exportToCopilotFormat(script, { compress: !input.pretty });
   fs.mkdirSync(outputDir, { recursive: true });
-  fs.writeFileSync(outputPath, json, "utf-8");
+  fs.writeFileSync(outputPath, json, "utf8");
+  feedbackStore.appendGeneration({
+    schemaVersion: 1,
+    generationId,
+    scriptHash,
+    stageId,
+    stageName,
+    operatorBoxHash,
+    engineVersion: "v2",
+    modelVersion,
+    combatDataVersion,
+    candidateScore,
+    scoreBreakdown,
+    combatCoverage,
+    enemyTotal: facts.enemyCount,
+    outputPath,
+    script,
+    reusedFromGenerationId,
+    createdAt: new Date().toISOString(),
+  });
 
   return {
     stageId,
     stageName,
-    analysis,
+    analysis: facts,
     outputPath,
     outputDir,
     fileName,
@@ -316,17 +295,18 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     json,
     validation,
     protocol,
-    explain: formatPlanningReport(report, script),
+    explain: formatEngineExplain(facts, candidateScore, warnings),
     warnings,
+    generationId,
+    scriptHash,
+    candidateScore,
+    modelVersion,
+    combatCoverage,
   };
 }
 
 export function validateScriptJson(input: ValidateScriptInput): ValidateScriptResult {
-  if (!input.scriptJson?.trim()) {
-    throw new Error("scriptJson is required");
-  }
+  if (!input.scriptJson?.trim()) throw new Error("scriptJson is required");
   const script = JSON.parse(input.scriptJson) as BattleScript;
-  const validation = validateScript(script);
-  const protocol = validateMAAProtocol(script);
-  return { validation, protocol, warnings: [] };
+  return { validation: validateScript(script), protocol: validateMAAProtocol(script), warnings: [] };
 }

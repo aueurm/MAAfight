@@ -121,38 +121,11 @@ function loadBenchmarkStages(filePath) {
 }
 
 function parseExplainOutput(text) {
-  const confidenceMatch = text.match(/^Confidence:\s*([0-9.]+)/m);
-  const supportMatch = text.match(/^Support:\s*(\w+)/m);
-  const risks = [];
-  const protocolWarnings = [];
-  let section = "";
-
-  for (const line of text.split(/\r?\n/)) {
-    if (line === "Known risks:") {
-      section = "risks";
-      continue;
-    }
-    if (line === "Protocol warnings:") {
-      section = "protocol";
-      continue;
-    }
-    if (line.trim() === "") {
-      section = "";
-      continue;
-    }
-    if (section === "risks" && line.startsWith("- ") && line !== "- None") {
-      risks.push(line.slice(2));
-    }
-    if (section === "protocol" && line.startsWith("- ") && line !== "- None") {
-      protocolWarnings.push(line.slice(2));
-    }
-  }
-
+  const scoreMatch = text.match(/^Candidate score:\s*([0-9.]+)/m);
+  const factsMatch = text.match(/^Facts:\s*(.+)$/m);
   return {
-    supportLevel: supportMatch ? supportMatch[1] : "unknown",
-    planner_confidence: confidenceMatch ? Number(confidenceMatch[1]) : 0,
-    known_risks: risks,
-    protocolWarnings,
+    candidateScore: scoreMatch ? Number(scoreMatch[1]) : 0,
+    facts: factsMatch ? factsMatch[1] : "",
   };
 }
 
@@ -192,12 +165,13 @@ function writeQualityReport(stage, generate, validate, analyze) {
     generated: Boolean(generate.ok && script?.stage_name),
     script_valid: validation.script_valid,
     deployable_tiles_used: collectDeployableTilesUsed(script),
-    enemy_data_used: analysis?.enemyComposition?.totalHP !== undefined,
-    boss_detected: (analysis?.enemyComposition?.bossCount || 0) > 0,
-    planner_confidence: explain.planner_confidence,
-    supportLevel: explain.supportLevel,
-    known_risks: explain.known_risks,
-    protocol_warning_count: explain.protocolWarnings.length || validation.protocolWarningCount,
+    enemy_data_used: typeof analysis?.totalHp === "number",
+    boss_detected: (analysis?.bossCount || 0) > 0,
+    enemyCount: analysis?.enemyCount || 0,
+    pressureWindowCount: analysis?.pressureWindows?.length || 0,
+    candidateScore: explain.candidateScore,
+    facts: explain.facts,
+    protocol_warning_count: validation.protocolWarningCount,
     validationScore: validation.validationScore,
     protocolScore: validation.protocolScore,
     actionCount: Array.isArray(script?.actions) ? script.actions.length : 0,
@@ -399,8 +373,8 @@ function runBenchmark(options) {
     assertResult(
       results,
       generateLocal,
-      () => Boolean(localScript?.stage_name && localScript?.actions?.length && localScript?.groups?.length),
-      "Generated local script should contain stage_name, actions, and groups"
+      () => Boolean(localScript?.stage_name && localScript?.actions?.length && Array.isArray(localScript?.groups)),
+      "Generated local script should contain stage_name, actions, and groups array"
     );
 
     const validateLocal = runCli("validate: generated local script", ["validate", "--file", localOutput]);
@@ -423,9 +397,9 @@ function runBenchmark(options) {
       analyzeLocal,
       r => {
         const parsed = parseJsonOutput(r);
-        return Boolean(parsed?.enemyComposition && parsed?.requirements && parsed?.suggestedStrategy);
+        return Boolean(typeof parsed?.enemyCount === "number" && Array.isArray(parsed?.pressureWindows) && parsed?.difficulty);
       },
-      "Analyze output should include enemyComposition, requirements, and suggestedStrategy"
+      "Analyze output should include v2 stage facts and pressure windows"
     );
 
     const infoLocal = runCli("info: local data", ["info", "--data", baseLevel, "--stage", baseStage.id, "--quiet"]);
@@ -448,6 +422,7 @@ function runBenchmark(options) {
         "--data", baseLevel,
         "--stage", baseStage.id,
         "--operators", operatorFile,
+        "--requirements", "player",
         "--output", operatorOutput,
         "--pretty",
         "--quiet",
@@ -458,11 +433,8 @@ function runBenchmark(options) {
         generateWithOperators,
         () => {
           const parsed = parseJsonOutput(generateWithOperators);
-          const groupHasRequirements = (parsed?.groups || []).some(g =>
-            (g.opers || []).some(op => Boolean(op.requirements))
-          );
           const opersHasRequirements = (parsed?.opers || []).some(op => Boolean(op.requirements));
-          return groupHasRequirements || opersHasRequirements;
+          return opersHasRequirements;
         },
         "Operator-personalized generation should include requirements"
       );
@@ -533,9 +505,9 @@ function runBenchmark(options) {
       analyze,
       r => {
         const parsed = parseJsonOutput(r);
-        return Boolean(parsed?.enemyComposition && parsed?.requirements);
+        return Boolean(typeof parsed?.enemyCount === "number" && Array.isArray(parsed?.pressureWindows) && parsed?.summary);
       },
-      "Stage analysis should produce enemy composition and requirements"
+      "Stage analysis should produce v2 stage facts"
     );
 
     qualityReports.push(writeQualityReport(stage, generate, validate, analyze));

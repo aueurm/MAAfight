@@ -19,6 +19,7 @@ export interface EnemyDatabaseEntry {
     [key: string]: number;
   };
   enemyTags: string[];
+  levelType?: string;
 }
 
 interface EnemyDbFile {
@@ -32,6 +33,7 @@ interface EnemyDbFile {
         prefabKey: { m_defined: boolean; m_value: string };
         attributes: Record<string, { m_defined: boolean; m_value: number }>;
         enemyTags?: { m_defined: boolean; m_value: string[] } | null;
+        levelType?: { m_defined: boolean; m_value: string } | null;
       };
     }>;
   }>;
@@ -113,6 +115,7 @@ export class PRTSMapLoader {
           massLevel: attrs.massLevel?.m_defined ? attrs.massLevel.m_value : 1,
         },
         enemyTags: ed.enemyTags?.m_defined ? ed.enemyTags.m_value : [],
+        levelType: ed.levelType?.m_defined ? ed.levelType.m_value : undefined,
       });
     }
   }

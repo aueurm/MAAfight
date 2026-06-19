@@ -1,4 +1,4 @@
-import { validateScript } from "../src/battle/ScriptValidator";
+import { validateScript } from "../src/copilot/ScriptValidator";
 import type { BattleScript } from "../src/types";
 
 function makeScript(overrides: Partial<BattleScript> = {}): BattleScript {

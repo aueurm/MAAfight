@@ -1,14 +1,5 @@
 // ====================== PRTS.Map 格式 (输入) ======================
 
-import type {
-  BattlePlan,
-  BattleTask,
-  DPTimelineSummary,
-  OperatorSelectionTrace,
-  PositionScoreSummary,
-  PressureWindow,
-} from "./battle/types";
-
 export interface PRTSLevelData {
   options: PRTSOptions;
   mapData: PRTSMapData;
@@ -39,7 +30,7 @@ export interface PRTSMapData {
 export interface PRTSTile {
   tileKey: string;
   heightType: "HIGHLAND" | "LOWLAND" | 0 | 1;
-  buildableType: "MELEE" | "RANGED" | "NONE" | 0 | 1 | 2;
+  buildableType: "MELEE" | "RANGED" | "ALL" | "NONE" | 0 | 1 | 2;
   passableMask: "ALL" | "FLY_ONLY" | number;
   playerSideMask: "ALL" | number;
   effects: PRTSTileEffect[] | null;
@@ -143,7 +134,6 @@ export interface MapData {
   enemyDetails: EnemyDetail[];
   spawnTimeline: SpawnEvent[];
   options: MapOptions;
-  deploymentOrder?: DeploymentRecommendation[];
   runes?: PRTSRune[];
   _raw?: PRTSLevelData;
 }
@@ -151,7 +141,7 @@ export interface MapData {
 export interface TileInfo {
   key: string;
   heightType: "highland" | "lowland";
-  buildableType: "melee" | "ranged" | "none";
+  buildableType: "melee" | "ranged" | "all" | "none";
   row: number;
   col: number;
 }
@@ -159,13 +149,7 @@ export interface TileInfo {
 export interface DeploymentPoint {
   row: number;
   col: number;
-  buildableType: "melee" | "ranged";
-}
-
-export interface DeploymentRecommendation {
-  position: { row: number; col: number };
-  role: string;
-  priority: number;
+  buildableType: "melee" | "ranged" | "all";
 }
 
 export interface StrategicPoint {
@@ -238,83 +222,6 @@ export interface MapOptions {
   costIncreaseTime: number;
 }
 
-// ====================== 战术分析 ======================
-
-export interface TacticalAnalysis {
-  summary: string;
-  enemyComposition: EnemyComposition;
-  requirements: OperatorRequirements;
-  keyTimings: KeyTiming[];
-  threatPriorities: ThreatPriority[];
-  suggestedStrategy: Strategy;
-  dpsRequirement?: DPSRequirement;
-  spawnTimeline?: SpawnEvent[];
-  mapRecommendations?: MapRecommendation[];
-  notes?: string[];
-  battlePlan?: BattlePlan;
-  pressureWindows?: PressureWindow[];
-  recommendedTasks?: BattleTask[];
-}
-
-export interface EnemyComposition {
-  totalCount: number;
-  normalCount: number;
-  eliteCount: number;
-  bossCount: number;
-  compositionType: "single" | "swarm" | "mixed" | "boss_rush";
-  totalHP?: number;
-  totalDPS?: number;
-  averageDEF?: number;
-}
-
-export interface OperatorRequirements {
-  vanguardCount: number;
-  guardCount: number;
-  medicCount: number;
-  tankCount: number;
-  sniperCount: number;
-  casterCount: number;
-  supportCount: number;
-  specialistCount: number;
-  specialRequirements: string[];
-  expectedCost: number;
-  difficultyRating: "easy" | "medium" | "hard" | "extreme";
-}
-
-export interface DPSRequirement {
-  totalBossHP: number;
-  burstWindowSeconds: number;
-  requiredDPS: number;
-  recommendedOperators: string[];
-}
-
-export interface KeyTiming {
-  time: number;
-  description: string;
-  recommendedAction: string;
-  operatorType?: string;
-}
-
-export interface ThreatPriority {
-  threatLevel: "critical" | "high" | "medium" | "low";
-  targetDescription: string;
-  counterRecommendation: string;
-  priority: number;
-}
-
-export interface Strategy {
-  name: string;
-  description: string;
-  corePrinciples: string[];
-}
-
-export interface MapRecommendation {
-  position: { row: number; col: number };
-  recommendedRole: string;
-  priority: number;
-  reason: string;
-}
-
 // ====================== Copilot 输出 ======================
 
 export interface CopilotOperator {
@@ -345,9 +252,8 @@ export type CopilotAction =
   | { type: "SpeedUp" }
   | { type: "SkillDaemon" }
   | { type: "Deploy"; name: string; location: [number, number]; direction: string }
-  | { type: "SkillUse"; name: string; skill: number }
-  | { type: "Retreat"; name: string }
-  | { type: "Wait"; time: number };
+  | { type: "Skill"; name: string }
+  | { type: "Retreat"; name: string };
 
 // ====================== 战斗脚本 (内部) ======================
 
@@ -369,14 +275,14 @@ export interface BattleScript {
     playerOperatorsUsed?: boolean;
     operatorGaps?: string[];
     deploymentReasons?: Record<string, string>;
-    squadMode?: "fixed" | "groups" | "hybrid";
-    battlePlan?: BattlePlan;
-    pressureWindows?: PressureWindow[];
-    recommendedTasks?: BattleTask[];
-    positionScoreSummary?: PositionScoreSummary[];
-    dpTimelineSummary?: DPTimelineSummary;
-    operatorSelectionTrace?: OperatorSelectionTrace[];
     warnings?: string[];
+    candidateScore?: number;
+    candidateScoreBreakdown?: Record<string, number>;
+    corpusModelVersion?: string;
+    combatModelVersion?: string;
+    combatCoverage?: number;
+    generationId?: string;
+    scriptHash?: string;
   };
   version?: number;
 }
@@ -394,8 +300,8 @@ export interface BattleScriptOper {
   requirements?: {
     elite: number;
     level: number;
-    skill_level: number;
-    module: number;
+    skill_level?: number;
+    module?: number;
     module_level?: number;
     potential: number;
   };
@@ -417,6 +323,11 @@ export interface BattleScriptAction {
   cost_changes?: number;
   kills?: number;
   time_elapsed?: number;
+  cooling?: number;
+  skip_if_not_ready?: boolean;
+  distance?: [number, number];
+  doc?: string;
+  doc_color?: string;
 }
 
 // ====================== 验证 ======================
@@ -459,27 +370,6 @@ export interface ProtocolIssue {
   severity: "error" | "warning";
   actionIndex?: number;
   suggestion?: string;
-}
-
-export type SupportLevel = "supported" | "partial" | "experimental" | "unsupported";
-
-export interface PlanningReport {
-  stage: string;
-  script_valid: boolean;
-  deployable_tiles_used: number;
-  enemy_data_used: boolean;
-  boss_detected: boolean;
-  planner_confidence: number;
-  supportLevel: SupportLevel;
-  known_risks: string[];
-  protocolWarnings: ProtocolIssue[];
-  validationScore: number;
-  difficulty?: string;
-  strategy?: string;
-  operatorGaps: string[];
-  actionCount: number;
-  deployCount: number;
-  generatedAt: string;
 }
 
 export interface PlayerOperator {

@@ -1,4 +1,4 @@
-import { validateMAAProtocol } from "../src/battle/MAAProtocolValidator";
+import { validateMAAProtocol } from "../src/copilot/MAAProtocolValidator";
 import type { BattleScript } from "../src/types";
 
 function makeScript(overrides: Partial<BattleScript> = {}): BattleScript {
@@ -29,22 +29,22 @@ describe("validateMAAProtocol", () => {
     expect(result.score).toBe(100);
   });
 
-  it("should warn for internal Wait actions", () => {
+  it("should reject internal Wait actions", () => {
     const result = validateMAAProtocol(makeScript({
       actions: [{ type: "Wait", time: 5 }],
     }));
 
-    expect(result.valid).toBe(true);
-    expect(result.warnings.some(w => w.code === "NON_STANDARD_WAIT")).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(issue => issue.code === "MAA_INVALID_ACTION_TYPE")).toBe(true);
   });
 
-  it("should warn for SkillUse alias", () => {
+  it("should reject SkillUse alias", () => {
     const result = validateMAAProtocol(makeScript({
       actions: [{ type: "SkillUse", name: "test", skill: 1 }],
     }));
 
-    expect(result.valid).toBe(true);
-    expect(result.warnings.some(w => w.code === "SKILLUSE_ALIAS")).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(issue => issue.code === "MAA_INVALID_ACTION_TYPE")).toBe(true);
   });
 
   it("should fail unknown action types", () => {

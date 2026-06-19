@@ -1,132 +1,57 @@
-# MAAfight — AI 驱动的明日方舟自动战斗脚本生成器
+# MAAfight v2
 
 ## 项目定位
 
-MAAfight 是一个**独立 CLI 工具**，输入关卡标识，输出 MAA 标准 copilot JSON 战斗脚本。
+MAAfight 是一个 TypeScript / Node.js 本地工具，提供 CLI 和 Web GUI。它读取 PRTS.Map 关卡数据，通过语料先验和确定性 Beam Search 生成可导入 MAA 的 copilot JSON v3 草稿。
 
-**核心洞察：** MAA 已经内置了完整的 copilot 战斗执行引擎（图像识别、ADB 操控、任务队列），不需要重造轮子。MAAfight 只做 MAA 不做的部分——**用 AI 自动生成战斗策略和脚本**。
-
-```
-MAAfight 的边界：
-  关卡标识 ──▶ [PRTS.Map 数据获取 → 格式适配 → 战术分析 → 策略生成 → 脚本编排] ──▶ copilot JSON
-                                                                          │
-                                                                          ▼
-                                                                     MAA 执行引擎
-```
-
-MAAfight **不做**的：
-- 不控制 ADB / 模拟器
-- 不做图像识别
-- 不执行任务调度
-- 不重复 MAA 已有的任何功能
+MAAfight 不执行 MAA、ADB 或图像识别，也不把候选评分当作通关率。生成结果需要通过 MAA 实战验证。
 
 ## 核心流水线
 
-```
-StageID ──▶ PRTSMapLoader ──▶ PRTS.Map JSON
-                  │
-                  ▼
-            PRTSMapAdapter ──▶ MapData (内部格式)
-                  │
-                  ▼
-            BattleAnalyzer ──▶ TacticalAnalysis
-                  │
-                  ▼
-            ScriptGenerator ──▶ BattleScript
-                  │
-                  ▼
-            ScriptValidator ──▶ ValidationResult
-                  │
-                  ▼
-            ScriptExporter ──▶ copilot JSON (MAA v3 格式)
+```text
+Stage ID / code / local data
+  -> PRTSMapLoader
+  -> PRTSMapAdapter
+  -> StageFacts
+  -> CandidateBuilder
+  -> six-part scoring
+  -> deterministic Beam Search
+  -> ScriptValidator / MAAProtocolValidator
+  -> ScriptExporter
 ```
 
-### 0. 地图数据获取 (PRTSMapLoader) [新增]
+主要模块：
 
-- **数据源：** [PRTS.Map](https://map.ark-nights.com/) — 社区维护的明日方舟地图站
-- **数据规模：** 2160 个关卡，覆盖主线/活动/危机合约/集成战略
-- **数据格式：** 游戏引擎原始 JSON 导出，含瓦片地图、敌人路径、波次数据、敌人属性
-- **获取方式：** 静态 JSON 文件 HTTP 下载，无需 OCR/CV
-- **GitHub：** [Houdou/prts-map](https://github.com/Houdou/prts-map)
+- `src/engine/StageFacts.ts`：提取关卡事实和 15 秒压力窗口。
+- `src/engine/CandidateBuilder.ts`：构造编队、点位和动作候选。
+- `src/engine/Scoring.ts`：局部交战与五项辅助评分。
+- `src/engine/index.ts`：确定性 Beam Search。
+- `src/copilot/`：MAA 协议验证与导出。
+- `src/core/pipeline.ts`：CLI / GUI 共用生成入口。
+- `src/feedback/`：实战反馈记录与复用。
 
-### 1. 格式适配 (PRTSMapAdapter) [新增]
+仓库中不得重新引入旧 rules 生成器、旧 `src/battle/` 模块或生成失败 fallback。旧实现只保留在 GitHub 历史中。
 
-将 PRTS.Map 的游戏引擎格式转换为 MAAfight 内部格式：
-- `mapData.tiles[].buildableType` → `deploymentPoints` (可部署坐标)
-- `routes[].checkpoints` → `strategicPoints` (路径交叉点 = 隘口)
-- `routes[].startPosition` + `waves[]` → `highThreatAreas` (刷怪区)
-- `enemyDbRefs[].attributes` → 精确敌人属性 (HP/ATK/DEF)
-- `waves[].fragments[].preDelay` → 出怪时间线
-- `mapData.tiles[].buildableType` 分布 → `deploymentOrder` (启发式推断)
+## 开发约束
 
-### 2. 战术分析 (BattleAnalyzer) [增强]
+- 默认 fixed 12 人、`groups: []`。
+- 默认省略 `requirements`；`player` 模式只导出真实玩家数据。
+- 只输出 MAA 官方动作，不输出 `Wait`、`SkillUse`。
+- 内部 `[row, col]` 导出为 MAA `[x, y]`。
+- 模型、搜索或协议验证失败时直接报错。
+- CLI stdout 输出 JSON 时，warning 和 explain 走 stderr。
+- 评分只用于候选排序，不得描述为歼灭率或通关率。
 
-- **输入：** MapData (内部格式) + 精确敌人数据
-- **输出：** 战术分析（敌人组成、难度评级、干员需求、推荐策略）
-- **增强点：** 当前版本通过 `spawnCount` 盲猜敌人组成；v2 利用精确 HP/ATK/DEF 做真实难度评估
+修改 engine、copilot、pipeline 或 GUI 生成入口前，先读 `docs/maa-copilot-export-contract.md`。
 
-### 3. 脚本生成 (ScriptGenerator)
+## 常用命令
 
-- **输入：** 战术分析 + 地图数据
-- **输出：** MAA copilot 格式战斗脚本（actions 序列 + groups 编队）
-- 迁移自 `battle-ipc.js:generateScript`
+```bash
+npm run build
+npm test
+npm run corpus:audit
+node scripts/benchmark.js --skip-build
+npm run gui
+```
 
-### 4. 脚本验证 (ScriptValidator)
-
-- 检查字段完整性、action type 合法性、干员名有效性
-- 迁移自 `battle-ipc.js:validateScript`
-
-### 5. 脚本导出 (ScriptExporter)
-
-- **输出格式：** MAA copilot JSON v3
-- 迁移自 `battle-ipc.js:exportToCopilotFormat`
-
-## 技术选型
-
-| 层面 | 选择 | 理由 |
-|------|------|------|
-| 运行时 | Node.js | 现有 battle-ipc.js CJS 实现直接复用 |
-| 类型系统 | TypeScript | TS 源码 + 测试直接迁移 |
-| 输出格式 | JSON (MAA copilot v3) | MAA 标准格式 |
-| 地图数据源 | PRTS.Map 静态 JSON | 零爬虫、精确游戏数据 |
-| 测试 | Jest | 已有 4 个测试文件 |
-
-## 当前状态
-
-86 测试全绿 | 92.1% stmts / 85.3% branch | TypeScript 编译通过
-
-### 已完成
-
-| 来源 | 文件 | 说明 |
-|------|------|------|
-| MAAfight | `src/battle/BattleAnalyzer.ts` | v2: 精确敌人属性 (HP/ATK/DEF) |
-| MAAfight | `src/battle/ScriptGenerator.ts` | 含干员练度优选 |
-| MAAfight | `src/battle/ScriptValidator.ts` | OOB 全覆盖 |
-| MAAfight | `src/battle/ScriptExporter.ts` | MAA copilot v3 |
-| MAAfight | `src/player/OperatorBox.ts` | 玩家干员数据加载 |
-| MAAfight | `src/loader/PRTSMapLoader.ts` | HTTP 下载 + 缓存 |
-| MAAfight | `src/loader/levelIndex.ts` | 3174 关索引 |
-| MAAfight | `src/adapter/PRTSMapAdapter.ts` | PRTS.Map → 内部格式 |
-| MAAfight | `src/index.ts` | CLI: 5 命令 + --operators |
-| PRTS.Map | 3174 关卡 JSON | 静态文件 HTTP 下载 |
-| PRTS.Map | 敌人数据库 5.6MB | 敌人属性完整 |
-
-### 未来方向
-
-- **LLM 战术增强**: 用 LLM 分析关卡数据，生成更智能的部署策略
-- **干员技能数据库**: 扩展 operatorDB，补充技能/专精/模组数据
-- **批量生成**: 一键为多关卡生成脚本
-- **MAA 插件化**: 作为 MAA 外部工具，消除 CLI 使用门槛
-- **关卡可视化**: 地图布局预览
-
-## 详细设计文档
-
-见 `docs/` 文件夹：
-- [总体架构](docs/architecture.md)
-- [数据格式规范](docs/data-format.md)
-- [PRTS.Map 适配器](docs/prts-map-adapter.md)
-- [BattleAnalyzer v2](docs/battle-analyzer-v2.md)
-- [CLI 接口设计](docs/cli-design.md)
-- [实现路线图](docs/implementation-roadmap.md)
-- [审计报告](docs/audit-findings.md)
-- [MAA 干员导出格式](docs/maa-operator-export.md)
+文档入口见 `docs/README.md`。

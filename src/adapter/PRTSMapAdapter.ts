@@ -2,7 +2,7 @@ import type {
   PRTSLevelData, MapData, TileInfo, DeploymentPoint,
   EnemyRoute, WaveInfo, FragmentInfo, EnemySpawn,
   SpawnEvent, HighThreatArea, StrategicPoint,
-  EnemyDetail, DeploymentRecommendation,
+  EnemyDetail,
 } from "../types";
 import type { PRTSMapLoader, EnemyDatabaseEntry } from "../loader/PRTSMapLoader";
 
@@ -34,9 +34,10 @@ function normalizeHeightType(type: unknown): "highland" | "lowland" {
   return type === "HIGHLAND" || type === 1 ? "highland" : "lowland";
 }
 
-function normalizeBuildableType(type: unknown): "melee" | "ranged" | "none" {
+function normalizeBuildableType(type: unknown): "melee" | "ranged" | "all" | "none" {
   if (type === "MELEE" || type === 1) return "melee";
   if (type === "RANGED" || type === 2) return "ranged";
+  if (type === "ALL") return "all";
   return "none";
 }
 
@@ -61,7 +62,7 @@ function adaptTiles(prts: PRTSLevelData): { tiles: TileInfo[][]; deploymentPoint
       if (tiles[row][col].buildableType !== "none") {
         deploymentPoints.push({
           row, col,
-          buildableType: tiles[row][col].buildableType as "melee" | "ranged",
+          buildableType: tiles[row][col].buildableType as "melee" | "ranged" | "all",
         });
       }
     }
@@ -219,60 +220,6 @@ function getOverrideVal(
   return mDef?.m_defined ? mDef.m_value : base;
 }
 
-function isNearChokepoint(dp: DeploymentPoint, strategicPoints: StrategicPoint[]): boolean {
-  return strategicPoints
-    .filter(sp => sp.type === "chokepoint")
-    .some(cp => Math.abs(dp.row - cp.row) + Math.abs(dp.col - cp.col) <= 2);
-}
-
-function inferDeploymentOrder(
-  deploymentPoints: DeploymentPoint[],
-  spawnTimeline: SpawnEvent[],
-  routes: EnemyRoute[],
-  strategicPoints: StrategicPoint[]
-): DeploymentRecommendation[] {
-  const earliestByRoute = new Map<number, number>();
-  for (const event of spawnTimeline) {
-    if (!earliestByRoute.has(event.routeIndex) || event.time < earliestByRoute.get(event.routeIndex)!) {
-      earliestByRoute.set(event.routeIndex, event.time);
-    }
-  }
-
-  const points = deploymentPoints.map(dp => {
-    let minRouteDist = Infinity;
-    let earliestSpawn = Infinity;
-
-    for (const route of routes) {
-      for (const cp of route.checkpoints) {
-        const dist = Math.abs(dp.row - cp.row) + Math.abs(dp.col - cp.col);
-        if (dist < minRouteDist) {
-          minRouteDist = dist;
-          earliestSpawn = earliestByRoute.get(route.id) || Infinity;
-        }
-      }
-    }
-
-    return { point: dp, minRouteDist, earliestSpawn };
-  });
-
-  // Sort: prioritize melee tiles near early-spawn routes
-  points.sort((a, b) => {
-    const scoreA = (a.point.buildableType === "melee" ? 0 : 1) * 100 + a.earliestSpawn + a.minRouteDist * 10;
-    const scoreB = (b.point.buildableType === "melee" ? 0 : 1) * 100 + b.earliestSpawn + b.minRouteDist * 10;
-    return scoreA - scoreB;
-  });
-
-  let meleeIdx = 0;
-  let rangedIdx = 0;
-  return points.map((p, i) => ({
-    position: { row: p.point.row, col: p.point.col },
-    role: p.point.buildableType === "melee"
-      ? (meleeIdx++ < 2 ? "vanguard" : isNearChokepoint(p.point, strategicPoints) ? "tank" : "guard")
-      : (rangedIdx++ < 2 ? "sniper" : "caster"),
-    priority: 100 - i,
-  }));
-}
-
 export class PRTSMapAdapter {
   constructor(private loader: PRTSMapLoader) {}
 
@@ -308,14 +255,12 @@ export class PRTSMapAdapter {
         def: getOverrideVal(attr?.def, baseAttr.def),
         magicResistance: getOverrideVal(attr?.magicResistance, baseAttr.magicResistance),
         moveSpeed: getOverrideVal(attr?.moveSpeed, baseAttr.moveSpeed),
-        isBoss: dbEntry?.enemyTags?.includes("boss") || false,
+        isBoss: dbEntry?.levelType === "BOSS" || dbEntry?.enemyTags?.includes("boss") || false,
         isElite: (dbEntry?.enemyTags?.includes("elite")) ||
                  getOverrideVal(attr?.maxHp, baseAttr.maxHp) > 5000 ||
                  getOverrideVal(attr?.atk, baseAttr.atk) > 800,
       });
     }
-
-    const deploymentOrder = inferDeploymentOrder(deploymentPoints, spawnTimeline, routes, strategicPoints);
 
     return {
       stageId,
@@ -335,7 +280,6 @@ export class PRTSMapAdapter {
         maxCost: prtsData.options.maxCost,
         costIncreaseTime: prtsData.options.costIncreaseTime,
       },
-      deploymentOrder,
       runes: prtsData.runes,
       _raw: prtsData,
     };

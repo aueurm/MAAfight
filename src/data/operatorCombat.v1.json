@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "modelVersion": "operator-combat-v1-fallback",
+  "source": {
+    "kind": "role-baseline",
+    "commit": null,
+    "exactOperatorCount": 0
+  },
+  "roleBaselines": {
+    "vanguard": { "hp": 1900, "atk": 560, "def": 410, "res": 0, "attackInterval": 1.05, "block": 2, "rangeRadius": 1 },
+    "guard": { "hp": 2500, "atk": 760, "def": 420, "res": 0, "attackInterval": 1.2, "block": 2, "rangeRadius": 1 },
+    "tank": { "hp": 3400, "atk": 480, "def": 760, "res": 10, "attackInterval": 1.2, "block": 3, "rangeRadius": 1 },
+    "sniper": { "hp": 1650, "atk": 680, "def": 180, "res": 0, "attackInterval": 1.0, "block": 1, "rangeRadius": 3 },
+    "caster": { "hp": 1750, "atk": 720, "def": 160, "res": 15, "attackInterval": 1.6, "block": 1, "rangeRadius": 3 },
+    "medic": { "hp": 1700, "atk": 580, "def": 170, "res": 10, "attackInterval": 2.85, "block": 1, "rangeRadius": 3 },
+    "support": { "hp": 1800, "atk": 560, "def": 190, "res": 20, "attackInterval": 1.9, "block": 1, "rangeRadius": 3 },
+    "specialist": { "hp": 2200, "atk": 650, "def": 360, "res": 0, "attackInterval": 1.1, "block": 2, "rangeRadius": 1 }
+  },
+  "operators": {}
+}

@@ -16,6 +16,23 @@ describe("levelIndex", () => {
     expect(entry!.code).toBe("GT-1");
   });
 
+  it.each([
+    ["bossrush1_01", "TN-1"],
+    ["act3d0_03", "OF-3"],
+    ["weekly_fly_3", "CA-3"],
+    ["weekly_toxic_5", "AP-5"],
+  ])("resolves the official code for cached level id %s", (stageId, code) => {
+    const entry = resolveStage(stageId);
+    expect(entry).not.toBeNull();
+    expect(entry!.stageId).toBe(stageId);
+    expect(entry!.code).toBe(code);
+  });
+
+  it("includes the official code when searching by a cached level id", () => {
+    const result = searchStages("bossrush1_01").find(entry => entry.stageId === "bossrush1_01");
+    expect(result?.code).toBe("TN-1");
+  });
+
   it("resolveStage returns null for unknown stage", () => {
     expect(resolveStage("nonexistent_zz99")).toBeNull();
   });

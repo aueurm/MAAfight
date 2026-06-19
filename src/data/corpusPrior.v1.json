@@ -1,0 +1,1091 @@
+{
+  "schemaVersion": 1,
+  "modelVersion": "corpus-prior-v1-f80b880a6c4d1d4a",
+  "source": {
+    "operationCount": 200,
+    "latestCount": 100,
+    "historicalCount": 100,
+    "uniqueStageCount": 88,
+    "singletonStageCount": 46,
+    "missingRequired": [],
+    "leaveOneStageOut": {
+      "heldOutStageCount": 88,
+      "minimumTrainingOperations": 187,
+      "sameStageLeakageAllowed": false
+    }
+  },
+  "contexts": {
+    "boss": {
+      "operationCount": 51,
+      "averages": {
+        "actions": 14.9412,
+        "deploys": 9.902,
+        "skills": 1.0196,
+        "fixedOpers": 6
+      },
+      "rates": {
+        "groups": 0.5294,
+        "speedUp": 1,
+        "skillDaemon": 0.8824,
+        "conditions": {
+          "cooling": 0.0392,
+          "cost_changes": 0.0196,
+          "costs": 0.3137,
+          "delay": 0.2941,
+          "kills": 0.451,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "BulletTime": 0.0196,
+        "Deploy": 9.902,
+        "Retreat": 1.3922,
+        "Skill": 1.0196,
+        "SkillDaemon": 0.8824,
+        "SkillUsage": 0.549,
+        "SpeedUp": 1.1765
+      },
+      "firstActionRates": {
+        "Deploy": 0.4902,
+        "SpeedUp": 0.5098
+      },
+      "lastActionRates": {
+        "Deploy": 0.0784,
+        "SkillDaemon": 0.8824,
+        "SkillUsage": 0.0196,
+        "SpeedUp": 0.0196
+      },
+      "actionBigramRates": {
+        "BulletTime>Retreat": 0.0014,
+        "Deploy>BulletTime": 0.0014,
+        "Deploy>Deploy": 0.488,
+        "Deploy>Retreat": 0.0549,
+        "Deploy>Skill": 0.052,
+        "Deploy>SkillDaemon": 0.0464,
+        "Deploy>SkillUsage": 0.0239,
+        "Deploy>SpeedUp": 0.038,
+        "Retreat>Deploy": 0.0591,
+        "Retreat>Retreat": 0.0197,
+        "Retreat>Skill": 0.0042,
+        "Retreat>SkillDaemon": 0.0028,
+        "Retreat>SkillUsage": 0.0084,
+        "Retreat>SpeedUp": 0.0056,
+        "Skill>Deploy": 0.0492,
+        "Skill>Retreat": 0.0084,
+        "Skill>Skill": 0.0113,
+        "Skill>SkillDaemon": 0.0014,
+        "Skill>SkillUsage": 0.0014,
+        "Skill>SpeedUp": 0.0014,
+        "SkillUsage>Deploy": 0.0183,
+        "SkillUsage>Retreat": 0.0056,
+        "SkillUsage>Skill": 0.0014,
+        "SkillUsage>SkillDaemon": 0.007,
+        "SkillUsage>SkillUsage": 0.0028,
+        "SkillUsage>SpeedUp": 0.0028,
+        "SpeedUp>Deploy": 0.0605,
+        "SpeedUp>Retreat": 0.0098,
+        "SpeedUp>Skill": 0.0042,
+        "SpeedUp>SkillDaemon": 0.0056,
+        "SpeedUp>SkillUsage": 0.0028
+      },
+      "directionRates": {
+        "Down": 0.1109,
+        "Left": 0.4475,
+        "None": 0.0752,
+        "Right": 0.1426,
+        "Up": 0.2257
+      },
+      "position": {
+        "sampleCount": 50,
+        "averageRouteDistance": 0.5316,
+        "averageBlueBoxDistance": 5.237,
+        "averageChokepointDistance": 0.7246
+      }
+    },
+    "flying": {
+      "operationCount": 30,
+      "averages": {
+        "actions": 8.2333,
+        "deploys": 4.8333,
+        "skills": 0.7,
+        "fixedOpers": 3.2
+      },
+      "rates": {
+        "groups": 0.6,
+        "speedUp": 1,
+        "skillDaemon": 0.7333,
+        "conditions": {
+          "cooling": 0,
+          "cost_changes": 0,
+          "costs": 0.1333,
+          "delay": 0.1667,
+          "kills": 0.3667,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "Deploy": 4.8333,
+        "Output": 0.1,
+        "Retreat": 0.5333,
+        "Skill": 0.7,
+        "SkillDaemon": 0.7333,
+        "SkillUsage": 0.2667,
+        "SpeedUp": 1.0667
+      },
+      "firstActionRates": {
+        "Deploy": 0.3667,
+        "SpeedUp": 0.6333
+      },
+      "lastActionRates": {
+        "Deploy": 0.1,
+        "Output": 0.1,
+        "Skill": 0.0333,
+        "SkillDaemon": 0.7333,
+        "SkillUsage": 0.0333
+      },
+      "actionBigramRates": {
+        "Deploy>Deploy": 0.4194,
+        "Deploy>Output": 0.0138,
+        "Deploy>Retreat": 0.0507,
+        "Deploy>Skill": 0.0323,
+        "Deploy>SkillDaemon": 0.0691,
+        "Deploy>SkillUsage": 0.0184,
+        "Deploy>SpeedUp": 0.0507,
+        "Retreat>Deploy": 0.0415,
+        "Retreat>Retreat": 0.0092,
+        "Retreat>Skill": 0.0138,
+        "Retreat>SpeedUp": 0.0092,
+        "Skill>Deploy": 0.0276,
+        "Skill>Retreat": 0.0046,
+        "Skill>Skill": 0.0323,
+        "Skill>SkillDaemon": 0.0138,
+        "Skill>SkillUsage": 0.0138,
+        "SkillUsage>Deploy": 0.0046,
+        "SkillUsage>Skill": 0.0138,
+        "SkillUsage>SkillDaemon": 0.0092,
+        "SkillUsage>SkillUsage": 0.0046,
+        "SpeedUp>Deploy": 0.1244,
+        "SpeedUp>Retreat": 0.0092,
+        "SpeedUp>Skill": 0.0046,
+        "SpeedUp>SkillDaemon": 0.0092
+      },
+      "directionRates": {
+        "上": 0.0276,
+        "下": 0.0069,
+        "右": 0.0276,
+        "左": 0.0069,
+        "Down": 0.1379,
+        "Left": 0.3655,
+        "Right": 0.1517,
+        "Up": 0.2759
+      },
+      "position": {
+        "sampleCount": 30,
+        "averageRouteDistance": 0.8987,
+        "averageBlueBoxDistance": 4.918,
+        "averageChokepointDistance": 1.1987
+      }
+    },
+    "global": {
+      "operationCount": 200,
+      "averages": {
+        "actions": 9.89,
+        "deploys": 6.205,
+        "skills": 0.775,
+        "fixedOpers": 4.095
+      },
+      "rates": {
+        "groups": 0.505,
+        "speedUp": 1,
+        "skillDaemon": 0.885,
+        "conditions": {
+          "cooling": 0.015,
+          "cost_changes": 0.015,
+          "costs": 0.21,
+          "delay": 0.205,
+          "kills": 0.33,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "BulletTime": 0.015,
+        "Deploy": 6.205,
+        "Output": 0.015,
+        "Retreat": 0.635,
+        "Skill": 0.775,
+        "SkillDaemon": 0.885,
+        "SkillUsage": 0.285,
+        "SpeedUp": 1.075
+      },
+      "firstActionRates": {
+        "Deploy": 0.38,
+        "SpeedUp": 0.62
+      },
+      "lastActionRates": {
+        "Deploy": 0.06,
+        "Output": 0.015,
+        "Skill": 0.02,
+        "SkillDaemon": 0.885,
+        "SkillUsage": 0.005,
+        "SpeedUp": 0.015
+      },
+      "actionBigramRates": {
+        "BulletTime>Deploy": 0.0006,
+        "BulletTime>Retreat": 0.0006,
+        "BulletTime>Skill": 0.0006,
+        "Deploy>BulletTime": 0.0011,
+        "Deploy>Deploy": 0.4601,
+        "Deploy>Output": 0.0017,
+        "Deploy>Retreat": 0.0444,
+        "Deploy>Skill": 0.0512,
+        "Deploy>SkillDaemon": 0.0697,
+        "Deploy>SkillUsage": 0.018,
+        "Deploy>SpeedUp": 0.045,
+        "Retreat>Deploy": 0.0501,
+        "Retreat>Retreat": 0.009,
+        "Retreat>Skill": 0.0045,
+        "Retreat>SkillDaemon": 0.0017,
+        "Retreat>SkillUsage": 0.0034,
+        "Retreat>SpeedUp": 0.0028,
+        "Skill>Deploy": 0.0388,
+        "Skill>Retreat": 0.0084,
+        "Skill>Skill": 0.0202,
+        "Skill>SkillDaemon": 0.009,
+        "Skill>SkillUsage": 0.0062,
+        "Skill>SpeedUp": 0.0022,
+        "SkillUsage>Deploy": 0.0096,
+        "SkillUsage>Retreat": 0.0039,
+        "SkillUsage>Skill": 0.0062,
+        "SkillUsage>SkillDaemon": 0.0079,
+        "SkillUsage>SkillUsage": 0.0028,
+        "SkillUsage>SpeedUp": 0.0011,
+        "SpeedUp>BulletTime": 0.0006,
+        "SpeedUp>Deploy": 0.0962,
+        "SpeedUp>Retreat": 0.0051,
+        "SpeedUp>Skill": 0.0045,
+        "SpeedUp>SkillDaemon": 0.0112,
+        "SpeedUp>SkillUsage": 0.0017
+      },
+      "directionRates": {
+        "上": 0.0032,
+        "下": 0.0008,
+        "右": 0.0032,
+        "左": 0.0008,
+        "Down": 0.137,
+        "Left": 0.3691,
+        "None": 0.0532,
+        "Right": 0.2466,
+        "Up": 0.1886
+      },
+      "position": {
+        "sampleCount": 197,
+        "averageRouteDistance": 0.9878,
+        "averageBlueBoxDistance": 4.6328,
+        "averageChokepointDistance": 1.2916
+      }
+    },
+    "ground_only": {
+      "operationCount": 170,
+      "averages": {
+        "actions": 10.1824,
+        "deploys": 6.4471,
+        "skills": 0.7882,
+        "fixedOpers": 4.2529
+      },
+      "rates": {
+        "groups": 0.4882,
+        "speedUp": 1,
+        "skillDaemon": 0.9118,
+        "conditions": {
+          "cooling": 0.0176,
+          "cost_changes": 0.0176,
+          "costs": 0.2235,
+          "delay": 0.2118,
+          "kills": 0.3235,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "BulletTime": 0.0176,
+        "Deploy": 6.4471,
+        "Retreat": 0.6529,
+        "Skill": 0.7882,
+        "SkillDaemon": 0.9118,
+        "SkillUsage": 0.2882,
+        "SpeedUp": 1.0765
+      },
+      "firstActionRates": {
+        "Deploy": 0.3824,
+        "SpeedUp": 0.6176
+      },
+      "lastActionRates": {
+        "Deploy": 0.0529,
+        "Skill": 0.0176,
+        "SkillDaemon": 0.9118,
+        "SpeedUp": 0.0176
+      },
+      "actionBigramRates": {
+        "BulletTime>Deploy": 0.0006,
+        "BulletTime>Retreat": 0.0006,
+        "BulletTime>Skill": 0.0006,
+        "Deploy>BulletTime": 0.0013,
+        "Deploy>Deploy": 0.4657,
+        "Deploy>Retreat": 0.0436,
+        "Deploy>Skill": 0.0538,
+        "Deploy>SkillDaemon": 0.0698,
+        "Deploy>SkillUsage": 0.0179,
+        "Deploy>SpeedUp": 0.0442,
+        "Retreat>Deploy": 0.0512,
+        "Retreat>Retreat": 0.009,
+        "Retreat>Skill": 0.0032,
+        "Retreat>SkillDaemon": 0.0019,
+        "Retreat>SkillUsage": 0.0038,
+        "Retreat>SpeedUp": 0.0019,
+        "Skill>Deploy": 0.0404,
+        "Skill>Retreat": 0.009,
+        "Skill>Skill": 0.0186,
+        "Skill>SkillDaemon": 0.0083,
+        "Skill>SkillUsage": 0.0051,
+        "Skill>SpeedUp": 0.0026,
+        "SkillUsage>Deploy": 0.0102,
+        "SkillUsage>Retreat": 0.0045,
+        "SkillUsage>Skill": 0.0051,
+        "SkillUsage>SkillDaemon": 0.0077,
+        "SkillUsage>SkillUsage": 0.0026,
+        "SkillUsage>SpeedUp": 0.0013,
+        "SpeedUp>BulletTime": 0.0006,
+        "SpeedUp>Deploy": 0.0922,
+        "SpeedUp>Retreat": 0.0045,
+        "SpeedUp>Skill": 0.0045,
+        "SpeedUp>SkillDaemon": 0.0115,
+        "SpeedUp>SkillUsage": 0.0019
+      },
+      "directionRates": {
+        "Down": 0.1369,
+        "Left": 0.3695,
+        "None": 0.0602,
+        "Right": 0.2591,
+        "Up": 0.177
+      },
+      "position": {
+        "sampleCount": 167,
+        "averageRouteDistance": 1.0038,
+        "averageBlueBoxDistance": 4.5816,
+        "averageChokepointDistance": 1.3083
+      }
+    },
+    "map_large": {
+      "operationCount": 46,
+      "averages": {
+        "actions": 14.8043,
+        "deploys": 10.1957,
+        "skills": 0.8913,
+        "fixedOpers": 5.6522
+      },
+      "rates": {
+        "groups": 0.4565,
+        "speedUp": 1,
+        "skillDaemon": 0.8913,
+        "conditions": {
+          "cooling": 0.0217,
+          "cost_changes": 0.0435,
+          "costs": 0.3696,
+          "delay": 0.2391,
+          "kills": 0.3478,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "BulletTime": 0.0217,
+        "Deploy": 10.1957,
+        "Retreat": 1.1739,
+        "Skill": 0.8913,
+        "SkillDaemon": 0.8913,
+        "SkillUsage": 0.3913,
+        "SpeedUp": 1.2391
+      },
+      "firstActionRates": {
+        "Deploy": 0.5,
+        "SpeedUp": 0.5
+      },
+      "lastActionRates": {
+        "Deploy": 0.0652,
+        "SkillDaemon": 0.8913,
+        "SpeedUp": 0.0435
+      },
+      "actionBigramRates": {
+        "BulletTime>Retreat": 0.0016,
+        "Deploy>BulletTime": 0.0016,
+        "Deploy>Deploy": 0.5165,
+        "Deploy>Retreat": 0.0567,
+        "Deploy>Skill": 0.0504,
+        "Deploy>SkillDaemon": 0.0441,
+        "Deploy>SkillUsage": 0.022,
+        "Deploy>SpeedUp": 0.0425,
+        "Retreat>Deploy": 0.0646,
+        "Retreat>Retreat": 0.0079,
+        "Retreat>Skill": 0.0016,
+        "Retreat>SkillDaemon": 0.0016,
+        "Retreat>SkillUsage": 0.0031,
+        "Retreat>SpeedUp": 0.0063,
+        "Skill>Deploy": 0.0472,
+        "Skill>Retreat": 0.0047,
+        "Skill>Skill": 0.0079,
+        "Skill>SkillDaemon": 0.0031,
+        "Skill>SpeedUp": 0.0016,
+        "SkillUsage>Deploy": 0.0126,
+        "SkillUsage>Retreat": 0.0016,
+        "SkillUsage>Skill": 0.0016,
+        "SkillUsage>SkillDaemon": 0.0063,
+        "SkillUsage>SkillUsage": 0.0031,
+        "SkillUsage>SpeedUp": 0.0031,
+        "SpeedUp>Deploy": 0.0614,
+        "SpeedUp>Retreat": 0.0126,
+        "SpeedUp>Skill": 0.0031,
+        "SpeedUp>SkillDaemon": 0.0094
+      },
+      "directionRates": {
+        "Down": 0.1151,
+        "Left": 0.4584,
+        "None": 0.081,
+        "Right": 0.177,
+        "Up": 0.1684
+      },
+      "position": {
+        "sampleCount": 45,
+        "averageRouteDistance": 0.564,
+        "averageBlueBoxDistance": 5.6511,
+        "averageChokepointDistance": 0.7404
+      }
+    },
+    "map_medium": {
+      "operationCount": 151,
+      "averages": {
+        "actions": 8.4238,
+        "deploys": 5.0265,
+        "skills": 0.755,
+        "fixedOpers": 3.6424
+      },
+      "rates": {
+        "groups": 0.5298,
+        "speedUp": 1,
+        "skillDaemon": 0.8808,
+        "conditions": {
+          "cooling": 0.0132,
+          "cost_changes": 0.0066,
+          "costs": 0.1589,
+          "delay": 0.1921,
+          "kills": 0.3311,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "BulletTime": 0.0132,
+        "Deploy": 5.0265,
+        "Output": 0.0199,
+        "Retreat": 0.457,
+        "Skill": 0.755,
+        "SkillDaemon": 0.8808,
+        "SkillUsage": 0.2583,
+        "SpeedUp": 1.0132
+      },
+      "firstActionRates": {
+        "Deploy": 0.351,
+        "SpeedUp": 0.649
+      },
+      "lastActionRates": {
+        "Deploy": 0.0596,
+        "Output": 0.0199,
+        "Skill": 0.0265,
+        "SkillDaemon": 0.8808,
+        "SkillUsage": 0.0066,
+        "SpeedUp": 0.0066
+      },
+      "actionBigramRates": {
+        "BulletTime>Deploy": 0.0009,
+        "BulletTime>Skill": 0.0009,
+        "Deploy>BulletTime": 0.0009,
+        "Deploy>Deploy": 0.4326,
+        "Deploy>Output": 0.0027,
+        "Deploy>Retreat": 0.0357,
+        "Deploy>Skill": 0.0526,
+        "Deploy>SkillDaemon": 0.083,
+        "Deploy>SkillUsage": 0.0161,
+        "Deploy>SpeedUp": 0.0455,
+        "Retreat>Deploy": 0.0393,
+        "Retreat>Retreat": 0.0098,
+        "Retreat>Skill": 0.0062,
+        "Retreat>SkillDaemon": 0.0018,
+        "Retreat>SkillUsage": 0.0036,
+        "Retreat>SpeedUp": 0.0009,
+        "Skill>Deploy": 0.0348,
+        "Skill>Retreat": 0.0107,
+        "Skill>Skill": 0.0277,
+        "Skill>SkillDaemon": 0.0125,
+        "Skill>SkillUsage": 0.0098,
+        "Skill>SpeedUp": 0.0027,
+        "SkillUsage>Deploy": 0.008,
+        "SkillUsage>Retreat": 0.0054,
+        "SkillUsage>Skill": 0.0089,
+        "SkillUsage>SkillDaemon": 0.0089,
+        "SkillUsage>SkillUsage": 0.0027,
+        "SpeedUp>BulletTime": 0.0009,
+        "SpeedUp>Deploy": 0.1142,
+        "SpeedUp>Skill": 0.0054,
+        "SpeedUp>SkillDaemon": 0.0125,
+        "SpeedUp>SkillUsage": 0.0027
+      },
+      "directionRates": {
+        "上": 0.0053,
+        "下": 0.0013,
+        "右": 0.0053,
+        "左": 0.0013,
+        "Down": 0.1528,
+        "Left": 0.3188,
+        "None": 0.0369,
+        "Right": 0.278,
+        "Up": 0.2042
+      },
+      "position": {
+        "sampleCount": 151,
+        "averageRouteDistance": 1.1107,
+        "averageBlueBoxDistance": 4.3434,
+        "averageChokepointDistance": 1.4544
+      }
+    },
+    "map_small": {
+      "operationCount": 3,
+      "averages": {
+        "actions": 8.3333,
+        "deploys": 4.3333,
+        "skills": 0,
+        "fixedOpers": 3
+      },
+      "rates": {
+        "groups": 0,
+        "speedUp": 1,
+        "skillDaemon": 1,
+        "conditions": {
+          "cooling": 0,
+          "cost_changes": 0,
+          "costs": 0.3333,
+          "delay": 0.3333,
+          "kills": 0,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "Deploy": 4.3333,
+        "Retreat": 1.3333,
+        "SkillDaemon": 1,
+        "SpeedUp": 1.6667
+      },
+      "firstActionRates": {
+        "SpeedUp": 1
+      },
+      "lastActionRates": {
+        "SkillDaemon": 1
+      },
+      "actionBigramRates": {
+        "Deploy>Deploy": 0.2273,
+        "Deploy>Retreat": 0.1364,
+        "Deploy>SkillDaemon": 0.1364,
+        "Deploy>SpeedUp": 0.0909,
+        "Retreat>Deploy": 0.1818,
+        "SpeedUp>Deploy": 0.1818,
+        "SpeedUp>Retreat": 0.0455
+      },
+      "directionRates": {
+        "Left": 0.0769,
+        "Right": 0.9231
+      },
+      "position": {
+        "sampleCount": 1,
+        "averageRouteDistance": 1.5,
+        "averageBlueBoxDistance": 2.5,
+        "averageChokepointDistance": 1.5
+      }
+    },
+    "multi_lane": {
+      "operationCount": 189,
+      "averages": {
+        "actions": 10.0423,
+        "deploys": 6.3122,
+        "skills": 0.8095,
+        "fixedOpers": 4.2011
+      },
+      "rates": {
+        "groups": 0.5079,
+        "speedUp": 1,
+        "skillDaemon": 0.8836,
+        "conditions": {
+          "cooling": 0.0159,
+          "cost_changes": 0.0159,
+          "costs": 0.2116,
+          "delay": 0.2063,
+          "kills": 0.3386,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "BulletTime": 0.0159,
+        "Deploy": 6.3122,
+        "Output": 0.0159,
+        "Retreat": 0.6349,
+        "Skill": 0.8095,
+        "SkillDaemon": 0.8836,
+        "SkillUsage": 0.3016,
+        "SpeedUp": 1.0688
+      },
+      "firstActionRates": {
+        "Deploy": 0.3862,
+        "SpeedUp": 0.6138
+      },
+      "lastActionRates": {
+        "Deploy": 0.0635,
+        "Output": 0.0159,
+        "Skill": 0.0212,
+        "SkillDaemon": 0.8836,
+        "SkillUsage": 0.0053,
+        "SpeedUp": 0.0106
+      },
+      "actionBigramRates": {
+        "BulletTime>Deploy": 0.0006,
+        "BulletTime>Retreat": 0.0006,
+        "BulletTime>Skill": 0.0006,
+        "Deploy>BulletTime": 0.0012,
+        "Deploy>Deploy": 0.4623,
+        "Deploy>Output": 0.0018,
+        "Deploy>Retreat": 0.0433,
+        "Deploy>Skill": 0.0527,
+        "Deploy>SkillDaemon": 0.0673,
+        "Deploy>SkillUsage": 0.0187,
+        "Deploy>SpeedUp": 0.0439,
+        "Retreat>Deploy": 0.0486,
+        "Retreat>Retreat": 0.0088,
+        "Retreat>Skill": 0.0047,
+        "Retreat>SkillDaemon": 0.0018,
+        "Retreat>SkillUsage": 0.0035,
+        "Retreat>SpeedUp": 0.0029,
+        "Skill>Deploy": 0.0404,
+        "Skill>Retreat": 0.0088,
+        "Skill>Skill": 0.0205,
+        "Skill>SkillDaemon": 0.0088,
+        "Skill>SkillUsage": 0.0064,
+        "Skill>SpeedUp": 0.0023,
+        "SkillUsage>Deploy": 0.0099,
+        "SkillUsage>Retreat": 0.0041,
+        "SkillUsage>Skill": 0.0064,
+        "SkillUsage>SkillDaemon": 0.0082,
+        "SkillUsage>SkillUsage": 0.0029,
+        "SkillUsage>SpeedUp": 0.0012,
+        "SpeedUp>BulletTime": 0.0006,
+        "SpeedUp>Deploy": 0.0936,
+        "SpeedUp>Retreat": 0.0047,
+        "SpeedUp>Skill": 0.0047,
+        "SpeedUp>SkillDaemon": 0.0117,
+        "SpeedUp>SkillUsage": 0.0018
+      },
+      "directionRates": {
+        "上": 0.0034,
+        "下": 0.0008,
+        "右": 0.0034,
+        "左": 0.0008,
+        "Down": 0.1383,
+        "Left": 0.3688,
+        "None": 0.0511,
+        "Right": 0.2414,
+        "Up": 0.1945
+      },
+      "position": {
+        "sampleCount": 188,
+        "averageRouteDistance": 1.0049,
+        "averageBlueBoxDistance": 4.8164,
+        "averageChokepointDistance": 1.3286
+      }
+    },
+    "no_boss": {
+      "operationCount": 149,
+      "averages": {
+        "actions": 8.1611,
+        "deploys": 4.9396,
+        "skills": 0.6913,
+        "fixedOpers": 3.443
+      },
+      "rates": {
+        "groups": 0.4966,
+        "speedUp": 1,
+        "skillDaemon": 0.8859,
+        "conditions": {
+          "cooling": 0.0067,
+          "cost_changes": 0.0134,
+          "costs": 0.1745,
+          "delay": 0.1745,
+          "kills": 0.2886,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "BulletTime": 0.0134,
+        "Deploy": 4.9396,
+        "Output": 0.0201,
+        "Retreat": 0.3758,
+        "Skill": 0.6913,
+        "SkillDaemon": 0.8859,
+        "SkillUsage": 0.1946,
+        "SpeedUp": 1.0403
+      },
+      "firstActionRates": {
+        "Deploy": 0.3423,
+        "SpeedUp": 0.6577
+      },
+      "lastActionRates": {
+        "Deploy": 0.0537,
+        "Output": 0.0201,
+        "Skill": 0.0268,
+        "SkillDaemon": 0.8859,
+        "SpeedUp": 0.0134
+      },
+      "actionBigramRates": {
+        "BulletTime>Deploy": 0.0009,
+        "BulletTime>Skill": 0.0009,
+        "Deploy>BulletTime": 0.0009,
+        "Deploy>Deploy": 0.4414,
+        "Deploy>Output": 0.0028,
+        "Deploy>Retreat": 0.0375,
+        "Deploy>Skill": 0.0506,
+        "Deploy>SkillDaemon": 0.0853,
+        "Deploy>SkillUsage": 0.0141,
+        "Deploy>SpeedUp": 0.0497,
+        "Retreat>Deploy": 0.044,
+        "Retreat>Retreat": 0.0019,
+        "Retreat>Skill": 0.0047,
+        "Retreat>SkillDaemon": 0.0009,
+        "Retreat>SpeedUp": 0.0009,
+        "Skill>Deploy": 0.0319,
+        "Skill>Retreat": 0.0084,
+        "Skill>Skill": 0.0262,
+        "Skill>SkillDaemon": 0.0141,
+        "Skill>SkillUsage": 0.0094,
+        "Skill>SpeedUp": 0.0028,
+        "SkillUsage>Deploy": 0.0037,
+        "SkillUsage>Retreat": 0.0028,
+        "SkillUsage>Skill": 0.0094,
+        "SkillUsage>SkillDaemon": 0.0084,
+        "SkillUsage>SkillUsage": 0.0028,
+        "SpeedUp>BulletTime": 0.0009,
+        "SpeedUp>Deploy": 0.12,
+        "SpeedUp>Retreat": 0.0019,
+        "SpeedUp>Skill": 0.0047,
+        "SpeedUp>SkillDaemon": 0.015,
+        "SpeedUp>SkillUsage": 0.0009
+      },
+      "directionRates": {
+        "上": 0.0054,
+        "下": 0.0014,
+        "右": 0.0054,
+        "左": 0.0014,
+        "Down": 0.1549,
+        "Left": 0.3152,
+        "None": 0.038,
+        "Right": 0.3179,
+        "Up": 0.163
+      },
+      "position": {
+        "sampleCount": 147,
+        "averageRouteDistance": 1.1429,
+        "averageBlueBoxDistance": 4.4273,
+        "averageChokepointDistance": 1.4844
+      }
+    },
+    "pressure_high": {
+      "operationCount": 167,
+      "averages": {
+        "actions": 10.7485,
+        "deploys": 6.8204,
+        "skills": 0.8982,
+        "fixedOpers": 4.5449
+      },
+      "rates": {
+        "groups": 0.5269,
+        "speedUp": 1,
+        "skillDaemon": 0.8922,
+        "conditions": {
+          "cooling": 0.018,
+          "cost_changes": 0.018,
+          "costs": 0.2216,
+          "delay": 0.2335,
+          "kills": 0.3533,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "BulletTime": 0.018,
+        "Deploy": 6.8204,
+        "Output": 0.012,
+        "Retreat": 0.7066,
+        "Skill": 0.8982,
+        "SkillDaemon": 0.8922,
+        "SkillUsage": 0.3353,
+        "SpeedUp": 1.0659
+      },
+      "firstActionRates": {
+        "Deploy": 0.4371,
+        "SpeedUp": 0.5629
+      },
+      "lastActionRates": {
+        "Deploy": 0.0659,
+        "Output": 0.012,
+        "Skill": 0.018,
+        "SkillDaemon": 0.8922,
+        "SkillUsage": 0.006,
+        "SpeedUp": 0.006
+      },
+      "actionBigramRates": {
+        "BulletTime>Deploy": 0.0006,
+        "BulletTime>Retreat": 0.0006,
+        "BulletTime>Skill": 0.0006,
+        "Deploy>BulletTime": 0.0012,
+        "Deploy>Deploy": 0.4656,
+        "Deploy>Output": 0.0012,
+        "Deploy>Retreat": 0.0442,
+        "Deploy>Skill": 0.0534,
+        "Deploy>SkillDaemon": 0.062,
+        "Deploy>SkillUsage": 0.0197,
+        "Deploy>SpeedUp": 0.0455,
+        "Retreat>Deploy": 0.0498,
+        "Retreat>Retreat": 0.0098,
+        "Retreat>Skill": 0.0049,
+        "Retreat>SkillDaemon": 0.0018,
+        "Retreat>SkillUsage": 0.0037,
+        "Retreat>SpeedUp": 0.0025,
+        "Skill>Deploy": 0.0418,
+        "Skill>Retreat": 0.0092,
+        "Skill>Skill": 0.0215,
+        "Skill>SkillDaemon": 0.0092,
+        "Skill>SkillUsage": 0.0061,
+        "Skill>SpeedUp": 0.0025,
+        "SkillUsage>Deploy": 0.0104,
+        "SkillUsage>Retreat": 0.0043,
+        "SkillUsage>Skill": 0.0068,
+        "SkillUsage>SkillDaemon": 0.008,
+        "SkillUsage>SkillUsage": 0.0031,
+        "SkillUsage>SpeedUp": 0.0012,
+        "SpeedUp>BulletTime": 0.0006,
+        "SpeedUp>Deploy": 0.0866,
+        "SpeedUp>Retreat": 0.0043,
+        "SpeedUp>Skill": 0.0049,
+        "SpeedUp>SkillDaemon": 0.0104,
+        "SpeedUp>SkillUsage": 0.0018
+      },
+      "directionRates": {
+        "上": 0.0018,
+        "下": 0.0009,
+        "右": 0.0035,
+        "左": 0.0009,
+        "Down": 0.1396,
+        "Left": 0.3784,
+        "None": 0.0553,
+        "Right": 0.2335,
+        "Up": 0.1888
+      },
+      "position": {
+        "sampleCount": 167,
+        "averageRouteDistance": 0.9765,
+        "averageBlueBoxDistance": 4.5714,
+        "averageChokepointDistance": 1.2649
+      }
+    },
+    "pressure_low": {
+      "operationCount": 6,
+      "averages": {
+        "actions": 9.5,
+        "deploys": 5.5,
+        "skills": 0,
+        "fixedOpers": 1.5
+      },
+      "rates": {
+        "groups": 0.5,
+        "speedUp": 1,
+        "skillDaemon": 0.8333,
+        "conditions": {
+          "cooling": 0,
+          "cost_changes": 0,
+          "costs": 0.6667,
+          "delay": 0.1667,
+          "kills": 0.1667,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "Deploy": 5.5,
+        "Retreat": 1.5,
+        "SkillDaemon": 0.8333,
+        "SpeedUp": 1.6667
+      },
+      "firstActionRates": {
+        "Deploy": 0.1667,
+        "SpeedUp": 0.8333
+      },
+      "lastActionRates": {
+        "SkillDaemon": 0.8333,
+        "SpeedUp": 0.1667
+      },
+      "actionBigramRates": {
+        "Deploy>Deploy": 0.3529,
+        "Deploy>Retreat": 0.1373,
+        "Deploy>SkillDaemon": 0.0784,
+        "Deploy>SpeedUp": 0.0784,
+        "Retreat>Deploy": 0.1569,
+        "Retreat>SpeedUp": 0.0196,
+        "SpeedUp>Deploy": 0.1176,
+        "SpeedUp>Retreat": 0.0392,
+        "SpeedUp>SkillDaemon": 0.0196
+      },
+      "directionRates": {
+        "Down": 0.1515,
+        "Left": 0.2727,
+        "Right": 0.5152,
+        "Up": 0.0606
+      },
+      "position": {
+        "sampleCount": 4,
+        "averageRouteDistance": 0.73,
+        "averageBlueBoxDistance": 4.8075,
+        "averageChokepointDistance": 0.9175
+      }
+    },
+    "pressure_medium": {
+      "operationCount": 27,
+      "averages": {
+        "actions": 4.6667,
+        "deploys": 2.5556,
+        "skills": 0.1852,
+        "fixedOpers": 1.8889
+      },
+      "rates": {
+        "groups": 0.3704,
+        "speedUp": 1,
+        "skillDaemon": 0.8519,
+        "conditions": {
+          "cooling": 0,
+          "cost_changes": 0,
+          "costs": 0.037,
+          "delay": 0.037,
+          "kills": 0.2222,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "Deploy": 2.5556,
+        "Output": 0.037,
+        "Skill": 0.1852,
+        "SkillDaemon": 0.8519,
+        "SkillUsage": 0.037,
+        "SpeedUp": 1
+      },
+      "firstActionRates": {
+        "Deploy": 0.0741,
+        "SpeedUp": 0.9259
+      },
+      "lastActionRates": {
+        "Deploy": 0.037,
+        "Output": 0.037,
+        "Skill": 0.037,
+        "SkillDaemon": 0.8519,
+        "SpeedUp": 0.037
+      },
+      "actionBigramRates": {
+        "Deploy>Deploy": 0.4242,
+        "Deploy>Output": 0.0101,
+        "Deploy>Skill": 0.0404,
+        "Deploy>SkillDaemon": 0.1919,
+        "Deploy>SpeedUp": 0.0202,
+        "Skill>Deploy": 0.0101,
+        "Skill>Skill": 0.0101,
+        "Skill>SkillDaemon": 0.0101,
+        "Skill>SkillUsage": 0.0101,
+        "SkillUsage>SkillDaemon": 0.0101,
+        "SpeedUp>Deploy": 0.2424,
+        "SpeedUp>SkillDaemon": 0.0202
+      },
+      "directionRates": {
+        "上": 0.029,
+        "Down": 0.087,
+        "Left": 0.2609,
+        "None": 0.0435,
+        "Right": 0.3333,
+        "Up": 0.2464
+      },
+      "position": {
+        "sampleCount": 26,
+        "averageRouteDistance": 1.0996,
+        "averageBlueBoxDistance": 5.0004,
+        "averageChokepointDistance": 1.5208
+      }
+    },
+    "single_lane": {
+      "operationCount": 11,
+      "averages": {
+        "actions": 7.2727,
+        "deploys": 4.3636,
+        "skills": 0.1818,
+        "fixedOpers": 2.2727
+      },
+      "rates": {
+        "groups": 0.4545,
+        "speedUp": 1,
+        "skillDaemon": 0.9091,
+        "conditions": {
+          "cooling": 0,
+          "cost_changes": 0,
+          "costs": 0.1818,
+          "delay": 0.1818,
+          "kills": 0.1818,
+          "time_elapsed": 0
+        }
+      },
+      "actionTypesPerScript": {
+        "Deploy": 4.3636,
+        "Retreat": 0.6364,
+        "Skill": 0.1818,
+        "SkillDaemon": 0.9091,
+        "SpeedUp": 1.1818
+      },
+      "firstActionRates": {
+        "Deploy": 0.2727,
+        "SpeedUp": 0.7273
+      },
+      "lastActionRates": {
+        "SkillDaemon": 0.9091,
+        "SpeedUp": 0.0909
+      },
+      "actionBigramRates": {
+        "Deploy>Deploy": 0.4058,
+        "Deploy>Retreat": 0.0725,
+        "Deploy>Skill": 0.0145,
+        "Deploy>SkillDaemon": 0.1304,
+        "Deploy>SpeedUp": 0.0725,
+        "Retreat>Deploy": 0.087,
+        "Retreat>Retreat": 0.0145,
+        "Skill>Skill": 0.0145,
+        "Skill>SkillDaemon": 0.0145,
+        "SpeedUp>Deploy": 0.1594,
+        "SpeedUp>Retreat": 0.0145
+      },
+      "directionRates": {
+        "Down": 0.1042,
+        "Left": 0.375,
+        "None": 0.1042,
+        "Right": 0.375,
+        "Up": 0.0417
+      },
+      "position": {
+        "sampleCount": 9,
+        "averageRouteDistance": 0.63,
+        "averageBlueBoxDistance": 0.7967,
+        "averageChokepointDistance": 0.5189
+      }
+    }
+  }
+}

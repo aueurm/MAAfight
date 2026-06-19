@@ -1,4 +1,4 @@
-export type SquadMode = "fixed" | "groups" | "hybrid";
+export type RequirementsMode = "none" | "player";
 
 export interface ApiBase {
   success: boolean;
@@ -14,8 +14,7 @@ export interface ConfigResponse extends ApiBase {
   defaultCacheLevelsDir: string;
   defaultLogDir: string;
   defaultOperatorsPath: string;
-  defaultSquadMode: SquadMode;
-  supportedSquadModes: SquadMode[];
+  engine: "v2";
   configuredOperators?: {
     operatorsPath: string;
     count: number;
@@ -52,6 +51,11 @@ export interface GenerateResponse extends AnalyzeResponse {
   validation?: unknown;
   protocol?: unknown;
   explain?: string;
+  generationId?: string;
+  scriptHash?: string;
+  candidateScore?: number;
+  modelVersion?: string;
+  combatCoverage?: number;
 }
 
 export interface ValidateResponse extends ApiBase {
@@ -73,10 +77,19 @@ export interface GenerateRequest {
   stage: string;
   operatorsJson?: string;
   operatorFilePath?: string;
-  squadMode: SquadMode;
   pretty: boolean;
   outputDir?: string;
   fileName?: string;
+  newCandidate?: boolean;
+  requirementsMode?: RequirementsMode;
+}
+
+export interface FeedbackResponse extends ApiBase {
+  record?: {
+    ratio: number;
+    usableForLearning: boolean;
+    operatorBoxChanged: boolean;
+  };
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
@@ -103,7 +116,7 @@ export async function analyzeStage(body: Pick<GenerateRequest, "stage" | "operat
   return postJson<AnalyzeResponse>("/api/analyze", body);
 }
 
-export async function generateScript(body: GenerateRequest): Promise<GenerateResponse> {
+export async function generateCopilot(body: GenerateRequest): Promise<GenerateResponse> {
   return postJson<GenerateResponse>("/api/generate", body);
 }
 
@@ -117,4 +130,13 @@ export async function openOutputDir(outputDir: string): Promise<OpenOutputDirRes
 
 export async function saveOperatorsJson(operatorsJson: string): Promise<SaveOperatorsResponse> {
   return postJson<SaveOperatorsResponse>("/api/operators/save", { operatorsJson });
+}
+
+export async function recordFeedback(body: {
+  scriptHash: string;
+  killed: number;
+  total?: number;
+  notes?: string;
+}): Promise<FeedbackResponse> {
+  return postJson<FeedbackResponse>("/api/feedback", body);
 }

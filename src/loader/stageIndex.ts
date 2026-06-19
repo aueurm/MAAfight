@@ -70,6 +70,11 @@ export function resolveByCode(code: string): StageIndexEntry | null {
   return resolveStage(stageId);
 }
 
+export function resolveByFilePath(filePath: string): StageIndexEntry | null {
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  return entries.find(entry => entry.filePath.replace(/\\/g, "/").toLowerCase() === normalized) || null;
+}
+
 export function searchStages(query: string): StageIndexEntry[] {
   const q = query.toLowerCase();
   return entries.filter(
