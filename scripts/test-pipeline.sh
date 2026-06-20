@@ -18,7 +18,7 @@ LEVELS=(
   "weekly_fly_1"
   "camp_01"
   "crisis_v2_01-01"
-  "bossrush1_01"
+  "act42side_10"
   "a001_ex01"
 )
 

@@ -17,7 +17,7 @@ describe("levelIndex", () => {
   });
 
   it.each([
-    ["bossrush1_01", "TN-1"],
+    ["act9d0_08", "DM-8"],
     ["act3d0_03", "OF-3"],
     ["weekly_fly_3", "CA-3"],
     ["weekly_toxic_5", "AP-5"],
@@ -29,8 +29,8 @@ describe("levelIndex", () => {
   });
 
   it("includes the official code when searching by a cached level id", () => {
-    const result = searchStages("bossrush1_01").find(entry => entry.stageId === "bossrush1_01");
-    expect(result?.code).toBe("TN-1");
+    const result = searchStages("act9d0_08").find(entry => entry.stageId === "act9d0_08");
+    expect(result?.code).toBe("DM-8");
   });
 
   it("resolveStage returns null for unknown stage", () => {

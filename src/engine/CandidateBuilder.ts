@@ -16,7 +16,6 @@ const COSTS: Record<EngineRole, number> = {
 
 function rolePlan(facts: StageFacts): EngineRole[] {
   const plan: EngineRole[] = ["vanguard", "tank", "guard", "medic", "sniper", "caster", "medic"];
-  if (facts.flyingRouteCount > 0) plan.splice(5, 0, "sniper");
   if (facts.bossCount > 0) plan.push("guard", "caster");
   plan.push("support", "specialist", "guard", "sniper", "caster", "tank", "vanguard");
   return plan;
@@ -31,7 +30,10 @@ function investmentScore(pick: EnginePick): number {
 function poolForRole(role: EngineRole, input: CandidateBuildInput): EnginePick[] {
   const playerOperators = input.options.playerOperators;
   return ((OPERATOR_POOLS[role] || []) as OperatorEntry[])
-    .filter(operator => !playerOperators || playerOperators.size === 0 || playerOperators.has(operator.name))
+    .filter(operator => {
+      if (!playerOperators || playerOperators.size === 0) return true;
+      return (playerOperators.get(operator.name)?.elite || 0) >= 2;
+    })
     .map(operator => ({
       ...operator,
       role,
@@ -113,10 +115,7 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
   const usedPositions = new Set<string>();
   const actions: BattleScript["actions"] = [{ type: "SpeedUp" }];
   const deployLimit = Math.min(9, input.facts.characterLimit || 9, input.facts.deploymentPoints.length);
-  const deployOrder = [...squad.picks].sort((a, b) => {
-    const order: EngineRole[] = ["vanguard", "tank", "guard", "medic", "sniper", "caster", "support", "specialist"];
-    return order.indexOf(a.role) - order.indexOf(b.role);
-  });
+  const deployOrder = squad.picks;
 
   for (const pick of deployOrder) {
     if (actions.filter(action => action.type === "Deploy").length >= deployLimit) break;

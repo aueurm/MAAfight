@@ -1,8 +1,10 @@
 import fs from "fs";
 import path from "path";
 import { extractStageFacts, generateCopilotScript } from "../src/engine";
+import { buildCandidate, selectSquad } from "../src/engine/CandidateBuilder";
 import { validateMAAProtocol } from "../src/copilot/MAAProtocolValidator";
-import type { MapData } from "../src/types";
+import { OPERATOR_POOLS } from "../src/shared/operatorDB";
+import type { MapData, PlayerOperator } from "../src/types";
 
 function makeMapData(): MapData {
   return {
@@ -53,6 +55,19 @@ function makeMapData(): MapData {
   };
 }
 
+function playerOperators(): Map<string, PlayerOperator> {
+  const names = [...new Set(Object.values(OPERATOR_POOLS).flat().map(operator => operator.name))];
+  return new Map(names.map((name, index) => [name, {
+    id: `operator-${index}`,
+    name,
+    rarity: 6,
+    own: true,
+    elite: name === "伊内丝" || name === "闪灵" ? 1 : 2,
+    level: 60,
+    potential: 1,
+  }]));
+}
+
 describe("v2 engine", () => {
   it("extracts immutable stage facts without a legacy tactical analysis", () => {
     const facts = extractStageFacts(makeMapData());
@@ -75,6 +90,58 @@ describe("v2 engine", () => {
       "automation", "combat", "corpus", "position", "tasks", "timing",
     ]);
     expect(validateMAAProtocol(first.script).valid).toBe(true);
+  });
+
+  it("uses only elite 2 operators from a supplied player library", () => {
+    const players = playerOperators();
+    const result = generateCopilotScript("V2-1", makeMapData(), { playerOperators: players });
+
+    expect(result.script.opers).toHaveLength(12);
+    expect(result.script.opers.every(operator => players.get(operator.name)!.elite >= 2)).toBe(true);
+    expect(result.script.opers.every(operator => operator.requirements === undefined)).toBe(true);
+  });
+
+  it("does not change squad slots for a flying-route opening", () => {
+    const groundMap = makeMapData();
+    const flyingMap = makeMapData();
+    flyingMap.routes = flyingMap.routes.map(route => ({ ...route, motionMode: "fly" }));
+    const options = { playerOperators: playerOperators() };
+    const baseInput = {
+      stageCode: "V2-1",
+      operatorVariant: 0,
+      positionVariant: 0,
+      timingVariant: 0,
+      options,
+    };
+    const ground = selectSquad({ ...baseInput, mapData: groundMap, facts: extractStageFacts(groundMap) });
+    const flying = selectSquad({ ...baseInput, mapData: flyingMap, facts: extractStageFacts(flyingMap) });
+
+    expect(flying.picks.map(pick => pick.role)).toEqual(ground.picks.map(pick => pick.role));
+  });
+
+  it("does not reorder deployment actions by a fixed role opening", () => {
+    const mapData = makeMapData();
+    mapData.deploymentPoints = Array.from({ length: 12 }, (_, index) => ({
+      row: 1 + Math.floor(index / 6),
+      col: index % 6,
+      buildableType: "all" as const,
+    }));
+    mapData.options.characterLimit = 9;
+    const facts = extractStageFacts(mapData);
+    const built = buildCandidate({
+      stageCode: "V2-1",
+      mapData,
+      facts,
+      operatorVariant: 0,
+      positionVariant: 0,
+      timingVariant: 0,
+      options: { playerOperators: playerOperators() },
+    });
+    const deployedNames = built.script.actions
+      .filter(action => action.type === "Deploy")
+      .map(action => action.name);
+
+    expect(deployedNames).toEqual(built.picks.slice(0, deployedNames.length).map(pick => pick.name));
   });
 
   it("keeps the new engine independent from the deleted battle package", () => {

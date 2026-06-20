@@ -21,7 +21,7 @@ const DEFAULT_STAGES = [
   { id: "weekly_fly_1", cache: "obt/weekly/level_weekly_fly_1.json", type: "weekly", purpose: "resource stage anti-air route" },
   { id: "camp_01", cache: "obt/campaign/level_camp_01.json", type: "campaign", purpose: "campaign route variation" },
   { id: "crisis_v2_01-01", cache: "obt/crisis/v2/level_crisis_v2_01-01.json", type: "crisis", purpose: "high-risk special mode boundary" },
-  { id: "bossrush1_01", cache: "activities/act1bossrush/level_bossrush1_01.json", type: "boss", purpose: "boss detection and risk reporting" },
+  { id: "act42side_10", cache: "activities/act42side/level_act42side_10.json", type: "boss", purpose: "boss detection and risk reporting" },
   { id: "a001_ex01", cache: "activities/a001/level_a001_ex01.json", type: "activity-ex", purpose: "activity EX support boundary" },
 ];
 

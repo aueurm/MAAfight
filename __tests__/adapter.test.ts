@@ -8,7 +8,7 @@ import { exportToCopilotFormat } from "../src/copilot/ScriptExporter";
 import type { PRTSLevelData, MapData } from "../src/types";
 
 const LEVEL_PATH = path.resolve(__dirname, "..", "cache", "levels", "activities", "a001", "level_a001_01.json");
-const BOSS_RUSH_LEVEL_PATH = path.resolve(__dirname, "..", "cache", "levels", "activities", "act1bossrush", "level_bossrush1_01.json");
+const BOSS_LEVEL_PATH = path.resolve(__dirname, "..", "cache", "levels", "activities", "act42side", "level_act42side_10.json");
 const ALL_TILE_LEVEL_PATH = path.resolve(__dirname, "..", "cache", "levels", "activities", "act12side", "level_act12side_06.json");
 const ENEMY_DB_PATH = path.resolve(__dirname, "..", "cache", "enemy_database.json");
 
@@ -17,8 +17,8 @@ function loadLevelData(): PRTSLevelData {
   return JSON.parse(raw) as PRTSLevelData;
 }
 
-function loadBossRushLevelData(): PRTSLevelData {
-  const raw = fs.readFileSync(BOSS_RUSH_LEVEL_PATH, "utf-8");
+function loadBossLevelData(): PRTSLevelData {
+  const raw = fs.readFileSync(BOSS_LEVEL_PATH, "utf-8");
   return JSON.parse(raw) as PRTSLevelData;
 }
 
@@ -96,9 +96,9 @@ describe("PRTSMapAdapter", () => {
     expect(mapData.options.maxCost).toBe(99);
   });
 
-  it("should parse numeric enum routes and spawn actions from boss rush data", () => {
-    const bossRushData = loadBossRushLevelData();
-    const mapData = adapter.adapt(bossRushData, "bossrush1_01");
+  it("should parse numeric enum routes and spawn actions from boss data", () => {
+    const bossData = loadBossLevelData();
+    const mapData = adapter.adapt(bossData, "act42side_10");
     const facts = extractStageFacts(mapData);
 
     expect(mapData.routes.length).toBeGreaterThan(0);
