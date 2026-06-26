@@ -5,6 +5,7 @@ import fastifyStatic from "@fastify/static";
 import { registerGuiRoutes, type GuiRouteOptions } from "./routes";
 import { writeGuiLog } from "../runtime/logger";
 import { ensureRuntimeDirectories, getRuntimePaths } from "../runtime/paths";
+import { packageVersion } from "../runtime/packageInfo";
 
 export interface GuiServerOptions extends GuiRouteOptions {
   host?: string;
@@ -21,13 +22,6 @@ export interface StartedGuiServer {
 
 function defaultWebRoot(): string {
   return getRuntimePaths().webRoot;
-}
-
-function packageVersion(): string {
-  const pkgPath = path.resolve(__dirname, "..", "..", "package.json");
-  if (!fs.existsSync(pkgPath)) return "unknown";
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { version?: string };
-  return pkg.version || "unknown";
 }
 
 function isPortInUse(err: unknown): boolean {

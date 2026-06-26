@@ -9,9 +9,10 @@ Stage code / local JSON
   -> PRTSMapLoader
   -> PRTSMapAdapter
   -> extractStageFacts
-  -> CandidateBuilder
-  -> Scoring
-  -> Beam Search
+  -> EncounterContext
+  -> squad Beam (operator + skill)
+  -> deployment Beam + cheap scoring
+  -> bounded skill engagement scoring
   -> ScriptValidator + MAAProtocolValidator
   -> ScriptExporter
 ```
@@ -33,17 +34,19 @@ src/
 ## 引擎模块
 
 - `StageFacts.ts`：从 `MapData` 提取敌人数、HP、路线、15 秒压力窗口和部署资源。
-- `CandidateBuilder.ts`：独立完成选人、点位、朝向、费用条件和动作构造。
-- `Scoring.ts`：计算局部交战、点位、费用、语料、功能覆盖与自动化评分。
-- `index.ts`：评估 3 组选人、3 组点位、3 组时序组合，保留宽度 24 的 Beam。
+- `CombatModel.ts`：严格加载 `operatorCombat.v2.json`，解析默认或玩家 E2 档案，并提供进程内缓存。
+- `EncounterContext.ts`：保留 15 秒窗口内的敌人、路线、防御、法抗和移动模式，构造能力需求。
+- `CandidateBuilder.ts`：从完整模型目录按队伍边际收益搜索 `(operator, skill)`，再构造点位、朝向和动作。
+- `Scoring.ts`：计算基础交战与技能交战，以及点位、费用、语料、功能覆盖和自动化评分。
+- `index.ts`：使用宽度 32 的 squad Beam 和最多 512 个廉价完整候选；昂贵层按 64 / 192 / 384 自适应预算评分。
 
 引擎输出固定编队。任何候选若违反占位、声明干员、部署格或协议约束会被拒绝；所有候选均失败时抛出错误。
 
 ## 反馈
 
-`.maafight/generations.jsonl` 保存脚本 hash、模型版本、分项评分和玩家库 hash。`.maafight/feedback.jsonl` 保存 `killed / total`。
+`.maafight/generations.jsonl` 保存脚本 hash、stage 内容 hash、GameData commit、模型版本、分项评分和玩家库 hash。`.maafight/feedback.jsonl` 保存 `killed / total`。
 
-同关卡、同玩家库的 100% 结果可以复用；低于 100% 的脚本 hash 被排除。反馈调整权重为 `min(0.35, n / (n + 10))`。
+只有同关卡内容、同玩家库和同 `v2-skill-v1` 引擎版本的 100% 结果可以复用；旧 v2 记录可读取但不会作为新引擎成功缓存。低于 100% 的脚本 hash 被排除。
 
 ## 依赖边界
 

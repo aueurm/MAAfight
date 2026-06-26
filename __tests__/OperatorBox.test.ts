@@ -2,7 +2,6 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { OperatorBox } from "../src/player/OperatorBox";
-import { OPERATOR_POOLS } from "../src/shared/operatorDB";
 
 const sampleData = [
   { id: "char_002_amiya", name: "阿米娅", rarity: 5, own: true, elite: 2, level: 80, potential: 5 },
@@ -76,7 +75,7 @@ describe("OperatorBox", () => {
   });
 
   it("parseJson() should normalize owned operators with missing training fields", () => {
-    const name = OPERATOR_POOLS.vanguard[0].name;
+    const name = "伊内丝";
     const parsed = OperatorBox.parseJson(JSON.stringify([
       { id: "x", name, rarity: 6, own: true },
     ]));
@@ -118,9 +117,9 @@ describe("OperatorBox", () => {
     }));
   });
 
-  it("roleCounts() should count owned operators by role pool membership", () => {
-    const vanguard = OPERATOR_POOLS.vanguard[0].name;
-    const medic = OPERATOR_POOLS.medic[0].name;
+  it("roleCounts() should count owned operators by full catalog membership", () => {
+    const vanguard = "伊内丝";
+    const medic = "夜莺";
     const box = OperatorBox.fromOperators([
       { id: "v", name: vanguard, rarity: 6, own: true, elite: 2, level: 90, potential: 1 },
       { id: "m", name: medic, rarity: 5, own: true, elite: 1, level: 70, potential: 2 },

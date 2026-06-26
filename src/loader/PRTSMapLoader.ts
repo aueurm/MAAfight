@@ -124,14 +124,6 @@ export class PRTSMapLoader {
     return this.enemyDb?.get(enemyId) || null;
   }
 
-  getEnemyDatabase(): Map<string, EnemyDatabaseEntry> | null {
-    return this.enemyDb;
-  }
-
-  ensureEnemyDbLoaded(): boolean {
-    return this.enemyDb !== null;
-  }
-
   private httpGet(url: string): Promise<string> {
     return new Promise((resolve, reject) => {
       https.get(url, { timeout: 30000 }, (res) => {

@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import type { PlayerOperator } from "../types";
-import { OPERATOR_POOLS } from "../shared/operatorDB";
+import { catalogRoleForName } from "../shared/operatorCatalog";
 
 export interface OperatorRoleStats {
   vanguard: number;
@@ -123,18 +123,10 @@ export class OperatorBox {
 
   roleCounts(): OperatorRoleStats {
     const counts = Object.fromEntries(ROLE_KEYS.map(role => [role, 0])) as unknown as OperatorRoleStats;
-    const ownedNames = new Set(this.operators.keys());
-
-    for (const role of ROLE_KEYS) {
-      const seen = new Set<string>();
-      for (const op of OPERATOR_POOLS[role] || []) {
-        if (!seen.has(op.name) && ownedNames.has(op.name)) {
-          counts[role]++;
-          seen.add(op.name);
-        }
-      }
+    for (const name of this.operators.keys()) {
+      const role = catalogRoleForName(name) as keyof OperatorRoleStats | undefined;
+      if (role && ROLE_KEYS.includes(role)) counts[role]++;
     }
-
     return counts;
   }
 

@@ -281,6 +281,19 @@ export interface BattleScript {
     corpusModelVersion?: string;
     combatModelVersion?: string;
     combatCoverage?: number;
+    skillCoverage?: number;
+    coverageGaps?: string[];
+    squadSignature?: string;
+    stageContentHash?: string;
+    searchStats?: {
+      expandedSquads: number;
+      cheapCompleteCandidates: number;
+      fullyScoredCandidates: number;
+      rejectedCandidates: number;
+      budgetTier: 64 | 192 | 384;
+      terminationReason: "converged" | "default-budget" | "maximum-budget" | "deadline" | "frontier-exhausted";
+      elapsedMs: number;
+    };
     generationId?: string;
     scriptHash?: string;
   };

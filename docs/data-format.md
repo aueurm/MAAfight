@@ -41,7 +41,13 @@ interface EngineResult {
     automation: number;
   };
   modelVersion: string;
+  combatModelVersion: string;
   combatCoverage: number;
+  skillCoverage: number;
+  coverageGaps: string[];
+  stageContentHash: string;
+  gameDataCommit: string;
+  searchStats: SearchStats;
 }
 ```
 

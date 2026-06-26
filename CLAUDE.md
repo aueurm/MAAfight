@@ -54,4 +54,6 @@ node scripts/benchmark.js --skip-build
 npm run gui
 ```
 
+PowerShell 中运行 `claude` 打开 Claude Code TUI；非交互验收使用 `claude -p "<prompt>"`。
+
 文档入口见 `docs/README.md`。

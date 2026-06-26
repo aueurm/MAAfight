@@ -1,4 +1,3 @@
-import * as fs from "fs";
 import * as path from "path";
 import type { FastifyInstance } from "fastify";
 import {
@@ -17,19 +16,13 @@ import {
 } from "../player/PlayerConfig";
 import { writeGuiLog } from "../runtime/logger";
 import { getRuntimePaths } from "../runtime/paths";
+import { packageVersion } from "../runtime/packageInfo";
 import { FeedbackStore, hashOperatorBox } from "../feedback/FeedbackStore";
 import type { AnalyzeRequest, FeedbackRequest, GenerateRequest, OpenOutputDirRequest, SaveOperatorsRequest, ValidateRequest } from "./types";
 
 export interface GuiRouteOptions {
   openDir?: (outputDir: string) => Promise<void>;
   configCwd?: string;
-}
-
-function packageVersion(): string {
-  const pkgPath = path.resolve(__dirname, "..", "..", "package.json");
-  if (!fs.existsSync(pkgPath)) return "unknown";
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { version?: string };
-  return pkg.version || "unknown";
 }
 
 function errorMessage(err: unknown): string {

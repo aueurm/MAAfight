@@ -1,9 +1,10 @@
 import fs from "fs";
 import path from "path";
 import { extractStageFacts, generateCopilotScript } from "../src/engine";
-import { buildCandidate, selectSquad } from "../src/engine/CandidateBuilder";
+import { buildCandidate, buildSquadBeam } from "../src/engine/CandidateBuilder";
+import { getCombatOperatorByName, getCombatModelInfo, listCombatOperators, resolveOperatorProfile } from "../src/engine/CombatModel";
+import { buildEncounterContext } from "../src/engine/EncounterContext";
 import { validateMAAProtocol } from "../src/copilot/MAAProtocolValidator";
-import { OPERATOR_POOLS } from "../src/shared/operatorDB";
 import type { MapData, PlayerOperator } from "../src/types";
 
 function makeMapData(): MapData {
@@ -55,93 +56,140 @@ function makeMapData(): MapData {
   };
 }
 
-function playerOperators(): Map<string, PlayerOperator> {
-  const names = [...new Set(Object.values(OPERATOR_POOLS).flat().map(operator => operator.name))];
-  return new Map(names.map((name, index) => [name, {
-    id: `operator-${index}`,
-    name,
-    rarity: 6,
+function playerOperators(count = 24): Map<string, PlayerOperator> {
+  const records = listCombatOperators().slice(0, count);
+  return new Map(records.map((record, index) => [record.name, {
+    id: record.id,
+    name: record.name,
+    rarity: record.rarity,
     own: true,
-    elite: name === "伊内丝" || name === "闪灵" ? 1 : 2,
+    elite: index === 0 ? 1 : 2,
     level: 60,
     potential: 1,
   }]));
 }
 
-describe("v2 engine", () => {
-  it("extracts immutable stage facts without a legacy tactical analysis", () => {
-    const facts = extractStageFacts(makeMapData());
-    expect(facts.enemyCount).toBe(8);
-    expect(facts.totalHp).toBe(40000);
-    expect(facts.laneCount).toBe(1);
-    expect(facts.pressureWindows).toHaveLength(1);
+describe("v2 skill engine", () => {
+  it("loads a pinned full operator model without role fallback", () => {
+    const info = getCombatModelInfo();
+    expect(info.commit).toMatch(/^[a-f0-9]{40}$/);
+    expect(info.operatorCount).toBeGreaterThan(300);
+    const outsider = getCombatOperatorByName("重岳");
+    expect(outsider).toBeDefined();
+    const profile = resolveOperatorProfile(outsider!, 1, {
+      id: outsider!.id, name: outsider!.name, rarity: outsider!.rarity, own: true,
+      elite: 2, level: 60, potential: 1,
+    });
+    expect(profile.skillRank).toBe(10);
+    expect(profile.modelCoverageGaps).toContain("assumed_skill_rank_10");
   });
 
-  it("generates a deterministic fixed script directly from map data", () => {
-    const first = generateCopilotScript("V2-1", makeMapData());
-    const second = generateCopilotScript("V2-1", makeMapData());
+  it("extracts immutable stage facts and encounter pressure", () => {
+    const mapData = makeMapData();
+    const facts = extractStageFacts(mapData);
+    const encounter = buildEncounterContext(mapData, facts);
+    expect(facts.enemyCount).toBe(8);
+    expect(encounter.windows[0].groups[0]).toMatchObject({ enemyId: "enemy", count: 8, def: 200, res: 10 });
+    expect(encounter.hash).toMatch(/^[a-f0-9]{64}$/);
+  });
 
+  it("uses old-pool outsiders and excludes non-E2 players", () => {
+    const outsider = getCombatOperatorByName("重岳")!;
+    const records = [outsider, ...listCombatOperators().filter(record => record.id !== outsider.id).slice(0, 11)];
+    const players = new Map(records.map((record, index) => [record.name, {
+      id: record.id, name: record.name, rarity: record.rarity, own: true,
+      elite: index === 1 ? 1 : 2, level: 60, potential: 1,
+    }] as [string, PlayerOperator]));
+    const mapData = makeMapData();
+    const facts = extractStageFacts(mapData);
+    const beam = buildSquadBeam(facts, buildEncounterContext(mapData, facts), { playerOperators: players });
+    expect(beam.squads[0].some(pick => pick.name === "重岳")).toBe(true);
+    expect(beam.squads[0].some(pick => pick.name === records[1].name)).toBe(false);
+    expect(beam.squads[0]).toHaveLength(11);
+  });
+
+  it("generates a deterministic fixed protocol-safe script", () => {
+    const options = { playerOperators: playerOperators(), search: { deadlineMs: 10_000 } };
+    const first = generateCopilotScript("V2-1", makeMapData(), options);
+    const second = generateCopilotScript("V2-1", makeMapData(), options);
     expect(first.scriptHash).toBe(second.scriptHash);
     expect(first.script.opers).toHaveLength(12);
     expect(first.script.groups).toEqual([]);
-    expect(first.script.actions.some(action => action.type === "Deploy")).toBe(true);
     expect(first.script.actions.some(action => action.type === "Wait" || action.type === "SkillUse")).toBe(false);
-    expect(Object.keys(first.breakdown).sort()).toEqual([
-      "automation", "combat", "corpus", "position", "tasks", "timing",
-    ]);
+    expect(first.skillCoverage).toBeGreaterThan(0);
+    expect(first.searchStats.fullyScoredCandidates).toBeGreaterThanOrEqual(64);
     expect(validateMAAProtocol(first.script).valid).toBe(true);
   });
 
-  it("uses only elite 2 operators from a supplied player library", () => {
-    const players = playerOperators();
-    const result = generateCopilotScript("V2-1", makeMapData(), { playerOperators: players });
-
-    expect(result.script.opers).toHaveLength(12);
-    expect(result.script.opers.every(operator => players.get(operator.name)!.elite >= 2)).toBe(true);
-    expect(result.script.opers.every(operator => operator.requirements === undefined)).toBe(true);
+  it("changes capability demand for flying pressure", () => {
+    const ground = makeMapData();
+    const flying = makeMapData();
+    flying.routes = flying.routes.map(route => ({ ...route, motionMode: "fly" }));
+    const groundFacts = extractStageFacts(ground);
+    const flyingFacts = extractStageFacts(flying);
+    expect(buildEncounterContext(flying, flyingFacts).demand.antiAir)
+      .toBeGreaterThan(buildEncounterContext(ground, groundFacts).demand.antiAir);
   });
 
-  it("does not change squad slots for a flying-route opening", () => {
-    const groundMap = makeMapData();
-    const flyingMap = makeMapData();
-    flyingMap.routes = flyingMap.routes.map(route => ({ ...route, motionMode: "fly" }));
-    const options = { playerOperators: playerOperators() };
-    const baseInput = {
-      stageCode: "V2-1",
-      operatorVariant: 0,
-      positionVariant: 0,
-      timingVariant: 0,
-      options,
+  it("separates armor, resistance, boss, and multi-route demands", () => {
+    const armored = makeMapData();
+    armored.enemyDetails[0] = { ...armored.enemyDetails[0], def: 900, magicResistance: 0 };
+    const resistant = makeMapData();
+    resistant.enemyDetails[0] = { ...resistant.enemyDetails[0], def: 0, magicResistance: 90 };
+    const boss = makeMapData();
+    boss.enemyDetails[0] = { ...boss.enemyDetails[0], isBoss: true };
+    const multiRoute = makeMapData();
+    multiRoute.routes.push({
+      id: 1, startPosition: { row: 4, col: 0 }, endPosition: { row: 4, col: 5 },
+      checkpoints: [{ row: 4, col: 3 }], motionMode: "walk",
+    });
+    multiRoute.spawnTimeline.push({ enemyId: "enemy", routeIndex: 1, time: 0, count: 4 });
+
+    const context = (mapData: MapData) => {
+      const facts = extractStageFacts(mapData);
+      return buildEncounterContext(mapData, facts);
     };
-    const ground = selectSquad({ ...baseInput, mapData: groundMap, facts: extractStageFacts(groundMap) });
-    const flying = selectSquad({ ...baseInput, mapData: flyingMap, facts: extractStageFacts(flyingMap) });
-
-    expect(flying.picks.map(pick => pick.role)).toEqual(ground.picks.map(pick => pick.role));
+    expect(context(armored).demand.arts).toBeGreaterThan(context(armored).demand.physical);
+    expect(context(resistant).demand.physical).toBeGreaterThan(context(resistant).demand.arts);
+    expect(context(boss).demand.burst).toBeGreaterThan(context(makeMapData()).demand.burst);
+    expect(context(multiRoute).demand.coverage).toBeGreaterThan(context(makeMapData()).demand.coverage);
   });
 
-  it("does not reorder deployment actions by a fixed role opening", () => {
+  it("builds deployment actions in marginal squad order", () => {
     const mapData = makeMapData();
     mapData.deploymentPoints = Array.from({ length: 12 }, (_, index) => ({
-      row: 1 + Math.floor(index / 6),
-      col: index % 6,
-      buildableType: "all" as const,
+      row: 1 + Math.floor(index / 6), col: index % 6, buildableType: "all" as const,
     }));
     mapData.options.characterLimit = 9;
     const facts = extractStageFacts(mapData);
+    const options = { playerOperators: playerOperators() };
+    const picks = buildSquadBeam(facts, buildEncounterContext(mapData, facts), options).squads[0];
     const built = buildCandidate({
-      stageCode: "V2-1",
-      mapData,
-      facts,
-      operatorVariant: 0,
-      positionVariant: 0,
-      timingVariant: 0,
-      options: { playerOperators: playerOperators() },
+      stageCode: "V2-1", mapData, facts, picks, positionVariant: 0, timingVariant: 0, options,
     });
-    const deployedNames = built.script.actions
-      .filter(action => action.type === "Deploy")
-      .map(action => action.name);
+    const deployedNames = built.script.actions.filter(action => action.type === "Deploy").map(action => action.name);
+    expect(deployedNames).toEqual(picks.slice(0, deployedNames.length).map(pick => pick.name));
+  });
 
-    expect(deployedNames).toEqual(built.picks.slice(0, deployedNames.length).map(pick => pick.name));
+  it("returns a fully scored best-so-far candidate at the deadline", () => {
+    let time = 0;
+    const result = generateCopilotScript("V2-1", makeMapData(), {
+      playerOperators: playerOperators(),
+      now: () => { time += 300; return time; },
+      search: { deadlineMs: 1200, deadlineCheckInterval: 8 },
+    });
+    expect(result.searchStats.terminationReason).toBe("deadline");
+    expect(result.searchStats.fullyScoredCandidates).toBeGreaterThan(0);
+    expect(result.script.metadata.candidateScore).toBeGreaterThanOrEqual(0);
+  });
+
+  it("reports the public copilot prior in the runtime model version", () => {
+    const result = generateCopilotScript("V2-1", makeMapData(), {
+      playerOperators: playerOperators(),
+      search: { deadlineMs: 10_000 },
+    });
+    expect(result.modelVersion).toContain("copilot-prior-v1-");
+    expect(result.script.metadata.corpusModelVersion).toContain("copilot-prior-v1-");
   });
 
   it("keeps the new engine independent from the deleted battle package", () => {
@@ -151,10 +199,6 @@ describe("v2 engine", () => {
       .map(file => fs.readFileSync(path.join(engineDir, file), "utf8"))
       .join("\n");
     expect(sources).not.toMatch(/from ["'][^"']*battle\//);
-    const legacyDir = path.resolve(__dirname, "..", "src", "battle");
-    const legacySources = fs.existsSync(legacyDir)
-      ? fs.readdirSync(legacyDir).filter(file => file.endsWith(".ts"))
-      : [];
-    expect(legacySources).toEqual([]);
+    expect(sources).not.toMatch(/OPERATOR_POOLS|operatorVariant|rolePlan/);
   });
 });

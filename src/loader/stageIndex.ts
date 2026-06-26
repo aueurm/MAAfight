@@ -10,7 +10,7 @@ interface StageMeta {
 const _byStageId: Record<string, StageMeta> = (stageIndexData as any).byStageId || {};
 const _byCode: Record<string, string> = (stageIndexData as any).byCode || {};
 
-function inferCategory(levelId: string): string {
+export function inferCategory(levelId: string): string {
   if (!levelId) return "other";
   const lower = levelId.toLowerCase();
   if (lower.startsWith("obt/main/") || lower.startsWith("obt-main-")) return "main";
@@ -92,8 +92,4 @@ export function listByCategory(category: string): StageIndexEntry[] {
 
 export function listStages(): StageIndexEntry[] {
   return entries;
-}
-
-export function getAllCodes(): string[] {
-  return Object.keys(_byCode);
 }

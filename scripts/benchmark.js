@@ -11,6 +11,7 @@ const resultDir = path.join(root, "benchmark-results");
 const scriptDir = path.join(resultDir, "scripts");
 const reportDir = path.join(resultDir, "reports");
 const defaultStageFile = path.join(root, "benchmark", "stages", "basic.json");
+const defaultOperatorFile = path.join(root, "test-data", "operators-e2-96.json");
 
 const DEFAULT_STAGES = [
   { id: "a001_01", cache: "activities/a001/level_a001_01.json", type: "activity-basic", purpose: "baseline activity map" },
@@ -29,7 +30,7 @@ function parseArgs(argv) {
   const args = {
     build: true,
     strict: false,
-    operators: "benchmark",
+    operators: defaultOperatorFile,
     stages: defaultStageFile,
   };
 
@@ -63,9 +64,8 @@ Options:
   --no-operators     Skip personalized generation check
   --stages <path>    Benchmark stage set JSON (default: benchmark/stages/basic.json)
 
-By default, benchmark creates a temporary player operator export from the
-baseline generated script, so the personalized generation check is independent
-from local sample-file encoding.
+By default, benchmark uses test-data/operators-e2-96.json for deterministic
+personalized generation and diversity regression coverage.
 `);
 }
 
@@ -176,6 +176,8 @@ function writeQualityReport(stage, generate, validate, analyze) {
     protocolScore: validation.protocolScore,
     actionCount: Array.isArray(script?.actions) ? script.actions.length : 0,
     deployCount: Array.isArray(script?.actions) ? script.actions.filter(a => a.type === "Deploy").length : 0,
+    operatorNames: collectOperatorNames(script).sort(),
+    squadSignature: collectOperatorNames(script).sort().join("|"),
     durationMs: {
       generate: generate.durationMs,
       validate: validate.durationMs,
@@ -244,9 +246,18 @@ function summarize(results) {
   };
 }
 
+function percentile(values, quantile) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * quantile) - 1)];
+}
+
 function summarizeQuality(qualityReports) {
   const generated = qualityReports.filter(r => r.generated).length;
   const valid = qualityReports.filter(r => r.script_valid).length;
+  const uniqueOperators = new Set(qualityReports.flatMap(report => report.operatorNames || []));
+  const uniqueSquads = new Set(qualityReports.map(report => report.squadSignature).filter(Boolean));
+  const coldGenerateMs = qualityReports.map(report => report.durationMs?.generate).filter(Number.isFinite);
   return {
     stages: qualityReports.length,
     generated,
@@ -257,6 +268,11 @@ function summarizeQuality(qualityReports) {
     unsupported: qualityReports.filter(r => r.supportLevel === "unsupported").length,
     experimental: qualityReports.filter(r => r.supportLevel === "experimental").length,
     protocolWarnings: qualityReports.reduce((sum, r) => sum + (r.protocol_warning_count || 0), 0),
+    uniqueOperators: uniqueOperators.size,
+    uniqueSquads: uniqueSquads.size,
+    diversityPassed: uniqueOperators.size >= 40 && uniqueSquads.size >= 8,
+    coldCliP50Ms: percentile(coldGenerateMs, 0.50),
+    coldCliP95Ms: percentile(coldGenerateMs, 0.95),
   };
 }
 
@@ -301,6 +317,10 @@ function writeReports(results, qualityReports = []) {
     `- Experimental: ${quality.experimental}`,
     `- Unsupported: ${quality.unsupported}`,
     `- Protocol warnings: ${quality.protocolWarnings}`,
+    `- Unique operators: ${quality.uniqueOperators}/40`,
+    `- Unique squads: ${quality.uniqueSquads}/8`,
+    `- Diversity gate: ${quality.diversityPassed ? "PASS" : "FAIL"}`,
+    `- Cold CLI P50/P95: ${quality.coldCliP50Ms}/${quality.coldCliP95Ms} ms`,
     "",
     "| Check | Status | Time | Note |",
     "| --- | --- | ---: | --- |",
@@ -325,6 +345,7 @@ function runBenchmark(options) {
   const results = [];
   const qualityReports = [];
   const benchmarkStages = loadBenchmarkStages(options.stages);
+  const benchmarkOperatorFile = options.operators && fs.existsSync(options.operators) ? options.operators : null;
 
   if (options.build) {
     const tsc = path.join(root, "node_modules", "typescript", "bin", "tsc");
@@ -475,6 +496,7 @@ function runBenchmark(options) {
     const generate = runCli(`stage generate: ${stage.id}`, [
       "generate",
       "--stage", stage.id,
+      ...(benchmarkOperatorFile ? ["--operators", benchmarkOperatorFile] : []),
       "--output", output,
       "--explain",
       "--quiet",
@@ -511,6 +533,41 @@ function runBenchmark(options) {
     );
 
     qualityReports.push(writeQualityReport(stage, generate, validate, analyze));
+  }
+
+  const quality = summarizeQuality(qualityReports);
+  results.push({
+    label: "diversity: 10-stage E2 fixture",
+    command: "benchmark diversity aggregation",
+    ok: qualityReports.length === benchmarkStages.length && quality.diversityPassed,
+    status: qualityReports.length === benchmarkStages.length && quality.diversityPassed ? 0 : 1,
+    durationMs: 0,
+    failureMessage: quality.diversityPassed
+      ? undefined
+      : `Expected >=40 operators and >=8 squads, got ${quality.uniqueOperators} operators and ${quality.uniqueSquads} squads`,
+  });
+
+  if (fs.existsSync(path.join(root, "dist", "engine", "index.js")) && benchmarkOperatorFile) {
+    const runtime = runSegment("runtime: engine and GUI hot P95", process.execPath, [
+      path.join(root, "scripts", "benchmark-runtime.js"),
+      "--operators", benchmarkOperatorFile,
+    ], { timeoutMs: 120000 });
+    let runtimeReport = null;
+    try {
+      runtimeReport = JSON.parse(runtime.stdout);
+    } catch {
+      runtimeReport = null;
+    }
+    const runtimePassed = runtime.ok && Boolean(runtimeReport?.passed);
+    results.push({
+      ...runtime,
+      ok: runtimePassed,
+      failureMessage: runtimePassed
+        ? undefined
+        : runtimeReport
+          ? `Engine P95 ${runtimeReport.engine.p95Ms} ms; GUI hot P95 ${runtimeReport.guiHotPipeline.p95Ms} ms`
+          : "Runtime benchmark did not return a valid report",
+    });
   }
 
   return { results, qualityReports };

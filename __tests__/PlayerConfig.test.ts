@@ -2,7 +2,6 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { loadConfiguredOperatorBox, loadLastOutputDir, saveLastOutputDir, saveOperatorConfig } from "../src/player/PlayerConfig";
-import { OPERATOR_POOLS } from "../src/shared/operatorDB";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "maafight-config-"));
@@ -19,8 +18,8 @@ describe("PlayerConfig", () => {
 
   it("should save owned-only operators and config under .maafight", () => {
     tmpDir = makeTmpDir();
-    const ownedName = OPERATOR_POOLS.vanguard[0].name;
-    const unownedName = OPERATOR_POOLS.sniper[0].name;
+    const ownedName = "伊内丝";
+    const unownedName = "维什戴尔";
     const raw = JSON.stringify([
       { id: "owned", name: ownedName, rarity: 6, own: true, elite: 2, level: 90, potential: 1 },
       { id: "unowned", name: unownedName, rarity: 6, own: false, elite: 2, level: 90, potential: 1 },
@@ -42,7 +41,7 @@ describe("PlayerConfig", () => {
 
   it("should load configured operator box from .maafight/config.json", () => {
     tmpDir = makeTmpDir();
-    const ownedName = OPERATOR_POOLS.medic[0].name;
+    const ownedName = "夜莺";
     saveOperatorConfig(JSON.stringify([
       { id: "medic", name: ownedName, rarity: 6, own: true, elite: 2, level: 80, potential: 2 },
     ]), tmpDir);
@@ -57,7 +56,7 @@ describe("PlayerConfig", () => {
   it("should remember last output directory and preserve it when saving operators", () => {
     tmpDir = makeTmpDir();
     const outputDir = path.join(tmpDir, "custom-output");
-    const ownedName = OPERATOR_POOLS.vanguard[0].name;
+    const ownedName = "伊内丝";
 
     saveLastOutputDir(outputDir, tmpDir);
     saveOperatorConfig(JSON.stringify([

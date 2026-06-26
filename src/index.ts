@@ -14,6 +14,10 @@ import { openUrl } from "./gui/openBrowser";
 import { getRuntimePaths } from "./runtime/paths";
 import { writeGuiLog } from "./runtime/logger";
 import { FeedbackStore, hashOperatorBox, hashScriptJson } from "./feedback/FeedbackStore";
+import { getCombatModelInfo } from "./engine/CombatModel";
+import { computeStageContentHash } from "./engine/EncounterContext";
+import { inferStageIdFromDataPath, getDisplayStageName } from "./core/stageDisplay";
+import { isSpawnActionType, normalizeBuildableType } from "./shared/prtsMap";
 import type { BattleScript, PRTSLevelData, StageIndexEntry } from "./types";
 
 const CACHE_DIR = getRuntimePaths().cacheLevelsDir;
@@ -107,18 +111,6 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-function padEnd(s: string, len: number): string {
-  return s.length >= len ? s : s + " ".repeat(len - s.length);
-}
-
-function inferStageIdFromDataPath(dataPath: string): string {
-  return path.basename(dataPath, ".json").replace(/^level_/, "");
-}
-
-function getDisplayStageName(stageId: string, resolved: StageIndexEntry | null): string {
-  return resolved?.code || resolved?.name || stageId;
-}
-
 export function countActiveRoutes(prtsData: Pick<PRTSLevelData, "routes">): number {
   return (prtsData.routes || []).filter(r =>
     r &&
@@ -126,17 +118,6 @@ export function countActiveRoutes(prtsData: Pick<PRTSLevelData, "routes">): numb
     r.motionMode !== 2 &&
     (r.checkpoints || []).some(cp => cp.type === "MOVE" || cp.type === 0)
   ).length;
-}
-
-function isSpawnActionType(type: unknown): boolean {
-  return type === "SPAWN" || type === 0;
-}
-
-function normalizeBuildableType(type: unknown): "melee" | "ranged" | "all" | "none" {
-  if (type === "MELEE" || type === 1) return "melee";
-  if (type === "RANGED" || type === 2) return "ranged";
-  if (type === "ALL") return "all";
-  return "none";
 }
 
 function countDeploymentTiles(prtsData: Pick<PRTSLevelData, "mapData">): { total: number; melee: number; ranged: number } {
@@ -386,16 +367,25 @@ async function cmdGenerate(args: Args): Promise<void> {
   let modelVersion: string;
   let combatDataVersion: string;
   let combatCoverage: number;
+  let skillCoverage: number;
   let candidateScore: number;
   let scoreBreakdown: Record<string, number>;
 
-  const successful = !args.newCandidate ? feedbackStore.successfulGeneration(stageId, operatorBoxHash) : undefined;
-  if (successful?.engineVersion === "v2") {
+  const stageContentHash = computeStageContentHash(mapData);
+  const combatModel = getCombatModelInfo();
+  const revision = {
+    engineVersion: "v2-skill-v1",
+    stageContentHash,
+    gameDataCommit: combatModel.commit,
+  };
+  const successful = !args.newCandidate ? feedbackStore.successfulGeneration(stageId, operatorBoxHash, revision) : undefined;
+  if (successful?.engineVersion === "v2-skill-v1") {
     script = JSON.parse(JSON.stringify(successful.script)) as BattleScript;
     reusedFromGenerationId = successful.generationId;
     modelVersion = successful.modelVersion;
     combatDataVersion = successful.combatDataVersion;
     combatCoverage = successful.combatCoverage;
+    skillCoverage = successful.skillCoverage ?? 0;
     candidateScore = successful.candidateScore;
     scoreBreakdown = successful.scoreBreakdown;
     if (!args.quiet) console.error(`Reused 100% feedback generation: ${successful.generationId}`);
@@ -403,13 +393,14 @@ async function cmdGenerate(args: Args): Promise<void> {
     const result = generateCopilotScript(displayName, mapData, {
       playerOperators,
       requirementsMode: args.requirementsMode || "none",
-      excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash),
-      feedbackAdjustment: (_script, _hash, breakdown) => feedbackStore.feedbackAdjustment(stageId, operatorBoxHash, { ...breakdown }),
+      excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash, stageContentHash),
+      feedbackAdjustment: (_script, _hash, breakdown) => feedbackStore.feedbackAdjustment(stageId, operatorBoxHash, { ...breakdown }, stageContentHash),
     });
     script = result.script;
     modelVersion = result.modelVersion;
     combatDataVersion = result.combatModelVersion;
     combatCoverage = result.combatCoverage;
+    skillCoverage = result.skillCoverage;
     candidateScore = result.score;
     scoreBreakdown = { ...result.breakdown };
     if (!args.quiet) result.warnings.forEach(warning => console.error(`Warning: ${warning}`));
@@ -444,18 +435,21 @@ async function cmdGenerate(args: Args): Promise<void> {
     if (!args.quiet) process.stdout.write("\n");
   }
   feedbackStore.appendGeneration({
-    schemaVersion: 1,
+    schemaVersion: 2,
     generationId,
     scriptHash,
     stageId,
     stageName: displayName,
     operatorBoxHash,
-    engineVersion: "v2",
+    engineVersion: "v2-skill-v1",
     modelVersion,
     combatDataVersion,
     candidateScore,
     scoreBreakdown,
     combatCoverage,
+    skillCoverage,
+    stageContentHash,
+    gameDataCommit: combatModel.commit,
     enemyTotal: facts.enemyCount,
     outputPath,
     script,
@@ -483,15 +477,15 @@ function cmdList(args: Args): void {
   const pathW = Math.min(50, Math.max(8, ...stages.map(s => s.filePath.length)));
 
   console.log(
-    "  " + padEnd("stageId", stageIdW) + "  " + padEnd("code", codeW) + "  " + padEnd("category", catW) + "  " + padEnd("filePath", pathW)
+    "  " + "stageId".padEnd(stageIdW) + "  " + "code".padEnd(codeW) + "  " + "category".padEnd(catW) + "  " + "filePath".padEnd(pathW)
   );
   console.log("  " + "─".repeat(stageIdW + codeW + catW + Math.min(pathW, 50) + 8));
 
   for (const s of stages) {
     console.log(
-      "  " + padEnd(s.stageId, stageIdW) + "  " +
-      padEnd(s.code || "", codeW) + "  " +
-      padEnd(s.category, catW) + "  " +
+      "  " + s.stageId.padEnd(stageIdW) + "  " +
+      (s.code || "").padEnd(codeW) + "  " +
+      s.category.padEnd(catW) + "  " +
       s.filePath
     );
   }

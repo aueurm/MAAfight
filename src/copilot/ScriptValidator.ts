@@ -1,5 +1,5 @@
 import type { BattleScript, MapData, ValidationResult } from "../types";
-import { OPERATOR_DB } from "../shared/operatorDB";
+import { hasCatalogOperator } from "../shared/operatorCatalog";
 
 const ACTION_TYPES = new Set([
   "Deploy", "Skill", "Retreat", "SpeedUp", "BulletTime", "SkillUsage",
@@ -44,7 +44,7 @@ export function validateScript(script: BattleScript, mapData?: MapData): Validat
   }
 
   for (const name of deployedNames) {
-    if (!OPERATOR_DB.has(name) && !groupNames.has(name)) warnings.push({ code: "UNKNOWN_OPERATOR", message: `Operator "${name}" not in catalog` });
+    if (!hasCatalogOperator(name) && !groupNames.has(name)) warnings.push({ code: "UNKNOWN_OPERATOR", message: `Operator "${name}" not in catalog` });
   }
   const deployCount = actions.filter(action => action.type === "Deploy").length;
   if (deployCount < 3) warnings.push({ code: "LOW_DEPLOY_COUNT", message: `Only ${deployCount} deployments` });

@@ -85,6 +85,46 @@ describe("FeedbackStore", () => {
     expect(store.successfulGeneration("stage-2", "old-box")).toBeUndefined();
   });
 
+  it("includes cost in player hashes and isolates successful reuse by revision", () => {
+    const first = new Map<string, PlayerOperator>([["芬", {
+      id: "fen", name: "芬", rarity: 3, own: true, elite: 2, level: 55, potential: 6, cost: 9,
+    }]]);
+    const second = new Map<string, PlayerOperator>([["芬", {
+      id: "fen", name: "芬", rarity: 3, own: true, elite: 2, level: 55, potential: 6, cost: 10,
+    }]]);
+    expect(hashOperatorBox(first)).not.toBe(hashOperatorBox(second));
+
+    const boxHash = hashOperatorBox(first);
+    store.appendGeneration({
+      schemaVersion: 2,
+      generationId: "generation-revision",
+      scriptHash: "hash-revision",
+      stageId: "stage-revision",
+      stageName: "TEST-REVISION",
+      operatorBoxHash: boxHash,
+      engineVersion: "v2-skill-v1",
+      modelVersion: "model",
+      combatDataVersion: "combat",
+      candidateScore: 80,
+      scoreBreakdown: { combat: 80 },
+      combatCoverage: 1,
+      skillCoverage: 0.5,
+      stageContentHash: "stage-hash",
+      gameDataCommit: "game-data",
+      enemyTotal: 10,
+      outputPath: "",
+      script: script(),
+      createdAt: "2026-06-20T00:00:00.000Z",
+    });
+    store.recordFeedback({ scriptHash: "hash-revision", killed: 10, currentOperatorBoxHash: boxHash });
+    expect(store.successfulGeneration("stage-revision", boxHash, {
+      engineVersion: "v2-skill-v1", stageContentHash: "stage-hash", gameDataCommit: "game-data",
+    })?.generationId).toBe("generation-revision");
+    expect(store.successfulGeneration("stage-revision", boxHash, {
+      engineVersion: "v2-skill-v1", stageContentHash: "changed", gameDataCommit: "game-data",
+    })).toBeUndefined();
+  });
+
   it("should skip malformed JSONL lines", () => {
     fs.mkdirSync(path.dirname(store.feedbackPath), { recursive: true });
     fs.writeFileSync(store.feedbackPath, "not-json\n", "utf8");

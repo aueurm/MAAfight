@@ -90,7 +90,7 @@ MAA 的 **干员识别 (OperBox Recognition)** 功能通过图像识别扫描玩
 
 ## 与 MAAfight 的集成
 
-MAAfight 已有 `src/shared/operatorDB.ts` 定义干员池（按职业/星级），copilot 脚本格式已支持 `requirements` 字段：
+MAAfight 使用 `operatorCombat.v2.json` 的完整 GameData 干员目录选人；玩家模式先按 `own && elite >= 2` 严格过滤，再按 ID 优先、名字兜底解析。copilot 脚本格式支持 `requirements` 字段：
 
 ```typescript
 // copilot 格式中 opers 的 requirements

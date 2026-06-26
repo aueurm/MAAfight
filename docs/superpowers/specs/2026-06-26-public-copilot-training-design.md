@@ -40,30 +40,24 @@ The training artifacts must not store or replay a complete public job action lis
 
 ## Artifacts
 
-`src/data/copilotPrior.v1.json` stores aggregated copilot behavior priors:
+`src/data/copilotPrior.v1.json` stores the public-data prior and weak calibration:
 
 - schema and source metadata;
 - global priors;
 - same-stage priors keyed by stage content hash;
 - same-activity priors;
 - similar-map priors derived from map traits;
-- confidence and sample counts for each bucket.
-
-`src/data/operatorCombatCalibration.v1.json` stores weak-supervision calibration over the existing `operatorCombat.v2` facts:
-
-- operator and skill usage priors by context;
-- profession and branch fit priors;
+- operator, profession, branch, and skill usage priors by context;
 - confidence nudges for partial/base skill coverage;
 - local feedback overrides derived from killed/total outcomes.
 
-This calibration layer only changes ranking. It does not mutate `operatorCombat.v2` or claim new GameData facts.
+This artifact only changes ranking. It does not mutate `operatorCombat.v2` or claim new GameData facts. Split calibration into a second file only if it needs a different build cadence.
 
 ## Training Flow
 
-1. `scripts/sync-prts-plus-corpus.js --preset conservative` downloads 1,000-2,000 jobs across multiple windows and target stage sets.
-2. `scripts/build-copilot-prior.js --input data/prts-plus-training --report` builds `copilotPrior.v1` and a compact feature report.
-3. `scripts/build-operator-calibration.js --input data/prts-plus-training --feedback .maafight/feedback.jsonl` builds calibration data from public usage plus local outcomes.
-4. `scripts/evaluate-priors.js --holdout data/prts-plus-training --benchmark` reports old-vs-new fit and runs the existing benchmark gate.
+`scripts/train-public-copilot.js --preset conservative --report` downloads 1,000-2,000 jobs, builds `copilotPrior.v1.json`, evaluates holdout fit, and writes a compact report.
+
+The same script can later run `--preset standard` for 3,000-6,000 jobs.
 
 If the local npm launcher is broken, the equivalent direct Node commands are acceptable.
 
@@ -77,7 +71,7 @@ Generation ranking combines signals in this priority order:
 4. global corpus priors;
 5. existing combat facts and deterministic beam search.
 
-`CandidateBuilder` may use copilot priors to bias tile, direction, and early deployment choices. `Scoring` may add small prior bonuses or penalties. Operator and skill selection may use calibration nudges, but unsupported-mechanic gaps and hard model constraints still win.
+`Scoring` adds small prior bonuses or penalties from `copilotPrior.v1.json`. `CandidateBuilder` stays unchanged in the first pass; move priors into candidate expansion only if scoring-only cannot fix simple-stage failures. Unsupported-mechanic gaps and hard model constraints still win.
 
 ## Reports
 
@@ -103,7 +97,7 @@ Unit tests cover:
 
 - downloader resume and manifest behavior using mocked API responses;
 - feature extraction without full-sequence leakage;
-- prior and calibration schema validation;
+- prior schema validation;
 - same-stage to same-activity to global fallback;
 - feedback priority over public priors;
 - MAA contract validation for generated output.
@@ -111,10 +105,7 @@ Unit tests cover:
 Acceptance commands:
 
 ```powershell
-node scripts\sync-prts-plus-corpus.js --preset conservative
-node scripts\build-copilot-prior.js --input data\prts-plus-training --report
-node scripts\build-operator-calibration.js --input data\prts-plus-training --feedback .maafight\feedback.jsonl
-node scripts\evaluate-priors.js --holdout data\prts-plus-training --benchmark
+node scripts\train-public-copilot.js --preset conservative --report
 node scripts\clean-dist.js
 node node_modules\typescript\bin\tsc
 node node_modules\jest\bin\jest.js --coverage
@@ -122,54 +113,4 @@ node scripts\build-corpus-model.js --audit-only
 node scripts\benchmark.js --skip-build
 ```
 
-The conservative preset passes when it produces both artifacts, emits the short report, improves holdout fit over the current public corpus baseline, does not regress benchmark diversity or protocol validation, and proves local killed/total feedback outranks public priors.
-
-## Claude Code Review Prompt
-
-```text
-You are reviewing C:\workspace\work_with_AI\MAAfight.
-
-Context:
-- MAAfight v2 generates local MAA copilot JSON v3 drafts.
-- It does not execute MAA, ADB, image recognition, or claim pass-rate.
-- Existing model: src/data/operatorCombat.v2.json from GameData facts.
-- New public-data work should add:
-  - src/data/copilotPrior.v1.json for aggregated deployment/action priors.
-  - src/data/operatorCombatCalibration.v1.json for weak ranking calibration.
-- Public PRTS Plus jobs may be used only as aggregate features. Do not allow copying full action sequences into generated scripts.
-- Local killed/total feedback must outrank public priors.
-- Output must keep official MAA actions only and must not emit Wait or SkillUse.
-
-Please inspect the implementation for correctness, data leakage, feedback priority, schema safety, benchmark regressions, and MAA contract regressions.
-
-Focus files:
-- scripts/sync-prts-plus-corpus.js
-- scripts/build-copilot-prior.js
-- scripts/build-operator-calibration.js
-- scripts/evaluate-priors.js
-- scripts/analyze-prts-plus.js
-- src/engine/CandidateBuilder.ts
-- src/engine/Scoring.ts
-- src/engine/index.ts
-- src/feedback/FeedbackStore.ts
-- src/core/pipeline.ts
-- src/data/copilotPrior.v1.json
-- src/data/operatorCombatCalibration.v1.json
-- docs/corpus-generator.md
-- training-results/public-copilot-report.md
-
-Run:
-- node scripts\clean-dist.js
-- node node_modules\typescript\bin\tsc
-- node node_modules\jest\bin\jest.js --coverage
-- node scripts\build-corpus-model.js --audit-only
-- node scripts\benchmark.js --skip-build
-
-If npm works, npm run build:node, npm test, and npm run corpus:audit are also acceptable.
-
-Output format:
-- Findings first, sorted P0/P1/P2/P3 with file and line references.
-- Do not list style nits unless they hide a correctness issue.
-- Do not edit files.
-- End with commands run, residual risks, and whether this is safe to merge.
-```
+The conservative preset passes when it produces the artifact, emits the short report, improves holdout fit over the current public corpus baseline, does not regress benchmark diversity or protocol validation, and proves local killed/total feedback outranks public priors. Claude Code can run the same acceptance commands as an independent review step.

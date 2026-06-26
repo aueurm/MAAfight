@@ -5,6 +5,7 @@ import type {
   EnemyDetail,
 } from "../types";
 import type { PRTSMapLoader, EnemyDatabaseEntry } from "../loader/PRTSMapLoader";
+import { isSpawnActionType, normalizeBuildableType } from "../shared/prtsMap";
 
 function tileKeyToType(key: string): string {
   const map: Record<string, string> = {
@@ -26,19 +27,8 @@ function normalizeMotionMode(mode: unknown): "walk" | "fly" {
   return mode === "FLY" || mode === 1 ? "fly" : "walk";
 }
 
-function isSpawnActionType(type: unknown): boolean {
-  return type === "SPAWN" || type === 0;
-}
-
 function normalizeHeightType(type: unknown): "highland" | "lowland" {
   return type === "HIGHLAND" || type === 1 ? "highland" : "lowland";
-}
-
-function normalizeBuildableType(type: unknown): "melee" | "ranged" | "all" | "none" {
-  if (type === "MELEE" || type === 1) return "melee";
-  if (type === "RANGED" || type === 2) return "ranged";
-  if (type === "ALL") return "all";
-  return "none";
 }
 
 function adaptTiles(prts: PRTSLevelData): { tiles: TileInfo[][]; deploymentPoints: DeploymentPoint[] } {

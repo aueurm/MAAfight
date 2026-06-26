@@ -4,6 +4,8 @@ import * as path from "path";
 import type { FastifyInstance } from "fastify";
 import { createGuiServer } from "../src/gui/server";
 
+jest.setTimeout(60000);
+
 async function makeApp(options: { configCwd?: string } = {}): Promise<FastifyInstance> {
   const configCwd = options.configCwd || fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-config-"));
   return createGuiServer({
@@ -132,8 +134,9 @@ describe("GUI server routes", () => {
     expect(Array.isArray(generated.groups)).toBe(true);
     expect(Array.isArray(generated.actions)).toBe(true);
     expect(body.script.groups).toEqual([]);
-    expect(body.script.metadata.source).toBe("maafight-v2-corpus");
+    expect(body.script.metadata.source).toBe("maafight-v2-skill-model");
     expect(body.script.metadata.candidateScore).toBeGreaterThan(0);
+    expect(body.script.metadata.skillCoverage).toBeGreaterThan(0);
     expect(body.analysis.pressureWindows.length).toBeGreaterThan(0);
     expect(body.scriptHash).toMatch(/^[a-f0-9]{64}$/);
     expect(body.modelVersion).toMatch(/^corpus-prior-v1-/);

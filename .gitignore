@@ -38,6 +38,9 @@ data/
 .env.*
 !.env.example
 
+# 审计临时文件
+.ponytail-audit.md
+
 # 临时文件
 *.tmp
 *.bak

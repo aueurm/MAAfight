@@ -5,7 +5,7 @@ import { getMaafightDir } from "../player/PlayerConfig";
 import type { BattleScript, PlayerOperator } from "../types";
 
 export interface GenerationRecord {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   generationId: string;
   scriptHash: string;
   stageId: string;
@@ -17,6 +17,9 @@ export interface GenerationRecord {
   candidateScore: number;
   scoreBreakdown: Record<string, number>;
   combatCoverage: number;
+  skillCoverage?: number;
+  stageContentHash?: string;
+  gameDataCommit?: string;
   enemyTotal: number;
   outputPath: string;
   script: BattleScript;
@@ -25,7 +28,7 @@ export interface GenerationRecord {
 }
 
 export interface FeedbackRecord {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   feedbackId: string;
   generationId?: string;
   scriptHash: string;
@@ -38,6 +41,7 @@ export interface FeedbackRecord {
   ratio: number;
   notes?: string;
   usableForLearning: boolean;
+  stageContentHash?: string;
   createdAt: string;
 }
 
@@ -93,6 +97,7 @@ export function hashOperatorBox(playerOperators?: Map<string, PlayerOperator>): 
       skillLevel: operator.skillLevel ?? null,
       module: operator.module ?? null,
       moduleLevel: operator.moduleLevel ?? null,
+      cost: operator.cost ?? null,
     }));
   return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
@@ -141,7 +146,7 @@ export class FeedbackStore {
     const operatorBoxHash = generation?.operatorBoxHash || "unknown";
     const operatorBoxChanged = Boolean(generation && operatorBoxHash !== input.currentOperatorBoxHash);
     const record: FeedbackRecord = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       feedbackId: randomUUID(),
       generationId: generation?.generationId,
       scriptHash: input.scriptHash,
@@ -154,13 +159,18 @@ export class FeedbackStore {
       ratio: input.killed / total,
       notes: input.notes?.trim() || undefined,
       usableForLearning: Boolean(generation && !operatorBoxChanged),
+      stageContentHash: generation?.stageContentHash,
       createdAt: new Date().toISOString(),
     };
     appendJsonLine(this.feedbackPath, record);
     return record;
   }
 
-  successfulGeneration(stageId: string, operatorBoxHash: string): GenerationRecord | undefined {
+  successfulGeneration(
+    stageId: string,
+    operatorBoxHash: string,
+    revision?: { engineVersion: string; stageContentHash: string; gameDataCommit: string }
+  ): GenerationRecord | undefined {
     const generations = this.loadGenerations().records;
     const feedback = this.loadFeedback().records;
     const successfulIds = new Set(
@@ -169,13 +179,20 @@ export class FeedbackStore {
         .map(record => record.generationId)
         .filter((id): id is string => Boolean(id))
     );
-    return generations.filter(record => record.stageId === stageId && record.operatorBoxHash === operatorBoxHash && successfulIds.has(record.generationId)).at(-1);
+    return generations.filter(record => record.stageId === stageId
+      && record.operatorBoxHash === operatorBoxHash
+      && successfulIds.has(record.generationId)
+      && (!revision || (record.engineVersion === revision.engineVersion
+        && record.stageContentHash === revision.stageContentHash
+        && record.gameDataCommit === revision.gameDataCommit))).at(-1);
   }
 
-  excludedHashes(stageId: string, operatorBoxHash: string): Set<string> {
+  excludedHashes(stageId: string, operatorBoxHash: string, stageContentHash?: string): Set<string> {
     return new Set(
       this.loadFeedback().records
-        .filter(record => record.stageId === stageId && record.operatorBoxHash === operatorBoxHash && record.usableForLearning && record.ratio < 1)
+        .filter(record => record.stageId === stageId && record.operatorBoxHash === operatorBoxHash
+          && record.usableForLearning && record.ratio < 1
+          && (!stageContentHash || record.stageContentHash === stageContentHash))
         .map(record => record.scriptHash)
     );
   }
@@ -183,11 +200,13 @@ export class FeedbackStore {
   feedbackAdjustment(
     stageId: string,
     operatorBoxHash: string,
-    breakdown: Record<string, number>
+    breakdown: Record<string, number>,
+    stageContentHash?: string
   ): number {
     const generations = new Map(this.loadGenerations().records.map(record => [record.generationId, record]));
     const records = this.loadFeedback().records.filter(record =>
       record.usableForLearning && record.stageId === stageId && record.operatorBoxHash === operatorBoxHash && record.generationId
+      && (!stageContentHash || record.stageContentHash === stageContentHash)
     );
     if (records.length === 0) return 0;
     let weightedResidual = 0;

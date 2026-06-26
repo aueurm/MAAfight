@@ -1,28 +1,16 @@
 import type { StageIndexEntry } from "../types";
 import levelPaths from "./levelPaths.json";
 import {
+  inferCategory,
   resolveByCode,
   resolveByFilePath,
   searchStages as stageSearch,
-  getAllCodes,
   resolveStage as stageResolve,
 } from "./stageIndex";
 
 function parseStageId(filePath: string): string {
   const match = filePath.match(/level_(.+)\.json$/);
   return match ? match[1] : filePath;
-}
-
-function inferCategory(filePath: string): string {
-  if (filePath.startsWith("obt/main/")) return "main";
-  if (filePath.startsWith("obt/hard/")) return "hard";
-  if (filePath.startsWith("obt/campaign/")) return "campaign";
-  if (filePath.startsWith("obt/weekly/")) return "weekly";
-  if (filePath.startsWith("obt/crisis/")) return "crisis";
-  if (filePath.startsWith("obt/roguelike/")) return "roguelike";
-  if (filePath.startsWith("obt/training/")) return "training";
-  if (filePath.startsWith("activities/")) return "activity";
-  return "other";
 }
 
 function buildIndex(): StageIndexEntry[] {
