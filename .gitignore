@@ -28,6 +28,7 @@ test-data/
 
 # 本地用户配置（干员库等私密数据）
 .maafight/
+.claude/
 
 # 数据目录
 data/
