@@ -126,7 +126,7 @@ export default function App() {
     };
   }, [stage]);
 
-  const defaultFileName = useMemo(() => suggestFileName(stage, result?.stageName), [stage, result?.stageName]);
+  const defaultFileName = useMemo(() => suggestFileName(stage), [stage]);
   const analysisSummary = compactAnalysis(result);
   const canShowSuggestions = stageFocused && stage.trim().length >= 1 && stageSuggestions.length > 0;
 
@@ -211,7 +211,7 @@ export default function App() {
       const enemyTotal = (response.analysis as any)?.enemyCount;
       if (Number.isInteger(enemyTotal) && enemyTotal > 0) setFeedbackTotal(String(enemyTotal));
       setFeedbackStatus("");
-      if (!fileName.trim() && response.fileName) setFileName(response.fileName);
+      setFileName("");
     } catch (err) {
       setErrors([String(err)]);
     } finally {
