@@ -77,6 +77,7 @@ export interface EnterPracticeResponse extends ApiBase {
   result?: {
     ok?: boolean;
     stage?: string;
+    startupTaskId?: number;
     navigationTaskId?: number;
     closedProxy?: boolean;
     practiceCallId?: number;

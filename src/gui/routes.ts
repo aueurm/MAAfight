@@ -58,8 +58,8 @@ function runEnterPracticeScript(stage: string): Promise<unknown> {
     let settled = false;
     const timer = setTimeout(() => {
       child.kill();
-      finish(() => reject(new Error("enter practice timed out after 180 seconds")));
-    }, 180_000);
+      finish(() => reject(new Error("enter practice timed out after 360 seconds")));
+    }, 360_000);
 
     function finish(done: () => void): void {
       if (settled) return;

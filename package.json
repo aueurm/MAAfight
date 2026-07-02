@@ -10,7 +10,7 @@
     "build": "npm run build:node && npm run build:web",
     "build:node": "node scripts/clean-dist.js && tsc",
     "build:web": "vite build --config web/vite.config.ts",
-    "gui": "npm run build && node dist/index.js gui",
+    "gui": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-mumu.ps1 && npm run build && node dist/index.js gui",
     "release:preview": "npm run build && node scripts/release-preview.js",
     "start": "node dist/index.js",
     "benchmark": "node scripts/benchmark.js",

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import {
-  analyzeStage,
   enterPractice,
   generateCopilot,
   getConfig,
@@ -17,7 +16,7 @@ import {
   type StageSuggestion,
 } from "./api";
 
-type ActionName = "analyze" | "generate" | "practice" | "validate" | "open" | "browse" | "saveOperators" | "feedback" | null;
+type ActionName = "generate" | "practice" | "open" | "browse" | "saveOperators" | "feedback" | null;
 
 interface OperatorStatus {
   operatorsPath: string;
@@ -188,26 +187,6 @@ export default function App() {
     }
   }
 
-  async function runAnalyze() {
-    setLoading("analyze");
-    setStatusMessage("");
-    setErrors([]);
-    setWarnings([]);
-    try {
-      const response = await analyzeStage({ stage, ...operatorPayload() });
-      setWarnings(response.warnings || []);
-      if (!response.success) {
-        setErrors(response.errors || ["分析失败"]);
-        return;
-      }
-      setResult(response as GenerateResponse);
-    } catch (err) {
-      setErrors([String(err)]);
-    } finally {
-      setLoading(null);
-    }
-  }
-
   async function runGenerate() {
     setLoading("generate");
     setStatusMessage("");
@@ -244,10 +223,14 @@ export default function App() {
     }
   }
 
-  async function runEnterPractice() {
+  async function runValidateAndEnterPractice() {
     const stageName = stage.trim();
     if (!stageName) {
       setErrors(["关卡为空"]);
+      return;
+    }
+    if (!jsonPreview.trim()) {
+      setErrors(["请先生成脚本"]);
       return;
     }
 
@@ -256,13 +239,28 @@ export default function App() {
     setErrors([]);
     setWarnings([]);
     try {
+      const validationResponse = await validateScript(jsonPreview);
+      if (!validationResponse.success) {
+        setWarnings(validationResponse.warnings || []);
+        setErrors(validationResponse.errors || ["验证失败"]);
+        return;
+      }
+      setResult(prev => ({
+        ...(prev || { success: true }),
+        success: true,
+        validation: validationResponse.validation,
+        protocol: validationResponse.protocol,
+        warnings: validationResponse.warnings || [],
+        errors: [],
+      }));
+
       const response = await enterPractice(stageName);
-      setWarnings(response.warnings || []);
+      setWarnings([...(validationResponse.warnings || []), ...(response.warnings || [])]);
       if (!response.success) {
         setErrors(response.errors || ["进入演习失败"]);
         return;
       }
-      setStatusMessage(`已进入 ${response.result?.stage || stageName} 演习${response.result?.closedProxy ? "，已关闭代理指挥" : ""}`);
+      setStatusMessage(`脚本验证通过，已进入 ${response.result?.stage || stageName} 演习${response.result?.closedProxy ? "，已关闭代理指挥" : ""}`);
     } catch (err) {
       setErrors([String(err)]);
     } finally {
@@ -300,33 +298,6 @@ export default function App() {
           setFeedbackSummary(null);
         }
       }
-    } catch (err) {
-      setErrors([String(err)]);
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  async function runValidate() {
-    setLoading("validate");
-    setStatusMessage("");
-    setErrors([]);
-    setWarnings([]);
-    try {
-      const response = await validateScript(jsonPreview);
-      setWarnings(response.warnings || []);
-      if (!response.success) {
-        setErrors(response.errors || ["验证失败"]);
-        return;
-      }
-      setResult(prev => ({
-        ...(prev || { success: true }),
-        success: true,
-        validation: response.validation,
-        protocol: response.protocol,
-        warnings: response.warnings || [],
-        errors: [],
-      }));
     } catch (err) {
       setErrors([String(err)]);
     } finally {
@@ -625,10 +596,8 @@ export default function App() {
 
         <div className="panel actions">
           <h2>操作</h2>
-          <button onClick={runAnalyze} disabled={loading !== null}>{loading === "analyze" ? "分析中..." : "分析关卡"}</button>
-          <button onClick={runGenerate} disabled={loading !== null}>{loading === "generate" ? "生成中..." : "生成脚本"}</button>
-          <button onClick={runEnterPractice} disabled={loading !== null}>{loading === "practice" ? "进入中..." : "进入演习"}</button>
-          <button onClick={runValidate} disabled={loading !== null || !jsonPreview}>{loading === "validate" ? "验证中..." : "验证脚本"}</button>
+          <button onClick={runGenerate} disabled={loading !== null}>{loading === "generate" ? "分析生成中..." : "分析并生成脚本"}</button>
+          <button onClick={runValidateAndEnterPractice} disabled={loading !== null || !jsonPreview}>{loading === "practice" ? "验证进入中..." : "验证脚本并进入演习"}</button>
           <button onClick={runOpenOutputDir} disabled={loading !== null}>{loading === "open" ? "打开中..." : "打开输出目录"}</button>
           <button className="secondary" onClick={copyDebugInfo} disabled={!configInfo}>{copiedDebug ? "已复制调试信息" : "复制调试信息"}</button>
         </div>

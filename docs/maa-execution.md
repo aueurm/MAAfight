@@ -33,7 +33,7 @@ MAA 回调中的 `SubTaskExtraInfo.what = "StageDrops"` 包含 `stage`、`drops`
 
 当前 `run observe-screen` 只用于 Copilot 已结束后的结果观察：复用 MaaCore `AsstAsyncScreencap` + `AsstGetImageBgr` / `AsstGetImage` 获取当前截图，不直接调用 `adb shell screencap`。观察器只采样 1280x720 结算页固定星星区域颜色，判断 `stars = 0 / 1 / 2 / 3`；识别不到星星时保留 `outcome = "unknown"`。每次观察保留一张 debug screenshot 和 `samples.json`，用于后续校准 ROI 与阈值。
 
-当前 `scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口：通过 MAA `Fight times=0` 复用关卡导航，确认 1280x720 关卡详情页后，若代理指挥开关亮起则先关闭，再点击演习按钮。它不点击普通开始按钮，也不执行 MAA Copilot 作业。
+当前 `scripts/start-mumu.ps1` 复用 MAA GUI 的 `Start.EmulatorPath` 和 `Start.OpenEmulatorAfterLaunch` 配置，可在 `npm run gui` 前启动 MuMu。`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口：先执行 MAA 日常 `StartUp` 唤醒明日方舟，再通过 MAA `Fight times=0` 复用关卡导航，确认 1280x720 关卡详情页后，若代理指挥开关亮起则先关闭，再点击演习按钮。它不点击普通开始按钮，也不执行 MAA Copilot 作业。
 
 参考：
 

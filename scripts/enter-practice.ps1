@@ -4,6 +4,8 @@ param(
   [string]$AdbPath = "D:\app\MuMu Player 12\nx_main\adb.exe",
   [string]$Address = "127.0.0.1:16384",
   [string]$ConnectConfig = "MuMuEmulator12",
+  [string]$ClientType = "Official",
+  [int]$StartupTimeoutSec = 180,
   [int]$NavigationTimeoutSec = 120,
   [switch]$SelfTest
 )
@@ -150,6 +152,53 @@ function Invoke-Click {
   return $callId
 }
 
+function Wait-MaaTask {
+  param([IntPtr]$Handle, [int]$TimeoutSec, [string]$Name)
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  while ([MaaCoreEnterPractice]::AsstRunning($Handle) -ne 0) {
+    if ((Get-Date) -gt $deadline) {
+      [MaaCoreEnterPractice]::AsstStop($Handle) | Out-Null
+      throw "$Name timed out after $TimeoutSec seconds"
+    }
+    Start-Sleep -Milliseconds 500
+  }
+}
+
+function New-ConnectedMaaHandle {
+  $handle = [MaaCoreEnterPractice]::AsstCreate()
+  if ($handle -eq [IntPtr]::Zero) { throw "AsstCreate failed" }
+
+  try {
+    if ([MaaCoreEnterPractice]::AsstConnect($handle, $AdbPath, $Address, $ConnectConfig) -eq 0) {
+      throw "AsstConnect failed"
+    }
+    if ([MaaCoreEnterPractice]::AsstConnected($handle) -eq 0) {
+      throw "AsstConnected failed"
+    }
+    return $handle
+  } catch {
+    [MaaCoreEnterPractice]::AsstDestroy($handle)
+    throw
+  }
+}
+
+function Invoke-Startup {
+  param([IntPtr]$Handle)
+
+  $startupParams = @{
+    client_type = $ClientType
+    start_game_enabled = $true
+  } | ConvertTo-Json -Compress
+  $startupTaskId = [MaaCoreEnterPractice]::AsstAppendTask($Handle, "StartUp", $startupParams)
+  if ($startupTaskId -le 0) { throw "AsstAppendTask StartUp failed" }
+  if ([MaaCoreEnterPractice]::AsstStart($Handle) -eq 0) { throw "AsstStart StartUp failed" }
+
+  Wait-MaaTask $Handle $StartupTimeoutSec "StartUp wakeup"
+
+  return $startupTaskId
+}
+
 function Invoke-FightNavigation {
   param([IntPtr]$Handle, [string]$StageName)
 
@@ -166,31 +215,22 @@ function Invoke-FightNavigation {
 
   $taskId = [MaaCoreEnterPractice]::AsstAppendTask($Handle, "Fight", $taskParams)
   if ($taskId -le 0) { throw "AsstAppendTask Fight failed for $StageName" }
-  if ([MaaCoreEnterPractice]::AsstStart($Handle) -eq 0) { throw "AsstStart failed" }
+  if ([MaaCoreEnterPractice]::AsstStart($Handle) -eq 0) { throw "AsstStart Fight failed" }
 
-  $deadline = (Get-Date).AddSeconds($NavigationTimeoutSec)
-  while ([MaaCoreEnterPractice]::AsstRunning($Handle) -ne 0) {
-    if ((Get-Date) -gt $deadline) {
-      [MaaCoreEnterPractice]::AsstStop($Handle) | Out-Null
-      throw "Fight navigation timed out after $NavigationTimeoutSec seconds"
-    }
-    Start-Sleep -Milliseconds 500
-  }
+  Wait-MaaTask $Handle $NavigationTimeoutSec "Fight navigation"
 
   return $taskId
 }
 
-$handle = [MaaCoreEnterPractice]::AsstCreate()
-if ($handle -eq [IntPtr]::Zero) { throw "AsstCreate failed" }
-
+$startupHandle = New-ConnectedMaaHandle
 try {
-  if ([MaaCoreEnterPractice]::AsstConnect($handle, $AdbPath, $Address, $ConnectConfig) -eq 0) {
-    throw "AsstConnect failed"
-  }
-  if ([MaaCoreEnterPractice]::AsstConnected($handle) -eq 0) {
-    throw "AsstConnected failed"
-  }
+  $startupTaskId = Invoke-Startup $startupHandle
+} finally {
+  [MaaCoreEnterPractice]::AsstDestroy($startupHandle)
+}
 
+$handle = New-ConnectedMaaHandle
+try {
   $navigationTaskId = Invoke-FightNavigation $handle $Stage.Trim()
 
   [MaaCoreEnterPractice]::AsstAsyncScreencap($handle, 1) | Out-Null
@@ -210,6 +250,7 @@ try {
   @{
     ok = $true
     stage = $Stage.Trim()
+    startupTaskId = $startupTaskId
     navigationTaskId = $navigationTaskId
     closedProxy = $closedProxy
     practiceCallId = $practiceCallId
