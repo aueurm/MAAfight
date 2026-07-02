@@ -14,6 +14,8 @@ export interface ConfigResponse extends ApiBase {
   defaultCacheLevelsDir: string;
   defaultLogDir: string;
   defaultOperatorsPath: string;
+  savedMaaPath?: string | null;
+  detectedMaaPath?: string | null;
   engine: "v2";
   configuredOperators?: {
     operatorsPath: string;
@@ -149,8 +151,8 @@ export async function openOutputDir(outputDir: string): Promise<OpenOutputDirRes
   return postJson<OpenOutputDirResponse>("/api/open-output-dir", { outputDir });
 }
 
-export async function enterPractice(stage: string): Promise<EnterPracticeResponse> {
-  return postJson<EnterPracticeResponse>("/api/enter-practice", { stage });
+export async function enterPractice(stage: string, maaPath?: string): Promise<EnterPracticeResponse> {
+  return postJson<EnterPracticeResponse>("/api/enter-practice", { stage, maaPath });
 }
 
 export async function saveOperatorsJson(operatorsJson: string): Promise<SaveOperatorsResponse> {

@@ -19,6 +19,7 @@ test-results/
 benchmark-results/
 release/
 logs/
+debug/
 
 # 生成脚本
 output/

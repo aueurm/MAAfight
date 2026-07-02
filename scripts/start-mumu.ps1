@@ -1,5 +1,5 @@
 param(
-  [string]$MaaDir = "D:\app\MAA",
+  [string]$MaaDir = "",
   [switch]$CheckOnly,
   [switch]$Quiet
 )
@@ -18,6 +18,40 @@ function Get-CurrentConfig {
   $raw = Get-Content -LiteralPath $ConfigPath -Encoding UTF8 -Raw | ConvertFrom-Json
   $current = if ($raw.Current) { $raw.Current } else { "Default" }
   return $raw.Configurations.$current
+}
+
+function Resolve-MaaDir {
+  param([string]$InputPath)
+
+  $candidates = @()
+  if ($InputPath.Trim()) { $candidates += $InputPath.Trim() }
+  if ($env:MAAFIGHT_MAA_PATH) { $candidates += $env:MAAFIGHT_MAA_PATH }
+
+  $localConfigPath = Join-Path (Resolve-Path ".").Path ".maafight\config.json"
+  if (Test-Path -LiteralPath $localConfigPath) {
+    try {
+      $localConfig = Get-Content -LiteralPath $localConfigPath -Encoding UTF8 -Raw | ConvertFrom-Json
+      if ([string]$localConfig.maaPath) { $candidates += [string]$localConfig.maaPath }
+    } catch {
+    }
+  }
+
+  if (Test-Path -LiteralPath "D:\app\MAA") { $candidates += "D:\app\MAA" }
+
+  foreach ($candidate in $candidates) {
+    if (-not (Test-Path -LiteralPath $candidate)) { continue }
+    $resolved = (Resolve-Path -LiteralPath $candidate).Path
+    if ((Get-Item -LiteralPath $resolved).PSIsContainer) { return $resolved }
+    return Split-Path -Parent $resolved
+  }
+
+  return $null
+}
+
+$MaaDir = Resolve-MaaDir $MaaDir
+if (-not $MaaDir) {
+  Write-Result @{ ok = $false; usable = $false; warning = "MAA path is not configured." }
+  exit 0
 }
 
 $configPath = Join-Path $MaaDir "config\gui.json"

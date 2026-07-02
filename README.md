@@ -1,91 +1,96 @@
 # MAAfight v2
 
-MAAfight 是一个 TypeScript / Node.js 本地工具，读取 PRTS.Map 关卡数据，使用语料先验、静态战斗数据和确定性 Beam Search 生成 MAA copilot JSON v3 草稿。
+MAAfight 是一个本地 MAA copilot JSON v3 草稿生成器。默认用 GUI：选关卡，生成脚本，验证脚本，然后调用 MAA 进入演习。
 
-v2 只有一套生成引擎。仓库中不存在旧规则生成器或 fallback 战斗链路；旧实现只保留在 GitHub `v1.0.0-alpha` 历史中。
+它不会把静态评分当作通关率，也不会默认开始普通理智作战。
 
-核心生成链路不直接执行 MAA。当前 `run` 命令提供探测、回调导入和结算页观察；GUI 的“进入演习”按钮可调用本地 MAA 导航到关卡并点击演习入口。详见 [MAA 执行评估层](docs/maa-execution.md)。
+## 默认用法
 
-## 快速开始
+1. 安装依赖。
 
 ```bash
 npm install
-npm run build
-node dist/index.js generate --stage GT-1 --output GT-1.json --pretty
 ```
 
-启动本地 GUI：
+2. 启动 GUI。
 
 ```bash
 npm run gui
 ```
 
-## 数据流
+3. 在页面里填写 `MAA 路径`。
+
+可以填 MAA 安装目录、`MAA.exe` 或 `MaaCore.dll`：
 
 ```text
-PRTS.Map
-  -> loader / adapter
-  -> StageFacts
-  -> CandidateBuilder
-  -> Combat + Corpus + Position + Timing scoring
-  -> deterministic Beam Search
-  -> protocol validation
-  -> MAA copilot JSON v3
+D:\app\MAA
+C:\Tools\MAA\MAA.exe
+C:\Tools\MAA\MaaCore.dll
 ```
 
-规划中的实测闭环：
+填过一次后会保存到 `.maafight/config.json`。如果不想在 GUI 填，也可以设置环境变量：
+
+```powershell
+$env:MAAFIGHT_MAA_PATH="D:\app\MAA"
+npm run gui
+```
+
+4. 填关卡。
+
+例如：
 
 ```text
-MAA copilot JSON v3
-  -> MAA execution harness
-  -> practice-mode safety gate
-  -> result observer
-  -> feedback store
+1-7
+3-8
+GT-1
 ```
 
-`candidateScore` 只用于候选排序，不是通关率。歼灭率只来自人工或执行评估层记录的 `killed / total` 反馈。
+5. 可选：填 `operators JSON 文件路径`。
 
-## 生成约束
+不填时会尝试读取 `.maafight/operators.json`。也可以在 GUI 里粘贴并保存 MAA 导出的干员库。
 
-- 固定 12 人编队，`groups: []`。
-- 默认省略 `requirements`。
-- `--requirements player` 仅导出玩家库中的真实数据。
-- 只生成 MAA 官方动作，不输出 `Wait`、`SkillUse`。
-- 模型、搜索或协议验证失败时直接报错，不生成降级脚本。
-- 生成链路不控制 ADB，不执行 MAA，不把静态评分描述为通关证明。
-- 未来执行评估默认只允许演习模式；普通理智作战必须显式开启。
+6. 点击 `分析并生成脚本`。
 
-## 常用命令
+生成结果会写入输出目录，并显示 JSON 预览。
+
+7. 点击 `验证脚本并进入演习`。
+
+这一步会：
+
+- 先验证当前 JSON。
+- 调用 MAA 的 `StartUp` 唤醒明日方舟。
+- 复用 MAA 的关卡导航进入目标关卡详情页。
+- 如果代理指挥开启，就先取消代理指挥。
+- 点击 `演习`，进入编队页。
+
+## MAA 和模拟器要求
+
+- MAA 的连接设置需要已经配好。
+- MAA 的 `config/gui.json` 里需要有可用的 `Connect.AdbPath`、`Connect.Address` 和 `Connect.ConnectConfig`。
+- `npm run gui` 会尝试复用 MAA 的模拟器启动配置启动 MuMu；如果没有配置，也可以手动先启动模拟器。
+
+## 常用 CLI
+
+GUI 是默认入口；下面这些命令用于调试或批处理。
 
 ```bash
-maafight generate --stage GT-1 --output GT-1.json --pretty
-maafight generate --data ./level_custom.json --stage CUSTOM-1 --output CUSTOM-1.json
-maafight generate --stage GT-1 --new-candidate
-maafight analyze --stage GT-1 --pretty
-maafight validate --file GT-1.json
-maafight init --operators Arknights_OperBox_Export.json
-maafight feedback record --file GT-1.json --killed 42 --total 42
-maafight feedback summary --stage GT-1
+npm run build
+node dist/index.js generate --stage GT-1 --output GT-1.json --pretty
+node dist/index.js validate --file GT-1.json
+node dist/index.js run probe --pretty
+node dist/index.js run connect --maa D:\app\MAA --pretty
 ```
 
-生成时未传 `--operators`，会尝试读取 `.maafight/operators.json`。完整玩家库不会复制到生成记录或反馈文件。
+## 安全边界
 
-## 模型维护
+- 生成链路只生成 MAA copilot JSON，不执行 MAA。
+- GUI 的进入演习流程只点击演习入口，不点击普通 `开始行动`。
+- `candidateScore` 只用于候选排序，不是通关率。
+- 歼灭率只来自人工反馈或执行观察结果。
 
-```bash
-npm run corpus:audit
-npm run model:build
-node scripts/build-operator-combat-model.js --game-data <excel-dir> --commit <upstream-commit>
-```
+## 更多文档
 
-公开游戏数据可参考 [Kengxxiao/ArknightsGameData](https://github.com/Kengxxiao/ArknightsGameData)。更新模型时必须锁定上游 commit 并记录输入 hash。
-
-## 验证
-
-```bash
-node node_modules/typescript/bin/tsc --noEmit
-node node_modules/jest/bin/jest.js --runInBand --coverage=false
-node scripts/benchmark.js --skip-build
-```
-
-详细说明见 [docs/README.md](docs/README.md)。
+- [架构说明](docs/architecture.md)
+- [算法边界](docs/algorithm-boundary.md)
+- [MAA 执行评估层](docs/maa-execution.md)
+- [导出契约](docs/maa-copilot-export-contract.md)

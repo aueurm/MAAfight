@@ -1,9 +1,9 @@
 param(
   [string]$Stage = "1-7",
-  [string]$MaaDir = "D:\app\MAA",
-  [string]$AdbPath = "D:\app\MuMu Player 12\nx_main\adb.exe",
-  [string]$Address = "127.0.0.1:16384",
-  [string]$ConnectConfig = "MuMuEmulator12",
+  [string]$MaaDir = "",
+  [string]$AdbPath = "",
+  [string]$Address = "",
+  [string]$ConnectConfig = "",
   [string]$ClientType = "Official",
   [int]$StartupTimeoutSec = 180,
   [int]$NavigationTimeoutSec = 120,
@@ -11,6 +11,44 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Resolve-MaaDir {
+  param([string]$InputPath)
+
+  $candidates = @()
+  if ($InputPath.Trim()) { $candidates += $InputPath.Trim() }
+  if ($env:MAAFIGHT_MAA_PATH) { $candidates += $env:MAAFIGHT_MAA_PATH }
+
+  $localConfigPath = Join-Path (Resolve-Path ".").Path ".maafight\config.json"
+  if (Test-Path -LiteralPath $localConfigPath) {
+    try {
+      $localConfig = Get-Content -LiteralPath $localConfigPath -Encoding UTF8 -Raw | ConvertFrom-Json
+      if ([string]$localConfig.maaPath) { $candidates += [string]$localConfig.maaPath }
+    } catch {
+    }
+  }
+
+  if (Test-Path -LiteralPath "D:\app\MAA") { $candidates += "D:\app\MAA" }
+
+  foreach ($candidate in $candidates) {
+    if (-not (Test-Path -LiteralPath $candidate)) { continue }
+    $resolved = (Resolve-Path -LiteralPath $candidate).Path
+    if ((Get-Item -LiteralPath $resolved).PSIsContainer) { return $resolved }
+    return Split-Path -Parent $resolved
+  }
+
+  throw "MAA path is required. Fill MAA path in GUI, set MAAFIGHT_MAA_PATH, or pass -MaaDir."
+}
+
+function Get-MaaGuiConfig {
+  param([string]$Dir)
+
+  $configPath = Join-Path $Dir "config\gui.json"
+  if (-not (Test-Path -LiteralPath $configPath)) { return $null }
+  $raw = Get-Content -LiteralPath $configPath -Encoding UTF8 -Raw | ConvertFrom-Json
+  $current = if ($raw.Current) { $raw.Current } else { "Default" }
+  return $raw.Configurations.$current
+}
 
 $width = 1280
 $height = 720
@@ -38,14 +76,39 @@ function Get-BlueRatio {
   return [double]$blue / [double]$total
 }
 
+function Get-WhiteRatio {
+  param([byte[]]$Bgr, [int]$X1, [int]$Y1, [int]$X2, [int]$Y2)
+
+  $white = 0
+  $total = 0
+  for ($y = $Y1; $y -lt $Y2; $y++) {
+    for ($x = $X1; $x -lt $X2; $x++) {
+      $offset = (($y * $width) + $x) * $bytesPerPixel
+      $b = $Bgr[$offset]
+      $g = $Bgr[$offset + 1]
+      $r = $Bgr[$offset + 2]
+      $total++
+      if ($r -ge 210 -and $g -ge 210 -and $b -ge 210) {
+        $white++
+      }
+    }
+  }
+  return [double]$white / [double]$total
+}
+
 function Test-ProxyEnabled {
   param([byte[]]$Bgr)
-  return (Get-BlueRatio $Bgr 1045 570 1090 615) -ge 0.20
+  return (Get-BlueRatio $Bgr 1045 570 1090 615) -ge 0.20 -or (Get-WhiteRatio $Bgr 1050 578 1084 606) -ge 0.20
 }
 
 function Test-StageDetail {
   param([byte[]]$Bgr)
   return (Get-BlueRatio $Bgr 1040 630 1245 690) -ge 0.20
+}
+
+function Test-PracticeReady {
+  param([byte[]]$Bgr)
+  return (Get-BlueRatio $Bgr 835 625 1035 690) -ge 0.20 -or (Get-WhiteRatio $Bgr 835 625 1035 690) -ge 0.12
 }
 
 function Set-TestBlueRegion {
@@ -61,16 +124,40 @@ function Set-TestBlueRegion {
   }
 }
 
+function Set-TestWhiteRegion {
+  param([byte[]]$Bgr, [int]$X1, [int]$Y1, [int]$X2, [int]$Y2)
+
+  for ($y = $Y1; $y -lt $Y2; $y++) {
+    for ($x = $X1; $x -lt $X2; $x++) {
+      $offset = (($y * $width) + $x) * $bytesPerPixel
+      $Bgr[$offset] = 245
+      $Bgr[$offset + 1] = 245
+      $Bgr[$offset + 2] = 245
+    }
+  }
+}
+
 function Invoke-SelfTest {
   $blank = New-Object byte[] $screenBytes
   if (Test-ProxyEnabled $blank) { throw "blank proxy ROI should be off" }
   if (Test-StageDetail $blank) { throw "blank stage ROI should be off" }
+  if (Test-PracticeReady $blank) { throw "blank practice ROI should be off" }
 
   $sample = New-Object byte[] $screenBytes
   Set-TestBlueRegion $sample 1045 570 1090 615
   Set-TestBlueRegion $sample 1040 630 1245 690
+  Set-TestBlueRegion $sample 835 625 1035 690
   if (-not (Test-ProxyEnabled $sample)) { throw "blue proxy ROI should be on" }
   if (-not (Test-StageDetail $sample)) { throw "blue stage ROI should be on" }
+  if (-not (Test-PracticeReady $sample)) { throw "blue practice ROI should be ready" }
+
+  $whiteProxy = New-Object byte[] $screenBytes
+  Set-TestWhiteRegion $whiteProxy 1050 578 1084 606
+  if (-not (Test-ProxyEnabled $whiteProxy)) { throw "white proxy ROI should be on" }
+
+  $whitePractice = New-Object byte[] $screenBytes
+  Set-TestWhiteRegion $whitePractice 835 625 1035 690
+  if (-not (Test-PracticeReady $whitePractice)) { throw "white practice ROI should be ready" }
 
   @{ ok = $true; selfTest = $true } | ConvertTo-Json -Compress
 }
@@ -80,8 +167,17 @@ if ($SelfTest) {
   return
 }
 
+$MaaDir = Resolve-MaaDir $MaaDir
+$maaConfig = Get-MaaGuiConfig $MaaDir
+if (-not $AdbPath.Trim() -and $maaConfig) { $AdbPath = [string]$maaConfig.'Connect.AdbPath' }
+if (-not $Address.Trim() -and $maaConfig) { $Address = [string]$maaConfig.'Connect.Address' }
+if (-not $ConnectConfig.Trim() -and $maaConfig) { $ConnectConfig = [string]$maaConfig.'Connect.ConnectConfig' }
+if (-not $ConnectConfig.Trim()) { $ConnectConfig = "General" }
+
 if (-not $Stage.Trim()) { throw "Stage is required" }
 if (-not (Test-Path -LiteralPath (Join-Path $MaaDir "MaaCore.dll"))) { throw "MaaCore.dll not found in $MaaDir" }
+if (-not $AdbPath.Trim()) { throw "adb path is required. Configure MAA connection settings or pass -AdbPath." }
+if (-not $Address.Trim()) { throw "adb address is required. Configure MAA connection settings or pass -Address." }
 if (-not (Test-Path -LiteralPath $AdbPath)) { throw "adb.exe not found: $AdbPath" }
 
 $root = (Resolve-Path ".").Path
@@ -150,6 +246,39 @@ function Invoke-Click {
   $callId = [MaaCoreEnterPractice]::AsstAsyncClick($Handle, $X, $Y, 1)
   if ($callId -le 0) { throw "AsstAsyncClick failed at $X,$Y" }
   return $callId
+}
+
+function Get-ScreenBgr {
+  param([IntPtr]$Handle)
+
+  [MaaCoreEnterPractice]::AsstAsyncScreencap($Handle, 1) | Out-Null
+  $bgr = New-Object byte[] $screenBytes
+  $size = [MaaCoreEnterPractice]::AsstGetImageBgr($Handle, $bgr, [UInt64]$bgr.Length)
+  if ($size -lt $screenBytes) { throw "AsstGetImageBgr returned $size bytes" }
+  return $bgr
+}
+
+function Wait-ProxyDisabled {
+  param([IntPtr]$Handle)
+
+  for ($i = 0; $i -lt 12; $i++) {
+    Start-Sleep -Milliseconds 250
+    $bgr = Get-ScreenBgr $Handle
+    if (-not (Test-ProxyEnabled $bgr)) { return $bgr }
+  }
+  throw "proxy command stayed enabled; practice click skipped"
+}
+
+function Wait-PracticeReady {
+  param([IntPtr]$Handle, [byte[]]$Bgr)
+
+  $current = $Bgr
+  for ($i = 0; $i -lt 12; $i++) {
+    if (Test-PracticeReady $current) { return $current }
+    Start-Sleep -Milliseconds 250
+    $current = Get-ScreenBgr $Handle
+  }
+  throw "practice button not ready; practice click skipped"
 }
 
 function Wait-MaaTask {
@@ -233,19 +362,17 @@ $handle = New-ConnectedMaaHandle
 try {
   $navigationTaskId = Invoke-FightNavigation $handle $Stage.Trim()
 
-  [MaaCoreEnterPractice]::AsstAsyncScreencap($handle, 1) | Out-Null
-  $bgr = New-Object byte[] $screenBytes
-  $size = [MaaCoreEnterPractice]::AsstGetImageBgr($handle, $bgr, [UInt64]$bgr.Length)
-  if ($size -lt $screenBytes) { throw "AsstGetImageBgr returned $size bytes" }
+  $bgr = Get-ScreenBgr $handle
   if (-not (Test-StageDetail $bgr)) { throw "stage detail screen not detected; practice click skipped" }
 
   $closedProxy = $false
   if (Test-ProxyEnabled $bgr) {
     Invoke-Click $handle 1066 592 | Out-Null
     $closedProxy = $true
-    Start-Sleep -Milliseconds 500
+    $bgr = Wait-ProxyDisabled $handle
   }
 
+  $bgr = Wait-PracticeReady $handle $bgr
   $practiceCallId = Invoke-Click $handle 934 658
   @{
     ok = $true

@@ -66,6 +66,7 @@ export default function App() {
   const [selectedOperatorsJson, setSelectedOperatorsJson] = useState("");
   const [selectedOperatorFileName, setSelectedOperatorFileName] = useState("");
   const [operatorStatus, setOperatorStatus] = useState<OperatorStatus | null>(null);
+  const [maaPath, setMaaPath] = useState("");
   const [showOperatorsPaste, setShowOperatorsPaste] = useState(false);
   const [requirementsMode, setRequirementsMode] = useState<RequirementsMode>("none");
   const [newCandidate, setNewCandidate] = useState(false);
@@ -93,6 +94,7 @@ export default function App() {
         setConfigInfo(config);
         setOutputDir(config.defaultOutputDir);
         setDefaultOperatorPath(config.defaultOperatorsPath || "");
+        setMaaPath(config.savedMaaPath || config.detectedMaaPath || "");
         if (config.configuredOperators) {
           setOperatorFilePath(config.configuredOperators.operatorsPath);
           setOperatorStatus({
@@ -254,7 +256,7 @@ export default function App() {
         errors: [],
       }));
 
-      const response = await enterPractice(stageName);
+      const response = await enterPractice(stageName, maaPath.trim() || undefined);
       setWarnings([...(validationResponse.warnings || []), ...(response.warnings || [])]);
       if (!response.success) {
         setErrors(response.errors || ["进入演习失败"]);
@@ -403,6 +405,7 @@ export default function App() {
       outputPath: result?.outputPath,
       cacheDir: configInfo?.defaultCacheDir,
       logDir: configInfo?.defaultLogDir,
+      maaPath,
       stage,
       engine: "v2",
       pretty,
@@ -503,6 +506,27 @@ export default function App() {
                   onClick={() => setOperatorFilePath(defaultOperatorPath)}
                 >
                   填入默认路径
+                </button>
+              </p>
+            )}
+          </label>
+
+          <label>
+            <span>MAA 路径</span>
+            <input
+              value={maaPath}
+              onChange={e => setMaaPath(e.target.value)}
+              placeholder={configInfo?.detectedMaaPath || "C:\\...\\MAA 或 MAA.exe"}
+            />
+            {configInfo?.detectedMaaPath && maaPath.trim() !== configInfo.detectedMaaPath && (
+              <p className="hint action-hint">
+                检测到：{configInfo.detectedMaaPath}
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => setMaaPath(configInfo.detectedMaaPath || "")}
+                >
+                  填入检测路径
                 </button>
               </p>
             )}

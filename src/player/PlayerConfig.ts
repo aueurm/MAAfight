@@ -5,6 +5,7 @@ import { OperatorBox } from "./OperatorBox";
 export interface MaafightLocalConfig {
   operatorsPath?: string;
   lastOutputDir?: string;
+  maaPath?: string;
   updatedAt?: string;
 }
 
@@ -59,6 +60,12 @@ function resolveOutputDir(config: MaafightLocalConfig, cwd = process.cwd()): str
   return path.resolve(cwd, config.lastOutputDir);
 }
 
+function resolveMaaPath(config: MaafightLocalConfig, cwd = process.cwd()): string | null {
+  if (!config.maaPath) return null;
+  if (path.isAbsolute(config.maaPath)) return config.maaPath;
+  return path.resolve(cwd, config.maaPath);
+}
+
 export function saveOperatorConfig(rawJson: string, cwd = process.cwd()): SavedOperatorConfig {
   const dir = getMaafightDir(cwd);
   const configPath = getConfigPath(cwd);
@@ -97,6 +104,20 @@ export function saveLastOutputDir(outputDir: string, cwd = process.cwd()): strin
   return saveLocalConfig({
     ...existing,
     lastOutputDir: path.resolve(outputDir),
+  }, cwd);
+}
+
+export function loadConfiguredMaaPath(cwd = process.cwd()): string | null {
+  const config = loadLocalConfig(cwd);
+  if (!config) return null;
+  return resolveMaaPath(config, cwd);
+}
+
+export function saveMaaPath(maaPath: string, cwd = process.cwd()): string {
+  const existing = loadLocalConfig(cwd) || {};
+  return saveLocalConfig({
+    ...existing,
+    maaPath: path.resolve(maaPath),
   }, cwd);
 }
 

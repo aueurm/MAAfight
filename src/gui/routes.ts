@@ -10,11 +10,14 @@ import {
 import { openOutputDirectory } from "./openBrowser";
 import {
   getDefaultOperatorsPath,
+  loadConfiguredMaaPath,
   loadConfiguredOperatorBox,
   loadLastOutputDir,
+  saveMaaPath,
   saveLastOutputDir,
   saveOperatorConfig,
 } from "../player/PlayerConfig";
+import { probeMaaEnvironment } from "../runner/probe";
 import { writeGuiLog } from "../runtime/logger";
 import { getRuntimePaths } from "../runtime/paths";
 import { packageVersion } from "../runtime/packageInfo";
@@ -38,17 +41,20 @@ function enterPracticeScriptPath(): string {
   return path.resolve(__dirname, "..", "..", "scripts", "enter-practice.ps1");
 }
 
-function runEnterPracticeScript(stage: string): Promise<unknown> {
+function runEnterPracticeScript(stage: string, maaDir?: string): Promise<unknown> {
+  const args = [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    enterPracticeScriptPath(),
+    "-Stage",
+    stage,
+  ];
+  if (maaDir) args.push("-MaaDir", maaDir);
+
   return new Promise((resolve, reject) => {
-    const child = spawn("powershell.exe", [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      enterPracticeScriptPath(),
-      "-Stage",
-      stage,
-    ], {
+    const child = spawn("powershell.exe", args, {
       cwd: path.resolve(__dirname, "..", ".."),
       windowsHide: true,
     });
@@ -109,6 +115,8 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
     const cwd = configCwd || runtime.homeDir;
     const configured = loadConfiguredOperatorBox(cwd);
     const lastOutputDir = loadLastOutputDir(cwd);
+    const savedMaaPath = loadConfiguredMaaPath(cwd);
+    const maaProbe = probeMaaEnvironment({ maaPath: savedMaaPath || undefined });
     return {
       success: true,
       version: packageVersion(),
@@ -118,6 +126,8 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
       defaultCacheLevelsDir: runtime.cacheLevelsDir,
       defaultLogDir: runtime.logDir,
       defaultOperatorsPath: getDefaultOperatorsPath(cwd),
+      savedMaaPath,
+      detectedMaaPath: maaProbe.maaInstallDir || maaProbe.maaPath,
       engine: "v2",
       configuredOperators: configured ? {
         operatorsPath: configured.operatorsPath,
@@ -210,9 +220,20 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
         return { success: false, warnings: [], errors: ["stage is required"] };
       }
 
-      const result = await runEnterPracticeScript(body.stage.trim());
+      const cwd = configCwd || getRuntimePaths().homeDir;
+      const inputMaaPath = body.maaPath?.trim();
+      if (inputMaaPath) saveMaaPath(inputMaaPath, cwd);
+      const configuredMaaPath = inputMaaPath || loadConfiguredMaaPath(cwd) || undefined;
+      const maaProbe = configuredMaaPath ? probeMaaEnvironment({ maaPath: configuredMaaPath }) : null;
+      if (configuredMaaPath && !maaProbe?.maaInstallDir) {
+        reply.code(400);
+        return { success: false, warnings: maaProbe?.warnings || [], errors: ["未找到 MAA，请填写 MAA 目录、MAA.exe 或 MaaCore.dll 路径"] };
+      }
+
+      const result = await runEnterPracticeScript(body.stage.trim(), maaProbe?.maaInstallDir || undefined);
       writeGuiLog("enter_practice_success", {
         stage: body.stage.trim(),
+        maaPath: maaProbe?.maaInstallDir,
       });
       return { success: true, warnings: [], errors: [], result };
     } catch (err) {
