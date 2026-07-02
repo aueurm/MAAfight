@@ -29,6 +29,10 @@ export interface GenerateRequest extends AnalyzeRequest {
   requirementsMode?: RequirementsMode;
 }
 
+export interface EnterPracticeRequest {
+  stage?: string;
+}
+
 export interface FeedbackRequest {
   scriptHash?: string;
   killed?: number;

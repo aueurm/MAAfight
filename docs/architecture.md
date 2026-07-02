@@ -17,6 +17,19 @@ Stage code / local JSON
   -> ScriptExporter
 ```
 
+执行评估层独立于生成链路：
+
+```text
+BattleScript
+  -> Navigator
+  -> SafetyGate
+  -> MAA Executor
+  -> Observer
+  -> FeedbackStore
+```
+
+该层用于真实评测生成结果，不改变 `src/engine/` 的职责。详见 [MAA 执行评估层](maa-execution.md)。
+
 ## 目录职责
 
 ```text
@@ -26,6 +39,7 @@ src/
   core/       CLI / GUI 共享 pipeline
   engine/     v2 唯一战斗生成引擎
   feedback/   生成记录与实战反馈
+  runner/     MAA 探测、执行边界、演习保护和结果观测
   loader/     关卡、敌人数据库与索引加载
   player/     玩家干员库
   gui/        本地 HTTP API
@@ -53,4 +67,6 @@ src/
 - engine 可以依赖规范化数据、语料模型、静态战斗数据、玩家库和 copilot exporter。
 - adapter 不生成部署顺序或战术建议。
 - copilot 层不做战斗判断。
+- runner 层可以调用外部 MAA，但不得被 engine 依赖。
+- 默认执行评估必须走演习保护；普通理智作战只能显式开启。
 - CLI 和 GUI 不实现自己的生成分支，只调用同一 pipeline / engine。

@@ -4,6 +4,8 @@ MAAfight 是一个 TypeScript / Node.js 本地工具，读取 PRTS.Map 关卡数
 
 v2 只有一套生成引擎。仓库中不存在旧规则生成器或 fallback 战斗链路；旧实现只保留在 GitHub `v1.0.0-alpha` 历史中。
 
+核心生成链路不直接执行 MAA。当前 `run` 命令提供探测、回调导入和结算页观察；GUI 的“进入演习”按钮可调用本地 MAA 导航到关卡并点击演习入口。详见 [MAA 执行评估层](docs/maa-execution.md)。
+
 ## 快速开始
 
 ```bash
@@ -31,7 +33,17 @@ PRTS.Map
   -> MAA copilot JSON v3
 ```
 
-`candidateScore` 只用于候选排序，不是通关率。歼灭率只来自 MAA 实际执行后的 `killed / total` 反馈。
+规划中的实测闭环：
+
+```text
+MAA copilot JSON v3
+  -> MAA execution harness
+  -> practice-mode safety gate
+  -> result observer
+  -> feedback store
+```
+
+`candidateScore` 只用于候选排序，不是通关率。歼灭率只来自人工或执行评估层记录的 `killed / total` 反馈。
 
 ## 生成约束
 
@@ -40,7 +52,8 @@ PRTS.Map
 - `--requirements player` 仅导出玩家库中的真实数据。
 - 只生成 MAA 官方动作，不输出 `Wait`、`SkillUse`。
 - 模型、搜索或协议验证失败时直接报错，不生成降级脚本。
-- 不控制 ADB，不执行 MAA，不把静态评分描述为通关证明。
+- 生成链路不控制 ADB，不执行 MAA，不把静态评分描述为通关证明。
+- 未来执行评估默认只允许演习模式；普通理智作战必须显式开启。
 
 ## 常用命令
 

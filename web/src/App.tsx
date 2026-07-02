@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import {
   analyzeStage,
+  enterPractice,
   generateCopilot,
   getConfig,
+  getFeedbackSummary,
   openOutputDir,
   recordFeedback,
   saveOperatorsJson,
   searchStageSuggestions,
   validateScript,
   type ConfigResponse,
+  type FeedbackSummary,
   type GenerateResponse,
   type RequirementsMode,
   type StageSuggestion,
 } from "./api";
 
-type ActionName = "analyze" | "generate" | "validate" | "open" | "browse" | "saveOperators" | "feedback" | null;
+type ActionName = "analyze" | "generate" | "practice" | "validate" | "open" | "browse" | "saveOperators" | "feedback" | null;
 
 interface OperatorStatus {
   operatorsPath: string;
@@ -74,6 +77,7 @@ export default function App() {
   const [result, setResult] = useState<GenerateResponse | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [statusMessage, setStatusMessage] = useState("");
   const [loading, setLoading] = useState<ActionName>(null);
   const [copiedJson, setCopiedJson] = useState(false);
   const [copiedDebug, setCopiedDebug] = useState(false);
@@ -81,6 +85,7 @@ export default function App() {
   const [feedbackTotal, setFeedbackTotal] = useState("");
   const [feedbackNotes, setFeedbackNotes] = useState("");
   const [feedbackStatus, setFeedbackStatus] = useState("");
+  const [feedbackSummary, setFeedbackSummary] = useState<FeedbackSummary | null>(null);
   const operatorFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -126,6 +131,24 @@ export default function App() {
     };
   }, [stage]);
 
+  useEffect(() => {
+    if (!result?.stageId || !result.scriptHash) {
+      setFeedbackSummary(null);
+      return;
+    }
+
+    let cancelled = false;
+    getFeedbackSummary(result.stageId).then(response => {
+      if (!cancelled) setFeedbackSummary(response.success ? response.summary || null : null);
+    }).catch(() => {
+      if (!cancelled) setFeedbackSummary(null);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [result?.stageId, result?.scriptHash]);
+
   const defaultFileName = useMemo(() => suggestFileName(stage), [stage]);
   const analysisSummary = compactAnalysis(result);
   const canShowSuggestions = stageFocused && stage.trim().length >= 1 && stageSuggestions.length > 0;
@@ -167,6 +190,7 @@ export default function App() {
 
   async function runAnalyze() {
     setLoading("analyze");
+    setStatusMessage("");
     setErrors([]);
     setWarnings([]);
     try {
@@ -186,6 +210,7 @@ export default function App() {
 
   async function runGenerate() {
     setLoading("generate");
+    setStatusMessage("");
     setErrors([]);
     setWarnings([]);
     setCopiedJson(false);
@@ -219,6 +244,32 @@ export default function App() {
     }
   }
 
+  async function runEnterPractice() {
+    const stageName = stage.trim();
+    if (!stageName) {
+      setErrors(["关卡为空"]);
+      return;
+    }
+
+    setLoading("practice");
+    setStatusMessage("");
+    setErrors([]);
+    setWarnings([]);
+    try {
+      const response = await enterPractice(stageName);
+      setWarnings(response.warnings || []);
+      if (!response.success) {
+        setErrors(response.errors || ["进入演习失败"]);
+        return;
+      }
+      setStatusMessage(`已进入 ${response.result?.stage || stageName} 演习${response.result?.closedProxy ? "，已关闭代理指挥" : ""}`);
+    } catch (err) {
+      setErrors([String(err)]);
+    } finally {
+      setLoading(null);
+    }
+  }
+
   async function runFeedback() {
     if (!result?.scriptHash) {
       setErrors(["当前结果没有可关联的脚本 hash"]);
@@ -227,6 +278,7 @@ export default function App() {
     const killed = Number(feedbackKilled);
     const total = feedbackTotal.trim() ? Number(feedbackTotal) : undefined;
     setLoading("feedback");
+    setStatusMessage("");
     setErrors([]);
     try {
       const response = await recordFeedback({
@@ -240,6 +292,14 @@ export default function App() {
         return;
       }
       setFeedbackStatus(`已记录歼灭率 ${(response.record.ratio * 100).toFixed(1)}%${response.record.usableForLearning ? "，将用于后续候选" : "，仅用于统计"}`);
+      if (result.stageId) {
+        try {
+          const summaryResponse = await getFeedbackSummary(result.stageId);
+          if (summaryResponse.success) setFeedbackSummary(summaryResponse.summary || null);
+        } catch {
+          setFeedbackSummary(null);
+        }
+      }
     } catch (err) {
       setErrors([String(err)]);
     } finally {
@@ -249,6 +309,7 @@ export default function App() {
 
   async function runValidate() {
     setLoading("validate");
+    setStatusMessage("");
     setErrors([]);
     setWarnings([]);
     try {
@@ -275,6 +336,7 @@ export default function App() {
 
   async function runOpenOutputDir() {
     setLoading("open");
+    setStatusMessage("");
     setErrors([]);
     try {
       const response = await openOutputDir(result?.outputDir || outputDir);
@@ -299,6 +361,7 @@ export default function App() {
     if (!file) return;
 
     setLoading("browse");
+    setStatusMessage("");
     setErrors([]);
     setWarnings([]);
     try {
@@ -326,6 +389,7 @@ export default function App() {
     }
 
     setLoading("saveOperators");
+    setStatusMessage("");
     setErrors([]);
     setWarnings([]);
     try {
@@ -563,6 +627,7 @@ export default function App() {
           <h2>操作</h2>
           <button onClick={runAnalyze} disabled={loading !== null}>{loading === "analyze" ? "分析中..." : "分析关卡"}</button>
           <button onClick={runGenerate} disabled={loading !== null}>{loading === "generate" ? "生成中..." : "生成脚本"}</button>
+          <button onClick={runEnterPractice} disabled={loading !== null}>{loading === "practice" ? "进入中..." : "进入演习"}</button>
           <button onClick={runValidate} disabled={loading !== null || !jsonPreview}>{loading === "validate" ? "验证中..." : "验证脚本"}</button>
           <button onClick={runOpenOutputDir} disabled={loading !== null}>{loading === "open" ? "打开中..." : "打开输出目录"}</button>
           <button className="secondary" onClick={copyDebugInfo} disabled={!configInfo}>{copiedDebug ? "已复制调试信息" : "复制调试信息"}</button>
@@ -572,7 +637,8 @@ export default function App() {
           <h2>结果</h2>
           {errors.length > 0 && <div className="alert error">{errors.map((e, i) => <p key={i}>{e}</p>)}</div>}
           {warnings.length > 0 && <div className="alert warning">{warnings.map((w, i) => <p key={i}>{w}</p>)}</div>}
-          {result?.success && errors.length === 0 && <div className="alert success"><p>成功</p></div>}
+          {statusMessage && errors.length === 0 && <div className="alert success"><p>{statusMessage}</p></div>}
+          {!statusMessage && result?.success && errors.length === 0 && <div className="alert success"><p>成功</p></div>}
           {analysisSummary && <pre className="summary">{analysisSummary}</pre>}
           {result?.explain && <pre className="summary">{result.explain}</pre>}
           {result?.validation !== undefined && <pre className="summary">{asJson(result.validation)}</pre>}
@@ -580,6 +646,9 @@ export default function App() {
             <div className="paste-panel">
               <span className="section-label">实战反馈</span>
               <p className="hint">候选评分：{result.candidateScore?.toFixed(2) ?? "-"}；模型：{result.modelVersion || "-"}</p>
+              <p className="hint">
+                已记录 {feedbackSummary?.count ?? 0} 次；可学习 {feedbackSummary?.usableCount ?? 0} 次；满歼 {feedbackSummary?.fullClearCount ?? 0} 次
+              </p>
               <label>
                 <span>击杀数</span>
                 <input value={feedbackKilled} onChange={e => setFeedbackKilled(e.target.value)} inputMode="numeric" />

@@ -1,4 +1,5 @@
 import * as path from "path";
+import { spawn } from "child_process";
 import type { FastifyInstance } from "fastify";
 import {
   analyzeStage,
@@ -18,7 +19,7 @@ import { writeGuiLog } from "../runtime/logger";
 import { getRuntimePaths } from "../runtime/paths";
 import { packageVersion } from "../runtime/packageInfo";
 import { FeedbackStore, hashOperatorBox } from "../feedback/FeedbackStore";
-import type { AnalyzeRequest, FeedbackRequest, GenerateRequest, OpenOutputDirRequest, SaveOperatorsRequest, ValidateRequest } from "./types";
+import type { AnalyzeRequest, EnterPracticeRequest, FeedbackRequest, GenerateRequest, OpenOutputDirRequest, SaveOperatorsRequest, ValidateRequest } from "./types";
 
 export interface GuiRouteOptions {
   openDir?: (outputDir: string) => Promise<void>;
@@ -31,6 +32,67 @@ function errorMessage(err: unknown): string {
 
 function fail(err: unknown, warnings: string[] = []): { success: false; warnings: string[]; errors: string[] } {
   return { success: false, warnings, errors: [errorMessage(err)] };
+}
+
+function enterPracticeScriptPath(): string {
+  return path.resolve(__dirname, "..", "..", "scripts", "enter-practice.ps1");
+}
+
+function runEnterPracticeScript(stage: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("powershell.exe", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      enterPracticeScriptPath(),
+      "-Stage",
+      stage,
+    ], {
+      cwd: path.resolve(__dirname, "..", ".."),
+      windowsHide: true,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(() => reject(new Error("enter practice timed out after 180 seconds")));
+    }, 180_000);
+
+    function finish(done: () => void): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      done();
+    }
+
+    child.stdout.on("data", chunk => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", chunk => {
+      stderr += String(chunk);
+    });
+    child.on("error", err => finish(() => reject(err)));
+    child.on("close", code => finish(() => {
+      if (code !== 0) {
+        reject(new Error((stderr || stdout || `enter practice exited with code ${code}`).trim()));
+        return;
+      }
+
+      const jsonLine = stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+      if (!jsonLine) {
+        reject(new Error("enter practice returned empty output"));
+        return;
+      }
+      try {
+        resolve(JSON.parse(jsonLine));
+      } catch (err) {
+        reject(new Error(`enter practice returned invalid JSON: ${errorMessage(err)}`));
+      }
+    }));
+  });
 }
 
 export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteOptions = {}): Promise<void> {
@@ -132,6 +194,30 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
       writeGuiLog("generate_failed", {
         stage: body.stage,
         engine: "v2",
+        errorCount: 1,
+        error: errorMessage(err),
+      });
+      reply.code(400);
+      return fail(err);
+    }
+  });
+
+  app.post<{ Body: EnterPracticeRequest }>("/api/enter-practice", async (request, reply) => {
+    const body = request.body || {};
+    try {
+      if (!body.stage?.trim()) {
+        reply.code(400);
+        return { success: false, warnings: [], errors: ["stage is required"] };
+      }
+
+      const result = await runEnterPracticeScript(body.stage.trim());
+      writeGuiLog("enter_practice_success", {
+        stage: body.stage.trim(),
+      });
+      return { success: true, warnings: [], errors: [], result };
+    } catch (err) {
+      writeGuiLog("enter_practice_failed", {
+        stage: body.stage,
         errorCount: 1,
         error: errorMessage(err),
       });

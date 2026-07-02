@@ -73,6 +73,16 @@ export interface OpenOutputDirResponse extends ApiBase {
   outputDir?: string;
 }
 
+export interface EnterPracticeResponse extends ApiBase {
+  result?: {
+    ok?: boolean;
+    stage?: string;
+    navigationTaskId?: number;
+    closedProxy?: boolean;
+    practiceCallId?: number;
+  };
+}
+
 export interface GenerateRequest {
   stage: string;
   operatorsJson?: string;
@@ -90,6 +100,16 @@ export interface FeedbackResponse extends ApiBase {
     usableForLearning: boolean;
     operatorBoxChanged: boolean;
   };
+}
+
+export interface FeedbackSummary {
+  count: number;
+  usableCount: number;
+  fullClearCount: number;
+}
+
+export interface FeedbackSummaryResponse extends ApiBase {
+  summary?: FeedbackSummary;
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
@@ -128,6 +148,10 @@ export async function openOutputDir(outputDir: string): Promise<OpenOutputDirRes
   return postJson<OpenOutputDirResponse>("/api/open-output-dir", { outputDir });
 }
 
+export async function enterPractice(stage: string): Promise<EnterPracticeResponse> {
+  return postJson<EnterPracticeResponse>("/api/enter-practice", { stage });
+}
+
 export async function saveOperatorsJson(operatorsJson: string): Promise<SaveOperatorsResponse> {
   return postJson<SaveOperatorsResponse>("/api/operators/save", { operatorsJson });
 }
@@ -139,4 +163,10 @@ export async function recordFeedback(body: {
   notes?: string;
 }): Promise<FeedbackResponse> {
   return postJson<FeedbackResponse>("/api/feedback", body);
+}
+
+export async function getFeedbackSummary(stage?: string): Promise<FeedbackSummaryResponse> {
+  const params = stage ? `?${new URLSearchParams({ stage }).toString()}` : "";
+  const res = await fetch(`/api/feedback/summary${params}`);
+  return res.json() as Promise<FeedbackSummaryResponse>;
 }

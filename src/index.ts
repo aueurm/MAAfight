@@ -18,6 +18,9 @@ import { getCombatModelInfo } from "./engine/CombatModel";
 import { computeStageContentHash } from "./engine/EncounterContext";
 import { inferStageIdFromDataPath, getDisplayStageName } from "./core/stageDisplay";
 import { isSpawnActionType, normalizeBuildableType } from "./shared/prtsMap";
+import { RunResultStore } from "./runner/RunResultStore";
+import { connectMaaEnvironment, probeMaaEnvironment } from "./runner/probe";
+import { recordCallbackRun, recordDryRun, recordScreenObservedRun } from "./runner/run";
 import type { BattleScript, PRTSLevelData, StageIndexEntry } from "./types";
 
 const CACHE_DIR = getRuntimePaths().cacheLevelsDir;
@@ -44,6 +47,14 @@ interface Args {
   killed?: number;
   total?: number;
   notes?: string;
+  mode?: string;
+  allowSanity?: boolean;
+  callbackLog?: string;
+  maa?: string;
+  adb?: string;
+  address?: string;
+  connectConfig?: string;
+  debugDir?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -51,9 +62,9 @@ function parseArgs(argv: string[]): Args {
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
-    if (["generate", "list", "analyze", "validate", "info", "init", "operators", "feedback", "gui"].includes(arg)) {
+    if (["generate", "list", "analyze", "validate", "info", "init", "operators", "feedback", "run", "gui"].includes(arg)) {
       args.command = arg;
-      if ((arg === "operators" || arg === "feedback") && argv[i + 1] && !argv[i + 1].startsWith("-")) {
+      if ((arg === "operators" || arg === "feedback" || arg === "run") && argv[i + 1] && !argv[i + 1].startsWith("-")) {
         args.subcommand = argv[++i];
       }
     } else if (arg === "--stage" || arg === "-s") {
@@ -94,6 +105,22 @@ function parseArgs(argv: string[]): Args {
       args.total = Number.parseInt(argv[++i], 10);
     } else if (arg === "--notes") {
       args.notes = argv[++i];
+    } else if (arg === "--mode") {
+      args.mode = argv[++i];
+    } else if (arg === "--allow-sanity") {
+      args.allowSanity = true;
+    } else if (arg === "--callback-log") {
+      args.callbackLog = argv[++i];
+    } else if (arg === "--maa") {
+      args.maa = argv[++i];
+    } else if (arg === "--adb") {
+      args.adb = argv[++i];
+    } else if (arg === "--address") {
+      args.address = argv[++i];
+    } else if (arg === "--connect-config") {
+      args.connectConfig = argv[++i];
+    } else if (arg === "--debug-dir") {
+      args.debugDir = argv[++i];
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -103,7 +130,7 @@ function parseArgs(argv: string[]): Args {
 
   if (!args.command) {
     console.error("Usage: maafight <command> [options]");
-    console.error("Commands: generate, list, analyze, validate, info, init, operators, feedback, gui");
+    console.error("Commands: generate, list, analyze, validate, info, init, operators, feedback, run, gui");
     console.error("Try: maafight --help");
     process.exit(1);
   }
@@ -207,6 +234,7 @@ Commands:
   init       Initialize local player operator database
   operators Manage local player operator database
   feedback  Record or summarize real battle kill results
+  run       Probe MAA, import callback results, or record a dry-run RunResult
   generate   Generate copilot battle script for a stage
   gui        Start local Web GUI preview
   list       List available stages
@@ -223,7 +251,7 @@ Options:
   --search <query>    Search stages by keyword
   --category, -c <cat> Filter by category (main, hard, campaign, weekly, crisis, activity)
   --limit <n>         Max results for list command (default: 50)
-  --file, -f <path>   Input script file for validate command
+  --file, -f <path>   Input script file for validate/run commands
   --operators <path>   MAA operator export JSON for personalized script
   --operators-stdin    Read MAA operator export JSON from stdin for init
   --data, -d <path>    Use local PRTS.Map JSON file instead of index lookup
@@ -233,6 +261,14 @@ Options:
   --killed <n>         Killed enemies for feedback record
   --total <n>          Total enemies for feedback record (optional when known)
   --notes <text>       Optional feedback note
+  --mode <mode>        run mode: manual-practice (default) or manual-normal
+  --allow-sanity       Required for manual-normal dry-run records
+  --callback-log <path> Import MAA callback JSON/JSONL instead of recording dry-run
+  --maa <path>          MAA directory or executable for run probe
+  --adb <path>          adb executable for run connect
+  --address <addr>      adb device serial/address for run connect
+  --connect-config <c>  MAA connection config for run connect / observe-screen
+  --debug-dir <path>    Debug output directory for run observe-screen
   --help, -h           Show this help
 
 Examples:
@@ -243,6 +279,13 @@ Examples:
   maafight generate --stage a001_01
   maafight feedback record --file script.json --killed 35 --total 42
   maafight feedback summary --stage GT-1
+  maafight run --file script.json --mode manual-practice
+  maafight run probe --maa C:\\Tools\\MAA
+  maafight run connect --maa C:\\Tools\\MAA --address 127.0.0.1:16384
+  maafight run observe-screen --file script.json --maa C:\\Tools\\MAA --address 127.0.0.1:16384
+  maafight run --file script.json --callback-log maa-callback.jsonl
+  maafight run summary --stage GT-1
+  maafight run --file script.json --mode manual-normal --allow-sanity
   maafight generate --data ./level_OF-3.json --output script.json --pretty
   maafight list --search CE
   maafight list --category weekly
@@ -668,42 +711,109 @@ function cmdFeedback(args: Args): void {
   console.log(JSON.stringify(record, null, 2));
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+function cmdRun(args: Args): void {
+  if (args.subcommand === "probe") {
+    console.log(JSON.stringify(probeMaaEnvironment({ maaPath: args.maa }), null, args.pretty ? 2 : 0));
+    return;
+  }
+  if (args.subcommand === "connect") {
+    console.log(JSON.stringify(connectMaaEnvironment({
+      maaPath: args.maa,
+      adbPath: args.adb,
+      address: args.address,
+      connectConfig: args.connectConfig,
+    }), null, args.pretty ? 2 : 0));
+    return;
+  }
+  if (args.subcommand === "observe-screen") {
+    if (!args.file) throw new Error("--file <script.json> is required for run observe-screen");
+    const { result, debugScreenshotPath, debugSamplesPath } = recordScreenObservedRun({
+      filePath: args.file,
+      mode: args.mode,
+      allowSanity: args.allowSanity,
+      stateDir: getRuntimePaths().homeDir,
+      maaPath: args.maa,
+      adbPath: args.adb,
+      address: args.address,
+      connectConfig: args.connectConfig,
+      debugDir: args.debugDir,
+    });
+    console.error(`Screen observer debug samples: ${debugSamplesPath}`);
+    if (debugScreenshotPath) console.error(`Screen observer debug screenshot: ${debugScreenshotPath}`);
+    console.log(JSON.stringify(result, null, args.pretty ? 2 : 0));
+    return;
+  }
+  if (args.subcommand === "summary") {
+    const store = new RunResultStore(getRuntimePaths().homeDir);
+    console.log(JSON.stringify(store.summary(args.stage), null, args.pretty ? 2 : 0));
+    return;
+  }
+  if (args.subcommand) throw new Error("Usage: maafight run [summary] [options]");
+  if (!args.file) throw new Error("--file <script.json> is required for run");
+  if (args.callbackLog) {
+    const { result } = recordCallbackRun({
+      filePath: args.file,
+      callbackLogPath: args.callbackLog,
+      mode: args.mode,
+      allowSanity: args.allowSanity,
+      stateDir: getRuntimePaths().homeDir,
+    });
+    console.error("MAA callback import only; no MAA, ADB, or emulator execution was started.");
+    console.log(JSON.stringify(result, null, args.pretty ? 2 : 0));
+    return;
+  }
+  const { result } = recordDryRun({
+    filePath: args.file,
+    mode: args.mode,
+    allowSanity: args.allowSanity,
+    stateDir: getRuntimePaths().homeDir,
+  });
+  console.error("MAA execution is not implemented yet; this dry-run skeleton only validated and recorded the script.");
+  console.log(JSON.stringify(result, null, args.pretty ? 2 : 0));
+}
 
+export async function runCli(argv: string[]): Promise<void> {
+  const args = parseArgs(argv);
+  switch (args.command) {
+    case "init":
+      await cmdInit(args);
+      break;
+    case "operators":
+      cmdOperators(args);
+      break;
+    case "feedback":
+      cmdFeedback(args);
+      break;
+    case "run":
+      cmdRun(args);
+      break;
+    case "generate":
+      await cmdGenerate(args);
+      break;
+    case "list":
+      cmdList(args);
+      break;
+    case "analyze":
+      await cmdAnalyze(args);
+      break;
+    case "validate":
+      cmdValidate(args);
+      break;
+    case "info":
+      await cmdInfo(args);
+      break;
+    case "gui":
+      await cmdGui();
+      break;
+    default:
+      printHelp();
+      process.exit(1);
+  }
+}
+
+async function main(): Promise<void> {
   try {
-    switch (args.command) {
-      case "init":
-        await cmdInit(args);
-        break;
-      case "operators":
-        cmdOperators(args);
-        break;
-      case "feedback":
-        cmdFeedback(args);
-        break;
-      case "generate":
-        await cmdGenerate(args);
-        break;
-      case "list":
-        cmdList(args);
-        break;
-      case "analyze":
-        await cmdAnalyze(args);
-        break;
-      case "validate":
-        cmdValidate(args);
-        break;
-      case "info":
-        await cmdInfo(args);
-        break;
-      case "gui":
-        await cmdGui();
-        break;
-      default:
-        printHelp();
-        process.exit(1);
-    }
+    await runCli(process.argv.slice(2));
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Error: ${message}`);
