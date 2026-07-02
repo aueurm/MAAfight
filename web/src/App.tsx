@@ -699,7 +699,7 @@ export default function App() {
           <h2>JSON 预览</h2>
           <button onClick={copyJson} disabled={!jsonPreview}>{copiedJson ? "已复制" : "复制 JSON"}</button>
         </div>
-        <textarea value={jsonPreview} onChange={e => setJsonPreview(e.target.value)} placeholder="生成后显示 JSON" />
+        <textarea value={jsonPreview} readOnly placeholder="生成后显示 JSON" />
       </section>
     </main>
   );

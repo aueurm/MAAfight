@@ -62,7 +62,7 @@ maafight run --file GT-1.json --mode manual-normal --allow-sanity
 - `GET /api/feedback/summary`
 - `POST /api/enter-practice`
 
-`POST /api/enter-practice` 调用本地 `scripts/enter-practice.ps1`：用 MAA `Fight times=0` 导航到关卡详情页，截图确认后关闭已亮起的代理指挥，再点击演习入口。
+`POST /api/enter-practice` 调用本地 `scripts/enter-practice.ps1`：用 MAA `Fight times=0` 导航到关卡详情页，截图确认后关闭已亮起的代理指挥，再点击演习入口；传入脚本路径时继续执行 MAA `Copilot` 作业，读取结算星级并把结果写入反馈。
 
 后续执行评估接口：
 

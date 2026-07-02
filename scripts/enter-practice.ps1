@@ -52,6 +52,30 @@ function Get-MaaGuiConfig {
   return $raw.Configurations.$current
 }
 
+function Test-AsciiPath {
+  param([string]$PathValue)
+
+  foreach ($ch in $PathValue.ToCharArray()) {
+    if ([int][char]$ch -gt 127) { return $false }
+  }
+  return $true
+}
+
+function Resolve-CopilotFilePath {
+  param([string]$InputPath)
+
+  $resolved = (Resolve-Path -LiteralPath $InputPath).Path
+  if (Test-AsciiPath $resolved) { return $resolved }
+
+  # ponytail: MaaCore receives this JSON through ANSI P/Invoke here; stage non-ASCII paths in an ASCII cache.
+  $safeDir = Join-Path (Join-Path (Resolve-Path ".").Path ".maafight") "copilot-run"
+  New-Item -ItemType Directory -Force -Path $safeDir | Out-Null
+  $hash = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash.ToLowerInvariant()
+  $safePath = Join-Path $safeDir "${hash}.json"
+  Copy-Item -LiteralPath $resolved -Destination $safePath -Force
+  return $safePath
+}
+
 $width = 1280
 $height = 720
 $bytesPerPixel = 3
@@ -157,9 +181,25 @@ function Invoke-SelfTest {
   Set-TestWhiteRegion $whiteProxy 1050 578 1084 606
   if (-not (Test-ProxyEnabled $whiteProxy)) { throw "white proxy ROI should be on" }
 
+  $whiteProxyOutline = New-Object byte[] $screenBytes
+  Set-TestWhiteRegion $whiteProxyOutline 1058 584 1078 586
+  Set-TestWhiteRegion $whiteProxyOutline 1058 602 1078 604
+  Set-TestWhiteRegion $whiteProxyOutline 1058 584 1060 604
+  Set-TestWhiteRegion $whiteProxyOutline 1076 584 1078 604
+  if (Test-ProxyEnabled $whiteProxyOutline) { throw "white proxy outline should be off" }
+
   $whitePractice = New-Object byte[] $screenBytes
   Set-TestWhiteRegion $whitePractice 835 625 1035 690
   if (-not (Test-PracticeReady $whitePractice)) { throw "white practice ROI should be ready" }
+
+  $nonAsciiDir = Join-Path (Join-Path (Resolve-Path ".").Path ".maafight") "selftest-nonascii"
+  New-Item -ItemType Directory -Force -Path $nonAsciiDir | Out-Null
+  $nonAsciiName = "$([char]0x4f5c)$([char]0x4e1a).json"
+  $nonAsciiPath = Join-Path $nonAsciiDir $nonAsciiName
+  Set-Content -LiteralPath $nonAsciiPath -Value "{}" -Encoding UTF8
+  $safeCopilotPath = Resolve-CopilotFilePath $nonAsciiPath
+  if (-not (Test-AsciiPath $safeCopilotPath)) { throw "safe copilot path should be ASCII" }
+  if (-not (Test-Path -LiteralPath $safeCopilotPath)) { throw "safe copilot file should exist" }
 
   @{ ok = $true; selfTest = $true } | ConvertTo-Json -Compress
 }
@@ -412,10 +452,12 @@ try {
   $practiceCallId = Invoke-Click $handle 934 658
   $copilotTaskId = $null
   $resolvedScriptPath = $null
+  $copilotScriptPath = $null
   if ($ScriptPath.Trim()) {
     Start-Sleep -Milliseconds 1500
     $resolvedScriptPath = (Resolve-Path -LiteralPath $ScriptPath.Trim()).Path
-    $copilotTaskId = Invoke-Copilot $handle $resolvedScriptPath
+    $copilotScriptPath = Resolve-CopilotFilePath $resolvedScriptPath
+    $copilotTaskId = Invoke-Copilot $handle $copilotScriptPath
   }
   @{
     ok = $true
@@ -427,6 +469,7 @@ try {
     practiceCallId = $practiceCallId
     copilotTaskId = $copilotTaskId
     scriptPath = $resolvedScriptPath
+    copilotScriptPath = $copilotScriptPath
   } | ConvertTo-Json -Compress
 } finally {
   [MaaCoreEnterPractice]::AsstDestroy($handle)
