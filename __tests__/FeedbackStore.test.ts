@@ -85,6 +85,45 @@ describe("FeedbackStore", () => {
     expect(store.successfulGeneration("stage-2", "old-box")).toBeUndefined();
   });
 
+  it("records practice test results as learnable feedback", () => {
+    store.appendGeneration({
+      schemaVersion: 2,
+      generationId: "generation-practice",
+      scriptHash: "hash-practice",
+      stageId: "stage-practice",
+      stageName: "TEST-PRACTICE",
+      operatorBoxHash: "default-loadout",
+      engineVersion: "v2-skill-v1",
+      modelVersion: "model",
+      combatDataVersion: "combat",
+      candidateScore: 80,
+      scoreBreakdown: { combat: 80 },
+      combatCoverage: 1,
+      enemyTotal: 10,
+      outputPath: "",
+      script: script(),
+      createdAt: "2026-06-20T00:00:00.000Z",
+    });
+
+    expect(store.recordPracticeTestResult({
+      scriptHash: "hash-practice",
+      testResult: "进入失败",
+      currentOperatorBoxHash: "default-loadout",
+    })).toBeNull();
+    expect(store.recordPracticeTestResult({
+      scriptHash: "hash-practice",
+      testResult: "二星",
+      currentOperatorBoxHash: "default-loadout",
+    })?.ratio).toBe(0.7);
+    expect(store.recordPracticeTestResult({
+      scriptHash: "hash-practice",
+      testResult: "三星",
+      currentOperatorBoxHash: "default-loadout",
+    })?.ratio).toBe(1);
+    expect(store.excludedHashes("stage-practice", "default-loadout")).toContain("hash-practice");
+    expect(store.successfulGeneration("stage-practice", "default-loadout")?.generationId).toBe("generation-practice");
+  });
+
   it("includes cost in player hashes and isolates successful reuse by revision", () => {
     const first = new Map<string, PlayerOperator>([["芬", {
       id: "fen", name: "芬", rarity: 3, own: true, elite: 2, level: 55, potential: 6, cost: 9,

@@ -1,6 +1,6 @@
 # MAAfight v2
 
-MAAfight 是一个本地 MAA copilot JSON v3 草稿生成器。默认用 GUI：选关卡，生成脚本，验证脚本，然后调用 MAA 进入演习。
+MAAfight 是一个本地 MAA copilot JSON v3 草稿生成器。默认用 GUI：选关卡，生成脚本，验证脚本，然后调用 MAA 进入演习并执行作业。
 
 它不会把静态评分当作通关率，也不会默认开始普通理智作战。
 
@@ -62,6 +62,8 @@ GT-1
 - 复用 MAA 的关卡导航进入目标关卡详情页。
 - 如果代理指挥开启，就先取消代理指挥。
 - 点击 `演习`，进入编队页。
+- 使用刚生成的 JSON 文件执行 MAA `Copilot` 作业。
+- 作业结束后读取结算星级，并把结果写入可学习反馈。
 
 ## MAA 和模拟器要求
 
@@ -84,7 +86,7 @@ node dist/index.js run connect --maa D:\app\MAA --pretty
 ## 安全边界
 
 - 生成链路只生成 MAA copilot JSON，不执行 MAA。
-- GUI 的进入演习流程只点击演习入口，不点击普通 `开始行动`。
+- GUI 的演习流程只从演习入口启动作业，不点击普通理智作战入口。
 - `candidateScore` 只用于候选排序，不是通关率。
 - 歼灭率只来自人工反馈或执行观察结果。
 

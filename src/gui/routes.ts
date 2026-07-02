@@ -18,9 +18,11 @@ import {
   saveOperatorConfig,
 } from "../player/PlayerConfig";
 import { probeMaaEnvironment } from "../runner/probe";
+import { observeMaaScreen } from "../runner/screenObserver";
 import { writeGuiLog } from "../runtime/logger";
 import { getRuntimePaths } from "../runtime/paths";
 import { packageVersion } from "../runtime/packageInfo";
+import { normalizePracticeTestResult } from "../shared/practiceResult";
 import { FeedbackStore, hashOperatorBox } from "../feedback/FeedbackStore";
 import type { AnalyzeRequest, EnterPracticeRequest, FeedbackRequest, GenerateRequest, OpenOutputDirRequest, SaveOperatorsRequest, ValidateRequest } from "./types";
 
@@ -41,7 +43,7 @@ function enterPracticeScriptPath(): string {
   return path.resolve(__dirname, "..", "..", "scripts", "enter-practice.ps1");
 }
 
-function runEnterPracticeScript(stage: string, maaDir?: string): Promise<unknown> {
+function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: string): Promise<unknown> {
   const args = [
     "-NoProfile",
     "-ExecutionPolicy",
@@ -52,6 +54,7 @@ function runEnterPracticeScript(stage: string, maaDir?: string): Promise<unknown
     stage,
   ];
   if (maaDir) args.push("-MaaDir", maaDir);
+  if (scriptPath) args.push("-ScriptPath", scriptPath);
 
   return new Promise((resolve, reject) => {
     const child = spawn("powershell.exe", args, {
@@ -64,8 +67,8 @@ function runEnterPracticeScript(stage: string, maaDir?: string): Promise<unknown
     let settled = false;
     const timer = setTimeout(() => {
       child.kill();
-      finish(() => reject(new Error("enter practice timed out after 360 seconds")));
-    }, 360_000);
+      finish(() => reject(new Error("enter practice timed out after 900 seconds")));
+    }, 900_000);
 
     function finish(done: () => void): void {
       if (settled) return;
@@ -230,12 +233,52 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
         return { success: false, warnings: maaProbe?.warnings || [], errors: ["未找到 MAA，请填写 MAA 目录、MAA.exe 或 MaaCore.dll 路径"] };
       }
 
-      const result = await runEnterPracticeScript(body.stage.trim(), maaProbe?.maaInstallDir || undefined);
+      const warnings: string[] = [];
+      const scriptPath = body.scriptPath?.trim();
+      if (scriptPath && !path.isAbsolute(scriptPath)) {
+        reply.code(400);
+        return { success: false, warnings, errors: ["scriptPath must be absolute"] };
+      }
+
+      const scriptResult = await runEnterPracticeScript(body.stage.trim(), maaProbe?.maaInstallDir || undefined, scriptPath || undefined);
+      const result = scriptResult && typeof scriptResult === "object" ? scriptResult as Record<string, unknown> : {};
+      if (result.copilotTaskId) {
+        const observedMaaPath = typeof result.maaDir === "string" ? result.maaDir : maaProbe?.maaInstallDir || undefined;
+        const observed = observeMaaScreen({
+          maaPath: observedMaaPath,
+          debugDir: path.join(cwd, ".maafight", "screen-observer", `gui-${Date.now()}`),
+        });
+        result.outcome = observed.outcome;
+        result.stars = observed.stars;
+        result.debugScreenshotPath = observed.debugScreenshotPath;
+        warnings.push(...observed.warnings);
+      }
+      const testResult = normalizePracticeTestResult(result);
+      if (testResult) result.testResult = testResult;
+      if (body.scriptHash?.trim() && testResult) {
+        try {
+          const configured = loadConfiguredOperatorBox(cwd);
+          const feedbackRecord = new FeedbackStore(cwd).recordPracticeTestResult({
+            scriptHash: body.scriptHash.trim(),
+            testResult,
+            currentOperatorBoxHash: hashOperatorBox(configured?.box.playerMap),
+          });
+          if (feedbackRecord) {
+            result.feedbackRecord = {
+              ratio: feedbackRecord.ratio,
+              usableForLearning: feedbackRecord.usableForLearning,
+              operatorBoxChanged: feedbackRecord.operatorBoxChanged,
+            };
+          }
+        } catch (err) {
+          warnings.push(`测试结果未写入训练材料：${errorMessage(err)}`);
+        }
+      }
       writeGuiLog("enter_practice_success", {
         stage: body.stage.trim(),
         maaPath: maaProbe?.maaInstallDir,
       });
-      return { success: true, warnings: [], errors: [], result };
+      return { success: true, warnings, errors: [], result };
     } catch (err) {
       writeGuiLog("enter_practice_failed", {
         stage: body.stage,

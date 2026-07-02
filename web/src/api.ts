@@ -1,5 +1,7 @@
 export type RequirementsMode = "none" | "player";
 
+export type PracticeTestResult = "进入失败" | "失败" | "二星" | "三星";
+
 export interface ApiBase {
   success: boolean;
   warnings?: string[];
@@ -79,10 +81,22 @@ export interface EnterPracticeResponse extends ApiBase {
   result?: {
     ok?: boolean;
     stage?: string;
+    maaDir?: string;
     startupTaskId?: number;
     navigationTaskId?: number;
     closedProxy?: boolean;
     practiceCallId?: number;
+    copilotTaskId?: number;
+    scriptPath?: string;
+    debugScreenshotPath?: string;
+    outcome?: string;
+    stars?: number;
+    testResult?: PracticeTestResult;
+    feedbackRecord?: {
+      ratio: number;
+      usableForLearning: boolean;
+      operatorBoxChanged: boolean;
+    };
   };
 }
 
@@ -151,8 +165,8 @@ export async function openOutputDir(outputDir: string): Promise<OpenOutputDirRes
   return postJson<OpenOutputDirResponse>("/api/open-output-dir", { outputDir });
 }
 
-export async function enterPractice(stage: string, maaPath?: string): Promise<EnterPracticeResponse> {
-  return postJson<EnterPracticeResponse>("/api/enter-practice", { stage, maaPath });
+export async function enterPractice(stage: string, maaPath?: string, scriptHash?: string, scriptPath?: string): Promise<EnterPracticeResponse> {
+  return postJson<EnterPracticeResponse>("/api/enter-practice", { stage, maaPath, scriptHash, scriptPath });
 }
 
 export async function saveOperatorsJson(operatorsJson: string): Promise<SaveOperatorsResponse> {

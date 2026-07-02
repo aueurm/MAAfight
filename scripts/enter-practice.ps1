@@ -4,9 +4,11 @@ param(
   [string]$AdbPath = "",
   [string]$Address = "",
   [string]$ConnectConfig = "",
+  [string]$ScriptPath = "",
   [string]$ClientType = "Official",
   [int]$StartupTimeoutSec = 180,
   [int]$NavigationTimeoutSec = 120,
+  [int]$ExecutionTimeoutSec = 600,
   [switch]$SelfTest
 )
 
@@ -175,6 +177,7 @@ if (-not $ConnectConfig.Trim() -and $maaConfig) { $ConnectConfig = [string]$maaC
 if (-not $ConnectConfig.Trim()) { $ConnectConfig = "General" }
 
 if (-not $Stage.Trim()) { throw "Stage is required" }
+if ($ScriptPath.Trim() -and -not (Test-Path -LiteralPath $ScriptPath.Trim())) { throw "script file not found: $ScriptPath" }
 if (-not (Test-Path -LiteralPath (Join-Path $MaaDir "MaaCore.dll"))) { throw "MaaCore.dll not found in $MaaDir" }
 if (-not $AdbPath.Trim()) { throw "adb path is required. Configure MAA connection settings or pass -AdbPath." }
 if (-not $Address.Trim()) { throw "adb address is required. Configure MAA connection settings or pass -Address." }
@@ -351,6 +354,39 @@ function Invoke-FightNavigation {
   return $taskId
 }
 
+function Get-CopilotFormationIndex {
+  if (-not $maaConfig) { return 4 }
+  try {
+    $value = [int]([string]$maaConfig.'Copilot.SelectFormation')
+    if ($value -gt 0) { return $value }
+  } catch {
+  }
+  return 4
+}
+
+function Invoke-Copilot {
+  param([IntPtr]$Handle, [string]$FilePath)
+
+  $taskParams = @{
+    filename = (Resolve-Path -LiteralPath $FilePath).Path
+    formation = $true
+    support_unit_usage = 0
+    add_trust = $false
+    ignore_requirements = $true
+    loop_times = 1
+    use_sanity_potion = $false
+    formation_index = Get-CopilotFormationIndex
+  } | ConvertTo-Json -Compress
+
+  $taskId = [MaaCoreEnterPractice]::AsstAppendTask($Handle, "Copilot", $taskParams)
+  if ($taskId -le 0) { throw "AsstAppendTask Copilot failed for $FilePath" }
+  if ([MaaCoreEnterPractice]::AsstStart($Handle) -eq 0) { throw "AsstStart Copilot failed" }
+
+  Wait-MaaTask $Handle $ExecutionTimeoutSec "Copilot execution"
+
+  return $taskId
+}
+
 $startupHandle = New-ConnectedMaaHandle
 try {
   $startupTaskId = Invoke-Startup $startupHandle
@@ -374,13 +410,23 @@ try {
 
   $bgr = Wait-PracticeReady $handle $bgr
   $practiceCallId = Invoke-Click $handle 934 658
+  $copilotTaskId = $null
+  $resolvedScriptPath = $null
+  if ($ScriptPath.Trim()) {
+    Start-Sleep -Milliseconds 1500
+    $resolvedScriptPath = (Resolve-Path -LiteralPath $ScriptPath.Trim()).Path
+    $copilotTaskId = Invoke-Copilot $handle $resolvedScriptPath
+  }
   @{
     ok = $true
     stage = $Stage.Trim()
+    maaDir = $MaaDir
     startupTaskId = $startupTaskId
     navigationTaskId = $navigationTaskId
     closedProxy = $closedProxy
     practiceCallId = $practiceCallId
+    copilotTaskId = $copilotTaskId
+    scriptPath = $resolvedScriptPath
   } | ConvertTo-Json -Compress
 } finally {
   [MaaCoreEnterPractice]::AsstDestroy($handle)

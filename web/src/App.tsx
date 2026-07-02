@@ -15,6 +15,7 @@ import {
   type RequirementsMode,
   type StageSuggestion,
 } from "./api";
+import { normalizePracticeTestResult, type PracticeTestResult } from "../../src/shared/practiceResult";
 
 type ActionName = "generate" | "practice" | "open" | "browse" | "saveOperators" | "feedback" | null;
 
@@ -78,6 +79,7 @@ export default function App() {
   const [errors, setErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [statusMessage, setStatusMessage] = useState("");
+  const [practiceTestResult, setPracticeTestResult] = useState<PracticeTestResult | "">("");
   const [loading, setLoading] = useState<ActionName>(null);
   const [copiedJson, setCopiedJson] = useState(false);
   const [copiedDebug, setCopiedDebug] = useState(false);
@@ -192,6 +194,7 @@ export default function App() {
   async function runGenerate() {
     setLoading("generate");
     setStatusMessage("");
+    setPracticeTestResult("");
     setErrors([]);
     setWarnings([]);
     setCopiedJson(false);
@@ -235,18 +238,26 @@ export default function App() {
       setErrors(["请先生成脚本"]);
       return;
     }
+    if (!result?.outputPath) {
+      setErrors(["请先生成脚本文件"]);
+      return;
+    }
 
     setLoading("practice");
     setStatusMessage("");
+    setPracticeTestResult("");
     setErrors([]);
     setWarnings([]);
+    let validationPassed = false;
     try {
       const validationResponse = await validateScript(jsonPreview);
       if (!validationResponse.success) {
+        setPracticeTestResult("失败");
         setWarnings(validationResponse.warnings || []);
         setErrors(validationResponse.errors || ["验证失败"]);
         return;
       }
+      validationPassed = true;
       setResult(prev => ({
         ...(prev || { success: true }),
         success: true,
@@ -256,14 +267,29 @@ export default function App() {
         errors: [],
       }));
 
-      const response = await enterPractice(stageName, maaPath.trim() || undefined);
+      const response = await enterPractice(stageName, maaPath.trim() || undefined, result?.scriptHash, result.outputPath);
       setWarnings([...(validationResponse.warnings || []), ...(response.warnings || [])]);
       if (!response.success) {
+        setPracticeTestResult("进入失败");
         setErrors(response.errors || ["进入演习失败"]);
         return;
       }
-      setStatusMessage(`脚本验证通过，已进入 ${response.result?.stage || stageName} 演习${response.result?.closedProxy ? "，已关闭代理指挥" : ""}`);
+      const testResult = normalizePracticeTestResult(response.result);
+      setPracticeTestResult(testResult);
+      setStatusMessage(testResult ? `测试结果：${testResult}` : `脚本验证通过，已执行 ${response.result?.stage || stageName} 演习作业${response.result?.closedProxy ? "，已关闭代理指挥" : ""}`);
+      if (response.result?.feedbackRecord) {
+        setFeedbackStatus(response.result.feedbackRecord.usableForLearning ? "测试结果已加入可学习反馈" : "测试结果已记录，仅用于统计");
+        if (result?.stageId) {
+          try {
+            const summaryResponse = await getFeedbackSummary(result.stageId);
+            if (summaryResponse.success) setFeedbackSummary(summaryResponse.summary || null);
+          } catch {
+            setFeedbackSummary(null);
+          }
+        }
+      }
     } catch (err) {
+      setPracticeTestResult(validationPassed ? "进入失败" : "失败");
       setErrors([String(err)]);
     } finally {
       setLoading(null);
@@ -630,8 +656,13 @@ export default function App() {
           <h2>结果</h2>
           {errors.length > 0 && <div className="alert error">{errors.map((e, i) => <p key={i}>{e}</p>)}</div>}
           {warnings.length > 0 && <div className="alert warning">{warnings.map((w, i) => <p key={i}>{w}</p>)}</div>}
-          {statusMessage && errors.length === 0 && <div className="alert success"><p>{statusMessage}</p></div>}
-          {!statusMessage && result?.success && errors.length === 0 && <div className="alert success"><p>成功</p></div>}
+          {practiceTestResult && (
+            <div className={`alert ${practiceTestResult === "三星" ? "success" : practiceTestResult === "二星" ? "warning" : "error"}`}>
+              <p>测试结果：{practiceTestResult}</p>
+            </div>
+          )}
+          {statusMessage && errors.length === 0 && !practiceTestResult && <div className="alert success"><p>{statusMessage}</p></div>}
+          {!statusMessage && !practiceTestResult && result?.success && errors.length === 0 && <div className="alert success"><p>成功</p></div>}
           {analysisSummary && <pre className="summary">{analysisSummary}</pre>}
           {result?.explain && <pre className="summary">{result.explain}</pre>}
           {result?.validation !== undefined && <pre className="summary">{asJson(result.validation)}</pre>}

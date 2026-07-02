@@ -1,6 +1,6 @@
 # MAA 执行评估层
 
-> 状态：分阶段落地中。当前 v2 已有 dry-run skeleton、MAA callback import、结算页截图观察、结果 summary、本机 MAA / ADB probe、MaaCore 连接握手和 GUI 进入演习 helper。`run` 本身仍不会启动 MAA 任务或开始作战；`enter-practice` 只导航到关卡详情页并点击演习入口。
+> 状态：分阶段落地中。当前 v2 已有 dry-run skeleton、MAA callback import、结算页截图观察、结果 summary、本机 MAA / ADB probe、MaaCore 连接握手和 GUI 演习执行 helper。`run` 本身仍不会启动 MAA 任务或开始作战；GUI `enter-practice` 会导航到关卡详情页、点击演习入口，并在传入生成脚本路径时执行 MAA `Copilot` 作业。
 
 ## 目标
 
@@ -33,7 +33,7 @@ MAA 回调中的 `SubTaskExtraInfo.what = "StageDrops"` 包含 `stage`、`drops`
 
 当前 `run observe-screen` 只用于 Copilot 已结束后的结果观察：复用 MaaCore `AsstAsyncScreencap` + `AsstGetImageBgr` / `AsstGetImage` 获取当前截图，不直接调用 `adb shell screencap`。观察器只采样 1280x720 结算页固定星星区域颜色，判断 `stars = 0 / 1 / 2 / 3`；识别不到星星时保留 `outcome = "unknown"`。每次观察保留一张 debug screenshot 和 `samples.json`，用于后续校准 ROI 与阈值。
 
-当前 `scripts/start-mumu.ps1` 复用 MAA GUI 的 `Start.EmulatorPath` 和 `Start.OpenEmulatorAfterLaunch` 配置，可在 `npm run gui` 前启动 MuMu；MAA 路径优先来自 GUI 保存的 `maaPath`、`MAAFIGHT_MAA_PATH` 或脚本参数。`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口：先执行 MAA 日常 `StartUp` 唤醒明日方舟，再通过 MAA `Fight times=0` 复用关卡导航，确认 1280x720 关卡详情页后，若代理指挥开关亮起则先关闭，再点击演习按钮。它不点击普通开始按钮，也不执行 MAA Copilot 作业。
+当前 `scripts/start-mumu.ps1` 复用 MAA GUI 的 `Start.EmulatorPath` 和 `Start.OpenEmulatorAfterLaunch` 配置，可在 `npm run gui` 前启动 MuMu；MAA 路径优先来自 GUI 保存的 `maaPath`、`MAAFIGHT_MAA_PATH` 或脚本参数。`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口：先执行 MAA 日常 `StartUp` 唤醒明日方舟，再通过 MAA `Fight times=0` 复用关卡导航，确认 1280x720 关卡详情页后，若代理指挥开关亮起则先关闭，再点击演习按钮。传入生成脚本路径时，它会继续追加 MAA `Copilot` 任务执行该作业文件，并在结束后复用截图观察器读取结算星级。
 
 参考：
 

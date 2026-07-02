@@ -32,6 +32,8 @@ export interface GenerateRequest extends AnalyzeRequest {
 export interface EnterPracticeRequest {
   stage?: string;
   maaPath?: string;
+  scriptHash?: string;
+  scriptPath?: string;
 }
 
 export interface FeedbackRequest {

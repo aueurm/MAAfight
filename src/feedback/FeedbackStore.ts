@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { getMaafightDir } from "../player/PlayerConfig";
+import type { PracticeTestResult } from "../shared/practiceResult";
 import type { BattleScript, PlayerOperator } from "../types";
 
 export interface GenerationRecord {
@@ -59,6 +60,12 @@ export interface RecordFeedbackInput {
   killed: number;
   total?: number;
   notes?: string;
+  currentOperatorBoxHash: string;
+}
+
+export interface RecordPracticeTestInput {
+  scriptHash: string;
+  testResult: PracticeTestResult;
   currentOperatorBoxHash: string;
 }
 
@@ -164,6 +171,25 @@ export class FeedbackStore {
     };
     appendJsonLine(this.feedbackPath, record);
     return record;
+  }
+
+  recordPracticeTestResult(input: RecordPracticeTestInput): FeedbackRecord | null {
+    if (input.testResult === "进入失败") return null;
+    const generation = this.findGenerationByHash(input.scriptHash);
+    if (!generation) throw new Error(`generation not found for scriptHash: ${input.scriptHash}`);
+    // ponytail: star-only practice feedback has no kill count; replace with StageDrops stats when available.
+    const killed = input.testResult === "三星"
+      ? generation.enemyTotal
+      : input.testResult === "二星"
+        ? Math.max(0, generation.enemyTotal - 3)
+        : 0;
+    return this.recordFeedback({
+      scriptHash: input.scriptHash,
+      killed,
+      total: generation.enemyTotal,
+      currentOperatorBoxHash: input.currentOperatorBoxHash,
+      notes: `auto practice test result: ${input.testResult}`,
+    });
   }
 
   successfulGeneration(
