@@ -99,7 +99,6 @@ export interface ScoreBreakdown {
 
 export interface EngineOptions {
   playerOperators?: Map<string, PlayerOperator>;
-  requirementsMode?: "none" | "player";
   excludedHashes?: Set<string>;
   feedbackAdjustment?: (script: BattleScript, scriptHash: string, breakdown: ScoreBreakdown) => number;
   now?: () => number;

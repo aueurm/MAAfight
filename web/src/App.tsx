@@ -12,7 +12,6 @@ import {
   type ConfigResponse,
   type FeedbackSummary,
   type GenerateResponse,
-  type RequirementsMode,
   type StageSuggestion,
 } from "./api";
 import { normalizePracticeTestResult, type PracticeTestResult } from "../../src/shared/practiceResult";
@@ -55,11 +54,22 @@ function suggestionTitle(suggestion: StageSuggestion): string {
   return suggestion.name ? `${code} - ${suggestion.name}` : code;
 }
 
+function isExactStageSuggestion(suggestion: StageSuggestion, value: string): boolean {
+  const query = value.trim().toLowerCase();
+  return [
+    suggestion.code,
+    suggestion.stageName,
+    suggestion.stageId,
+    suggestion.name,
+  ].some(item => item?.trim().toLowerCase() === query);
+}
+
 export default function App() {
   const [configInfo, setConfigInfo] = useState<ConfigResponse | null>(null);
   const [stage, setStage] = useState("GT-1");
   const [stageFocused, setStageFocused] = useState(false);
   const [stageSuggestions, setStageSuggestions] = useState<StageSuggestion[]>([]);
+  const [stageSuggestionQuery, setStageSuggestionQuery] = useState("");
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const [operatorFilePath, setOperatorFilePath] = useState("");
   const [defaultOperatorPath, setDefaultOperatorPath] = useState("");
@@ -69,7 +79,6 @@ export default function App() {
   const [operatorStatus, setOperatorStatus] = useState<OperatorStatus | null>(null);
   const [maaPath, setMaaPath] = useState("");
   const [showOperatorsPaste, setShowOperatorsPaste] = useState(false);
-  const [requirementsMode, setRequirementsMode] = useState<RequirementsMode>("none");
   const [newCandidate, setNewCandidate] = useState(false);
   const [pretty, setPretty] = useState(true);
   const [outputDir, setOutputDir] = useState("");
@@ -114,6 +123,7 @@ export default function App() {
     const query = stage.trim();
     if (query.length < 1) {
       setStageSuggestions([]);
+      setStageSuggestionQuery("");
       return;
     }
 
@@ -122,9 +132,13 @@ export default function App() {
       searchStageSuggestions(query).then(response => {
         if (cancelled) return;
         setStageSuggestions(response.success ? response.suggestions || [] : []);
+        setStageSuggestionQuery(query);
         setActiveSuggestion(0);
       }).catch(() => {
-        if (!cancelled) setStageSuggestions([]);
+        if (!cancelled) {
+          setStageSuggestions([]);
+          setStageSuggestionQuery(query);
+        }
       });
     }, 120);
 
@@ -141,7 +155,7 @@ export default function App() {
     }
 
     let cancelled = false;
-    getFeedbackSummary(result.stageId).then(response => {
+    getFeedbackSummary(result.stageName || result.stageId).then(response => {
       if (!cancelled) setFeedbackSummary(response.success ? response.summary || null : null);
     }).catch(() => {
       if (!cancelled) setFeedbackSummary(null);
@@ -150,11 +164,15 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [result?.stageId, result?.scriptHash]);
+  }, [result?.stageId, result?.stageName, result?.scriptHash]);
 
   const defaultFileName = useMemo(() => suggestFileName(stage), [stage]);
   const analysisSummary = compactAnalysis(result);
-  const canShowSuggestions = stageFocused && stage.trim().length >= 1 && stageSuggestions.length > 0;
+  const stageQuery = stage.trim();
+  const stageSuggestionReady = stageSuggestionQuery === stageQuery;
+  const hasUniqueExactStage = stageSuggestions.length === 1 && isExactStageSuggestion(stageSuggestions[0], stageQuery);
+  const canShowSuggestions = stageFocused && stageQuery.length >= 1 && stageSuggestionReady && stageSuggestions.length > 0 && !hasUniqueExactStage;
+  const canShowInvalidStage = stageFocused && stageQuery.length >= 1 && stageSuggestionReady && stageSuggestions.length === 0;
 
   function operatorPayload() {
     const manualPath = operatorFilePath.trim();
@@ -170,9 +188,8 @@ export default function App() {
 
   function chooseStage(suggestion: StageSuggestion) {
     setStage(suggestion.code || suggestion.stageName || suggestion.stageId);
-    setStageFocused(false);
     setStageSuggestions([]);
-    if (!fileName.trim()) setFileName(suggestFileName(suggestion.code || suggestion.stageName || suggestion.stageId, suggestion.name));
+    setStageSuggestionQuery("");
   }
 
   function handleStageKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -207,7 +224,6 @@ export default function App() {
         outputDir,
         fileName: fileName.trim() || undefined,
         newCandidate,
-        requirementsMode,
       });
       setWarnings(response.warnings || []);
       setResult(response);
@@ -281,7 +297,7 @@ export default function App() {
         setFeedbackStatus(response.result.feedbackRecord.usableForLearning ? "测试结果已加入可学习反馈" : "测试结果已记录，仅用于统计");
         if (result?.stageId) {
           try {
-            const summaryResponse = await getFeedbackSummary(result.stageId);
+            const summaryResponse = await getFeedbackSummary(result.stageName || result.stageId);
             if (summaryResponse.success) setFeedbackSummary(summaryResponse.summary || null);
           } catch {
             setFeedbackSummary(null);
@@ -318,9 +334,12 @@ export default function App() {
         return;
       }
       setFeedbackStatus(`已记录歼灭率 ${(response.record.ratio * 100).toFixed(1)}%${response.record.usableForLearning ? "，将用于后续候选" : "，仅用于统计"}`);
+      setFeedbackKilled("");
+      setFeedbackTotal("");
+      setFeedbackNotes("");
       if (result.stageId) {
         try {
-          const summaryResponse = await getFeedbackSummary(result.stageId);
+          const summaryResponse = await getFeedbackSummary(result.stageName || result.stageId);
           if (summaryResponse.success) setFeedbackSummary(summaryResponse.summary || null);
         } catch {
           setFeedbackSummary(null);
@@ -493,6 +512,11 @@ export default function App() {
                 ))}
               </div>
             )}
+            {canShowInvalidStage && (
+              <div className="stage-suggestions">
+                <div className="stage-empty">未找到关卡</div>
+              </div>
+            )}
           </label>
 
           <label>
@@ -603,14 +627,6 @@ export default function App() {
               </div>
             </div>
           )}
-
-          <label>
-            <span>练度字段</span>
-            <select value={requirementsMode} onChange={e => setRequirementsMode(e.target.value as RequirementsMode)}>
-              <option value="none">默认省略 requirements</option>
-              <option value="player">导出玩家真实数据</option>
-            </select>
-          </label>
 
           <label className="toggle">
             <input type="checkbox" checked={newCandidate} onChange={e => setNewCandidate(e.target.checked)} />

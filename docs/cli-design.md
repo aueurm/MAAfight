@@ -27,7 +27,6 @@ maafight gui
 | `--data` | 本地 PRTS.Map JSON |
 | `--output` | 输出文件；省略时 JSON 写入 stdout |
 | `--operators` | 玩家干员库 |
-| `--requirements none\|player` | 默认省略或导出玩家真实要求 |
 | `--new-candidate` | 不复用已有 100% 实测结果 |
 | `--explain` | 向 stderr 输出事实摘要与候选评分 |
 

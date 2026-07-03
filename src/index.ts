@@ -43,7 +43,6 @@ interface Args {
   explain?: boolean;
   subcommand?: string;
   newCandidate?: boolean;
-  requirementsMode?: "none" | "player";
   killed?: number;
   total?: number;
   notes?: string;
@@ -95,10 +94,6 @@ function parseArgs(argv: string[]): Args {
       args.explain = true;
     } else if (arg === "--new-candidate") {
       args.newCandidate = true;
-    } else if (arg === "--requirements") {
-      const value = argv[++i];
-      if (value !== "none" && value !== "player") throw new Error(`Unsupported requirements mode: ${value}`);
-      args.requirementsMode = value;
     } else if (arg === "--killed") {
       args.killed = Number.parseInt(argv[++i], 10);
     } else if (arg === "--total") {
@@ -257,7 +252,6 @@ Options:
   --data, -d <path>    Use local PRTS.Map JSON file instead of index lookup
   --explain            Print planning confidence, risks, and deployment reasons
   --new-candidate      Ignore a previous 100% result and search again
-  --requirements <mode> none (default) or player
   --killed <n>         Killed enemies for feedback record
   --total <n>          Total enemies for feedback record (optional when known)
   --notes <text>       Optional feedback note
@@ -435,7 +429,6 @@ async function cmdGenerate(args: Args): Promise<void> {
   } else {
     const result = generateCopilotScript(displayName, mapData, {
       playerOperators,
-      requirementsMode: args.requirementsMode || "none",
       excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash, stageContentHash),
       feedbackAdjustment: (_script, _hash, breakdown) => feedbackStore.feedbackAdjustment(stageId, operatorBoxHash, { ...breakdown }, stageContentHash),
     });

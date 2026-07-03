@@ -1,5 +1,3 @@
-import type { RequirementsMode } from "../core/pipeline";
-
 export interface ApiSuccess<T> {
   success: true;
   warnings: string[];
@@ -26,7 +24,6 @@ export interface GenerateRequest extends AnalyzeRequest {
   outputDir?: string;
   fileName?: string;
   newCandidate?: boolean;
-  requirementsMode?: RequirementsMode;
 }
 
 export interface EnterPracticeRequest {

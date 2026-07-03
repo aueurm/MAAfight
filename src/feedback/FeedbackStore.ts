@@ -252,7 +252,19 @@ export class FeedbackStore {
   }
 
   summary(stageId?: string): FeedbackSummary {
-    const records = this.loadFeedback().records.filter(record => !stageId || record.stageId === stageId);
+    const generations = this.loadGenerations().records;
+    const generationById = new Map(generations.map(record => [record.generationId, record]));
+    const stageNames = new Set(
+      generations
+        .filter(record => stageId && (record.stageId === stageId || record.stageName === stageId))
+        .map(record => record.stageName)
+    );
+    const records = this.loadFeedback().records.filter(record => {
+      if (!stageId) return true;
+      if (record.stageId === stageId) return true;
+      const generation = record.generationId ? generationById.get(record.generationId) : undefined;
+      return Boolean(generation && (generation.stageId === stageId || generation.stageName === stageId || stageNames.has(generation.stageName)));
+    });
     const ratios = records.map(record => record.ratio).sort((a, b) => a - b);
     const averageRatio = ratios.length ? ratios.reduce((sum, ratio) => sum + ratio, 0) / ratios.length : null;
     const medianRatio = ratios.length

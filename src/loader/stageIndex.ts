@@ -59,12 +59,24 @@ function buildEntries(): StageIndexEntry[] {
 
 const entries = buildEntries();
 
+function stageCodeRank(entry: StageIndexEntry): number {
+  if (entry.stageId.startsWith("easy_")) return 3;
+  if (entry.stageId.startsWith("tough_")) return 2;
+  return 0;
+}
+
 export function resolveStage(stageId: string): StageIndexEntry | null {
   const clean = stageId.replace(/#f#/g, "");
   return entries.find(e => e.stageId === clean) || null;
 }
 
 export function resolveByCode(code: string): StageIndexEntry | null {
+  const normalized = code.toLowerCase();
+  const byCode = entries
+    .filter(e => e.code?.toLowerCase() === normalized)
+    .sort((a, b) => stageCodeRank(a) - stageCodeRank(b) || a.stageId.localeCompare(b.stageId))[0];
+  if (byCode) return byCode;
+
   const stageId = _byCode[code];
   if (!stageId) return null;
   return resolveStage(stageId);

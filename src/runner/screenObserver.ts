@@ -11,6 +11,7 @@ const LIT_RATIO = 0.04;
 const NEUTRAL_RATIO = 0.04;
 const SCREEN_BYTES = WIDTH * HEIGHT * BYTES_PER_PIXEL;
 const IMAGE_BUFFER_BYTES = 16 * 1024 * 1024;
+const RESULT_CONTINUE_CLICK = { x: 640, y: 650, waitMs: 1000 };
 
 const STAR_ROIS = [
   { name: "star1", cx: 102, cy: 322, radius: 24 },
@@ -62,6 +63,21 @@ interface CaptureResult {
   screenshotPath?: string;
   screenshotBytes?: number;
 }
+
+interface ScreenClick {
+  x: number;
+  y: number;
+  waitMs: number;
+}
+
+type MaaCoreScreencapOptions = Required<Pick<ScreenObserverOptions, "debugDir" | "userDir">> & {
+  maaInstallDir: string;
+  adbPath: string;
+  address: string;
+  connectConfig: string;
+  timeoutMs: number;
+  click?: ScreenClick;
+};
 
 function powershellLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
@@ -147,17 +163,14 @@ export function sampleSettlementStars(bgr: Buffer, width = WIDTH, height = HEIGH
   return { width, height, outcome: outcomeFromStars(stars), stars, samples, recognized: true };
 }
 
-function runMaaCoreScreencap(options: Required<Pick<ScreenObserverOptions, "debugDir" | "userDir">> & {
-  maaInstallDir: string;
-  adbPath: string;
-  address: string;
-  connectConfig: string;
-  timeoutMs: number;
-}): CaptureResult {
+function runMaaCoreScreencap(options: MaaCoreScreencapOptions): CaptureResult {
   fs.mkdirSync(options.debugDir, { recursive: true });
   fs.mkdirSync(options.userDir, { recursive: true });
   const bgrPath = path.join(options.debugDir, "screen.bgr");
   const screenshotPath = path.join(options.debugDir, "screenshot.png");
+  const clickX = options.click ? Math.trunc(options.click.x) : -1;
+  const clickY = options.click ? Math.trunc(options.click.y) : -1;
+  const clickWaitMs = options.click ? Math.max(0, Math.trunc(options.click.waitMs)) : 0;
   const script = [
     `$dir = ${powershellLiteral(options.maaInstallDir)}`,
     `$userDir = ${powershellLiteral(options.userDir)}`,
@@ -167,6 +180,9 @@ function runMaaCoreScreencap(options: Required<Pick<ScreenObserverOptions, "debu
     `$config = ${powershellLiteral(options.connectConfig)}`,
     `$bgrPath = ${powershellLiteral(bgrPath)}`,
     `$screenshotPath = ${powershellLiteral(screenshotPath)}`,
+    `$clickX = ${clickX}`,
+    `$clickY = ${clickY}`,
+    `$clickWaitMs = ${clickWaitMs}`,
     "[System.Environment]::SetEnvironmentVariable('PATH', $dir + ';' + $env:PATH, 'Process')",
     "$code = @'",
     "using System;",
@@ -180,6 +196,7 @@ function runMaaCoreScreencap(options: Required<Pick<ScreenObserverOptions, "debu
     "  [DllImport(\"MaaCore.dll\", CallingConvention = CallingConvention.Cdecl)] public static extern void AsstDestroy(IntPtr handle);",
     "  [DllImport(\"MaaCore.dll\", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] public static extern byte AsstConnect(IntPtr handle, string adb_path, string address, string config);",
     "  [DllImport(\"MaaCore.dll\", CallingConvention = CallingConvention.Cdecl)] public static extern byte AsstConnected(IntPtr handle);",
+    "  [DllImport(\"MaaCore.dll\", CallingConvention = CallingConvention.Cdecl)] public static extern int AsstAsyncClick(IntPtr handle, int x, int y, byte block);",
     "  [DllImport(\"MaaCore.dll\", CallingConvention = CallingConvention.Cdecl)] public static extern int AsstAsyncScreencap(IntPtr handle, byte block);",
     "  [DllImport(\"MaaCore.dll\", CallingConvention = CallingConvention.Cdecl)] public static extern UInt64 AsstGetImageBgr(IntPtr handle, byte[] buff, UInt64 buff_size);",
     "  [DllImport(\"MaaCore.dll\", CallingConvention = CallingConvention.Cdecl)] public static extern UInt64 AsstGetImage(IntPtr handle, byte[] buff, UInt64 buff_size);",
@@ -196,6 +213,11 @@ function runMaaCoreScreencap(options: Required<Pick<ScreenObserverOptions, "debu
     "try {",
     "  if (-not ([MaaCoreScreenObserver]::AsstConnect($handle, $adb, $address, $config) -ne 0)) { throw 'AsstConnect failed' }",
     "  if (-not ([MaaCoreScreenObserver]::AsstConnected($handle) -ne 0)) { throw 'AsstConnected failed' }",
+    "  if ($clickX -ge 0 -and $clickY -ge 0) {",
+    "    $clickCallId = [MaaCoreScreenObserver]::AsstAsyncClick($handle, [int]$clickX, [int]$clickY, 1)",
+    "    if ($clickCallId -le 0) { throw \"AsstAsyncClick failed at $clickX,$clickY\" }",
+    "    if ($clickWaitMs -gt 0) { Start-Sleep -Milliseconds $clickWaitMs }",
+    "  }",
     "  [MaaCoreScreenObserver]::AsstAsyncScreencap($handle, 1) | Out-Null",
     `  $bgr = New-Object byte[] ${SCREEN_BYTES}`,
     "  $bgrSize = [MaaCoreScreenObserver]::AsstGetImageBgr($handle, $bgr, [UInt64]$bgr.Length)",
@@ -292,7 +314,7 @@ export function observeMaaScreen(options: ScreenObserverOptions): ScreenObservat
   }
 
   try {
-    const capture = runMaaCoreScreencap({
+    const captureOptions: MaaCoreScreencapOptions = {
       debugDir,
       userDir: path.resolve(options.userDir || path.join(process.cwd(), ".maafight", "maa-core")),
       maaInstallDir: connect.maaInstallDir,
@@ -300,9 +322,19 @@ export function observeMaaScreen(options: ScreenObserverOptions): ScreenObservat
       address: connect.address,
       connectConfig: connect.connectConfig,
       timeoutMs: options.timeoutMs || 30000,
-    });
-    const bgr = fs.readFileSync(capture.bgrPath);
-    const sampled = sampleSettlementStars(bgr);
+    };
+    let capture = runMaaCoreScreencap(captureOptions);
+    let bgr = fs.readFileSync(capture.bgrPath);
+    let sampled = sampleSettlementStars(bgr);
+
+    if (!sampled.recognized) {
+      fs.rmSync(capture.bgrPath, { force: true });
+      capture = runMaaCoreScreencap({ ...captureOptions, click: RESULT_CONTINUE_CLICK });
+      bgr = fs.readFileSync(capture.bgrPath);
+      sampled = sampleSettlementStars(bgr);
+      warnings.push("Initial result screen had no settlement stars; clicked once and resampled.");
+    }
+
     let debugScreenshotPath = capture.screenshotPath && fs.existsSync(capture.screenshotPath)
       ? capture.screenshotPath
       : undefined;

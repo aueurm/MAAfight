@@ -16,6 +16,13 @@ describe("levelIndex", () => {
     expect(entry!.code).toBe("GT-1");
   });
 
+  it("resolveStage prefers normal main stage over easy/tough variants by visible code", () => {
+    const entry = resolveStage("11-7");
+    expect(entry).not.toBeNull();
+    expect(entry!.stageId).toBe("main_11-06");
+    expect(entry!.filePath).toBe("obt/main/level_main_11-06.json");
+  });
+
   it.each([
     ["act9d0_08", "DM-8"],
     ["act3d0_03", "OF-3"],

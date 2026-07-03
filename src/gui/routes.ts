@@ -189,7 +189,6 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
         outputDir,
         fileName: body.fileName,
         newCandidate: body.newCandidate,
-        requirementsMode: body.requirementsMode,
       }, {
         cacheDir: runtime.cacheLevelsDir,
         stateDir: cwd,
@@ -242,6 +241,9 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
 
       const scriptResult = await runEnterPracticeScript(body.stage.trim(), maaProbe?.maaInstallDir || undefined, scriptPath || undefined);
       const result = scriptResult && typeof scriptResult === "object" ? scriptResult as Record<string, unknown> : {};
+      if (result.navigationSkipped) {
+        warnings.push("MAA 未配置该关卡自动导航；已按当前关卡详情页继续执行演习。");
+      }
       if (result.copilotTaskId) {
         const observedMaaPath = typeof result.maaDir === "string" ? result.maaDir : maaProbe?.maaInstallDir || undefined;
         const observed = observeMaaScreen({

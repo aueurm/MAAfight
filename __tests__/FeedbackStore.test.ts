@@ -85,6 +85,31 @@ describe("FeedbackStore", () => {
     expect(store.successfulGeneration("stage-2", "old-box")).toBeUndefined();
   });
 
+  it("summarizes feedback across internal variants of the same displayed stage", () => {
+    const base = {
+      schemaVersion: 2 as const,
+      stageName: "11-7",
+      operatorBoxHash: "box",
+      engineVersion: "v2",
+      modelVersion: "model",
+      combatDataVersion: "combat",
+      candidateScore: 70,
+      scoreBreakdown: {},
+      combatCoverage: 0,
+      enemyTotal: 10,
+      outputPath: "",
+      script: script(),
+      createdAt: "2026-06-18T00:00:00.000Z",
+    };
+    store.appendGeneration({ ...base, generationId: "old", scriptHash: "old-hash", stageId: "easy_11-06" });
+    store.appendGeneration({ ...base, generationId: "new", scriptHash: "new-hash", stageId: "main_11-06" });
+    store.recordFeedback({ scriptHash: "old-hash", killed: 8, currentOperatorBoxHash: "box" });
+    store.recordFeedback({ scriptHash: "new-hash", killed: 10, currentOperatorBoxHash: "box" });
+
+    expect(store.summary("main_11-06")).toMatchObject({ count: 2, usableCount: 2, fullClearCount: 1 });
+    expect(store.summary("11-7")).toMatchObject({ count: 2, usableCount: 2, fullClearCount: 1 });
+  });
+
   it("records practice test results as learnable feedback", () => {
     store.appendGeneration({
       schemaVersion: 2,

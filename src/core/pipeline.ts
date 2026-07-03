@@ -23,8 +23,6 @@ import type {
   ValidationResult,
 } from "../types";
 
-export type RequirementsMode = "none" | "player";
-
 export interface OperatorInput {
   operatorsJson?: string;
   operatorFilePath?: string;
@@ -46,7 +44,6 @@ export interface GenerateStageInput extends OperatorInput {
   outputDir?: string;
   fileName?: string;
   newCandidate?: boolean;
-  requirementsMode?: RequirementsMode;
 }
 
 export interface ValidateScriptInput {
@@ -154,9 +151,17 @@ function stageSearchScore(entry: StageIndexEntry, query: string): number {
 export function searchStageSuggestions(query: string, limit = 24): StageSuggestion[] {
   const q = query.trim();
   if (!q) return [];
+  const seen = new Set<string>();
   return searchStages(q)
     .sort((a, b) => stageSearchScore(a, q) - stageSearchScore(b, q)
       || (a.code || a.stageId).localeCompare(b.code || b.stageId))
+    .map(entry => entry.code ? resolveStage(entry.code) || entry : entry)
+    .filter(entry => {
+      const key = (entry.code || entry.stageId).toUpperCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     .slice(0, Math.max(1, Math.min(limit, 100)))
     .map(entry => ({
       stageId: entry.stageId,
@@ -230,7 +235,6 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
   } else {
     const result = generateCopilotScript(stageName, mapData, {
       playerOperators: parsedOperators.playerOperators,
-      requirementsMode: input.requirementsMode || "none",
       excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash, stageContentHash),
       feedbackAdjustment: (_script, _hash, breakdown) => feedbackStore.feedbackAdjustment(
         stageId, operatorBoxHash, { ...breakdown }, stageContentHash

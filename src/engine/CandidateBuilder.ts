@@ -330,19 +330,8 @@ function rankedPlacements(pick: EnginePick, facts: StageFacts): RankedPlacement[
   return ranked;
 }
 
-function toOper(pick: EnginePick, requirementsMode: "none" | "player"): BattleScriptOper {
-  const operator: BattleScriptOper = { name: pick.name, skill: pick.skill, skill_usage: 1 };
-  if (requirementsMode === "player" && pick.player) {
-    operator.requirements = {
-      elite: pick.player.elite,
-      level: pick.player.level,
-      ...(pick.player.skillLevel !== undefined ? { skill_level: pick.player.skillLevel } : {}),
-      ...(pick.player.module !== undefined ? { module: pick.player.module } : {}),
-      ...(pick.player.moduleLevel !== undefined ? { module_level: pick.player.moduleLevel } : {}),
-      potential: pick.player.potential,
-    };
-  }
-  return operator;
+function toOper(pick: EnginePick): BattleScriptOper {
+  return { name: pick.name, skill: pick.skill, skill_usage: 1 };
 }
 
 export function buildCandidate(input: CandidateBuildInput): { script: BattleScript; picks: EnginePick[]; warnings: string[] } {
@@ -369,12 +358,11 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
   actions.push({ type: "SkillDaemon" });
 
   const warnings = input.picks.length < 12 ? [`Only ${input.picks.length} modeled elite 2 operators are available for the fixed squad.`] : [];
-  const requirementsMode = input.options.requirementsMode || "none";
   const script: BattleScript = {
     stage_name: input.stageCode,
     minimum_required: "v6.0.0",
     doc: { title: `${input.stageCode} MAAfight v2`, details: input.facts.summary },
-    opers: input.picks.map(pick => toOper(pick, requirementsMode)),
+    opers: input.picks.map(toOper),
     groups: [],
     actions,
     generatedAt: new Date().toISOString(),

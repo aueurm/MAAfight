@@ -57,4 +57,4 @@ interface EngineResult {
 
 内部坐标使用 `[row, col]`，exporter 转换为 MAA `[x, y]`。默认输出 fixed 12 人、`groups: []`、`version: 3`、`minimum_required: v6.0.0`。
 
-默认省略 `requirements`；显式 `player` 模式只使用玩家 JSON 中的真实数据。
+始终省略 `requirements`。

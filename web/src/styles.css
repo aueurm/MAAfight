@@ -213,6 +213,11 @@ button.secondary:hover:not(:disabled) {
   min-width: 0;
 }
 
+.stage-empty {
+  color: #9b1c1c;
+  padding: 10px;
+}
+
 .stage-option-main strong,
 .stage-option-main small {
   overflow: hidden;

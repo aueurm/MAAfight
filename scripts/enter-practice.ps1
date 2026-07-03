@@ -76,6 +76,65 @@ function Resolve-CopilotFilePath {
   return $safePath
 }
 
+function Test-MaaMainStageId {
+  param([string]$StageId)
+
+  return $StageId -match "^(main|sub|tough|hard)_"
+}
+
+function Get-MaaFightNavigationIndex {
+  param([string]$Dir)
+
+  $mainStages = @{}
+  $taskStages = @{}
+  $stagesPath = Join-Path $Dir "resource\stages.json"
+  if (Test-Path -LiteralPath $stagesPath) {
+    try {
+      $stages = Get-Content -LiteralPath $stagesPath -Encoding UTF8 -Raw | ConvertFrom-Json
+      $stageMetas = if ($stages -is [array]) { $stages } else { $stages.PSObject.Properties | ForEach-Object { $_.Value } }
+      foreach ($meta in $stageMetas) {
+        $code = ([string]$meta.code).Trim().ToUpperInvariant()
+        $stageId = ([string]$meta.stageId).Trim()
+        $apCost = 0
+        try { $apCost = [int]$meta.apCost } catch { $apCost = 0 }
+        if ($code -and $apCost -gt 0 -and (Test-MaaMainStageId $stageId)) {
+          $mainStages[$code] = $true
+        }
+      }
+    } catch {
+    }
+  }
+
+  $taskDir = Join-Path $Dir "resource\tasks\Stages"
+  if (Test-Path -LiteralPath $taskDir) {
+    Get-ChildItem -LiteralPath $taskDir -Filter "*.json" -File | ForEach-Object {
+      try {
+        $tasks = Get-Content -LiteralPath $_.FullName -Encoding UTF8 -Raw | ConvertFrom-Json
+        foreach ($task in $tasks.PSObject.Properties) {
+          $name = $task.Name.Trim().ToUpperInvariant()
+          if ($name -cmatch "^(?=.*\d)[A-Z0-9]+(?:-[A-Z0-9]+)+$") {
+            $taskStages[$name] = $true
+          }
+        }
+      } catch {
+      }
+    }
+  }
+
+  return @{
+    mainStages = $mainStages
+    taskStages = $taskStages
+  }
+}
+
+function Test-MaaFightNavigationSupported {
+  param([string]$StageName, [hashtable]$Index)
+
+  $stage = $StageName.Trim().ToUpperInvariant()
+  if (-not $stage) { return $false }
+  return $Index.mainStages.ContainsKey($stage) -or $Index.taskStages.ContainsKey($stage)
+}
+
 $width = 1280
 $height = 720
 $bytesPerPixel = 3
@@ -201,6 +260,31 @@ function Invoke-SelfTest {
   if (-not (Test-AsciiPath $safeCopilotPath)) { throw "safe copilot path should be ASCII" }
   if (-not (Test-Path -LiteralPath $safeCopilotPath)) { throw "safe copilot file should exist" }
 
+  $navTestDir = Join-Path (Join-Path (Resolve-Path ".").Path ".maafight") "selftest-nav"
+  $navResourceDir = Join-Path $navTestDir "resource"
+  $navStageDir = Join-Path $navResourceDir "tasks\Stages"
+  New-Item -ItemType Directory -Force -Path $navStageDir | Out-Null
+  Set-Content -LiteralPath (Join-Path $navResourceDir "stages.json") -Encoding UTF8 -Value '[
+    { "code": "3-8", "stageId": "main_03-08", "apCost": 18 },
+    { "code": "S3-1", "stageId": "sub_03-1-1", "apCost": 15 },
+    { "code": "12-12", "stageId": "main_12-10", "apCost": 21 },
+    { "code": "1-2", "stageId": "main_01-02", "apCost": 0 },
+    { "code": "OF-F1", "stageId": "a003_f01_perm", "apCost": 9 }
+  ]'
+  Set-Content -LiteralPath (Join-Path $navStageDir "OF.json") -Encoding UTF8 -Value '{ "OF-F3": { "algorithm": "JustReturn" } }'
+  Set-Content -LiteralPath (Join-Path $navStageDir "Supplies.json") -Encoding UTF8 -Value '{ "CE-6": { "algorithm": "JustReturn" }, "PR-A-1": { "algorithm": "JustReturn" } }'
+  $navIndex = Get-MaaFightNavigationIndex $navTestDir
+  if (-not (Test-MaaFightNavigationSupported "OF-F3" $navIndex)) { throw "OF-F3 should be navigation-supported" }
+  if (-not (Test-MaaFightNavigationSupported "CE-6" $navIndex)) { throw "CE-6 should be navigation-supported from Supplies.json" }
+  if (-not (Test-MaaFightNavigationSupported "PR-A-1" $navIndex)) { throw "PR-A-1 should be navigation-supported from Supplies.json" }
+  if (-not (Test-MaaFightNavigationSupported "3-8" $navIndex)) { throw "numeric mainline stage should keep navigation" }
+  if (-not (Test-MaaFightNavigationSupported "S3-1" $navIndex)) { throw "sub mainline stage should keep navigation" }
+  if (-not (Test-MaaFightNavigationSupported "12-12" $navIndex)) { throw "array stages.json mainline stage should keep navigation" }
+  if (Test-MaaFightNavigationSupported "OF-F1" $navIndex) { throw "OF-F1 should be navigation-skipped" }
+  if (Test-MaaFightNavigationSupported "1-2" $navIndex) { throw "zero sanity mainline stage should skip navigation" }
+  if (Test-MaaFightNavigationSupported "TR-1" $navIndex) { throw "teaching stage should skip navigation" }
+  if (Test-MaaFightNavigationSupported "XX-1" $navIndex) { throw "missing stage should skip navigation" }
+
   @{ ok = $true; selfTest = $true } | ConvertTo-Json -Compress
 }
 
@@ -211,12 +295,15 @@ if ($SelfTest) {
 
 $MaaDir = Resolve-MaaDir $MaaDir
 $maaConfig = Get-MaaGuiConfig $MaaDir
+$stageName = $Stage.Trim()
+$navigationIndex = Get-MaaFightNavigationIndex $MaaDir
+$navigationSupported = Test-MaaFightNavigationSupported $stageName $navigationIndex
 if (-not $AdbPath.Trim() -and $maaConfig) { $AdbPath = [string]$maaConfig.'Connect.AdbPath' }
 if (-not $Address.Trim() -and $maaConfig) { $Address = [string]$maaConfig.'Connect.Address' }
 if (-not $ConnectConfig.Trim() -and $maaConfig) { $ConnectConfig = [string]$maaConfig.'Connect.ConnectConfig' }
 if (-not $ConnectConfig.Trim()) { $ConnectConfig = "General" }
 
-if (-not $Stage.Trim()) { throw "Stage is required" }
+if (-not $stageName) { throw "Stage is required" }
 if ($ScriptPath.Trim() -and -not (Test-Path -LiteralPath $ScriptPath.Trim())) { throw "script file not found: $ScriptPath" }
 if (-not (Test-Path -LiteralPath (Join-Path $MaaDir "MaaCore.dll"))) { throw "MaaCore.dll not found in $MaaDir" }
 if (-not $AdbPath.Trim()) { throw "adb path is required. Configure MAA connection settings or pass -AdbPath." }
@@ -427,19 +514,31 @@ function Invoke-Copilot {
   return $taskId
 }
 
-$startupHandle = New-ConnectedMaaHandle
-try {
-  $startupTaskId = Invoke-Startup $startupHandle
-} finally {
-  [MaaCoreEnterPractice]::AsstDestroy($startupHandle)
+$startupTaskId = $null
+if ($navigationSupported) {
+  $startupHandle = New-ConnectedMaaHandle
+  try {
+    $startupTaskId = Invoke-Startup $startupHandle
+  } finally {
+    [MaaCoreEnterPractice]::AsstDestroy($startupHandle)
+  }
 }
 
 $handle = New-ConnectedMaaHandle
 try {
-  $navigationTaskId = Invoke-FightNavigation $handle $Stage.Trim()
+  $navigationTaskId = $null
+  $navigationSkipped = -not $navigationSupported
+  if (-not $navigationSkipped) {
+    $navigationTaskId = Invoke-FightNavigation $handle $stageName
+  }
 
   $bgr = Get-ScreenBgr $handle
-  if (-not (Test-StageDetail $bgr)) { throw "stage detail screen not detected; practice click skipped" }
+  if (-not (Test-StageDetail $bgr)) {
+    if ($navigationSkipped) {
+      throw "MAA Fight navigation is not configured for $stageName; open the stage detail screen manually and retry."
+    }
+    throw "stage detail screen not detected; practice click skipped"
+  }
 
   $closedProxy = $false
   if (Test-ProxyEnabled $bgr) {
@@ -461,10 +560,11 @@ try {
   }
   @{
     ok = $true
-    stage = $Stage.Trim()
+    stage = $stageName
     maaDir = $MaaDir
     startupTaskId = $startupTaskId
     navigationTaskId = $navigationTaskId
+    navigationSkipped = $navigationSkipped
     closedProxy = $closedProxy
     practiceCallId = $practiceCallId
     copilotTaskId = $copilotTaskId

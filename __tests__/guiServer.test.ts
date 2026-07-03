@@ -85,6 +85,31 @@ describe("GUI server routes", () => {
     expect(body.suggestions[0].number).toBeTruthy();
   });
 
+  it("should not repeat the same stage code in suggestions", async () => {
+    const app = await makeApp();
+    const res = await app.inject({ method: "GET", url: "/api/stages?q=11-&limit=8" });
+    await app.close();
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    const codes = body.suggestions.map((suggestion: { code?: string; stageId: string }) => suggestion.code || suggestion.stageId);
+    expect(codes).toEqual([...new Set(codes)]);
+  });
+
+  it("should suggest normal main stage for duplicate main codes", async () => {
+    const app = await makeApp();
+    const res = await app.inject({ method: "GET", url: "/api/stages?q=11-7&limit=5" });
+    await app.close();
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.suggestions[0]).toMatchObject({
+      code: "11-7",
+      stageId: "main_11-06",
+      filePath: "obt/main/level_main_11-06.json",
+    });
+  });
+
   it("should return success false when generate misses stage", async () => {
     const app = await makeApp();
     const res = await app.inject({

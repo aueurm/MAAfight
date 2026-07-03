@@ -1,5 +1,3 @@
-export type RequirementsMode = "none" | "player";
-
 export type PracticeTestResult = "进入失败" | "失败" | "二星" | "三星";
 
 export interface ApiBase {
@@ -84,6 +82,7 @@ export interface EnterPracticeResponse extends ApiBase {
     maaDir?: string;
     startupTaskId?: number;
     navigationTaskId?: number;
+    navigationSkipped?: boolean;
     closedProxy?: boolean;
     practiceCallId?: number;
     copilotTaskId?: number;
@@ -108,7 +107,6 @@ export interface GenerateRequest {
   outputDir?: string;
   fileName?: string;
   newCandidate?: boolean;
-  requirementsMode?: RequirementsMode;
 }
 
 export interface FeedbackResponse extends ApiBase {

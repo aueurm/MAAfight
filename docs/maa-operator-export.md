@@ -34,9 +34,9 @@ MAA 的 **干员识别 (OperBox Recognition)** 功能通过图像识别扫描玩
 | `elite` | int | ✓ | ✗ | 精英化等级 (0=未精英, 1=精一, 2=精二) |
 | `level` | int | ✓ | ✗ | 干员等级 (1-90) |
 | `potential` | int | ✓ | ✗ | 潜能数 (0-6) |
-| `skill_level` / `skillLevel` | int | 视版本而定 | ✗ | 技能等级 / 专精等级，存在时优先用于 `requirements.skill_level` |
-| `module` | int | 视版本而定 | ✗ | 模组编号，存在时优先用于 `requirements.module` |
-| `module_level` / `moduleLevel` | int | 视版本而定 | ✗ | 模组等级，存在时优先用于 `requirements.module_level` |
+| `skill_level` / `skillLevel` | int | 视版本而定 | ✗ | 技能等级 / 专精等级，存在时用于选人 / 排序 |
+| `module` | int | 视版本而定 | ✗ | 模组编号，存在时用于选人 / 排序 |
+| `module_level` / `moduleLevel` | int | 视版本而定 | ✗ | 模组等级，存在时用于选人 / 排序 |
 | `cost` | int | 视版本而定 | ✗ | 部署费用，存在时优先用于粗费用估算 |
 
 ### 示例
@@ -90,23 +90,7 @@ MAA 的 **干员识别 (OperBox Recognition)** 功能通过图像识别扫描玩
 
 ## 与 MAAfight 的集成
 
-MAAfight 使用 `operatorCombat.v2.json` 的完整 GameData 干员目录选人；玩家模式先按 `own && elite >= 2` 严格过滤，再按 ID 优先、名字兜底解析。copilot 脚本格式支持 `requirements` 字段：
-
-```typescript
-// copilot 格式中 opers 的 requirements
-{
-  "name": "重岳",
-  "skill": 3,
-  "requirements": {
-    "elite": 2,
-    "level": 90,
-    "skill_level": 10,
-    "module": 1,
-    "module_level": 3,
-    "potential": 1
-  }
-}
-```
+MAAfight 使用 `operatorCombat.v2.json` 的完整 GameData 干员目录选人；使用玩家干员库时先按 `own && elite >= 2` 严格过滤，再按 ID 优先、名字兜底解析。生成 copilot 时不写 `requirements` 字段。
 
 当前已经集成到 CLI、GUI 和 pipeline。
 
@@ -128,9 +112,9 @@ GUI 也支持选择、输入路径或粘贴 operators JSON。
 4. 默认 `fixed` 模式下，`opers` 尽量补满 12 名真实干员；未部署的干员只作为编队补位，不生成部署动作。
 5. 玩家干员库不足时，通过 `metadata.operatorGaps` 记录缺口，并保留兜底生成能力。
 6. 本地初始化后，`.maafight/operators.json` 会作为默认干员库加载。
-7. 默认省略 `requirements`；只有显式 `requirementsMode: "player"` 时才导出玩家 JSON 中实际存在的数据。
+7. 生成 copilot 时始终省略 `requirements`。
 
-导出到 MAA copilot 时，干员库用于选择真实干员；显式 `player` 模式还可填充真实 `requirements`。不得把职业、候选列表、练度展示或模组展示拼进 `opers[].name`。完整约束见 [MAA Copilot 导出契约](maa-copilot-export-contract.md)。
+导出到 MAA copilot 时，干员库用于选择真实干员。不得把职业、候选列表、练度展示或模组展示拼进 `opers[].name`。完整约束见 [MAA Copilot 导出契约](maa-copilot-export-contract.md)。
 
 注意：包含 `stage_name`、`actions`、`groups` 的文件是 MAA copilot 作业文件，不是 operators JSON。不要用作业文件作为玩家干员库样本。
 
@@ -140,13 +124,13 @@ GUI 也支持选择、输入路径或粘贴 operators JSON。
 |----------|---------------|--------------|
 | `id` | 干员唯一标识 | — |
 | `name` | 干员名 | `opers[].name` / `groups[].opers[].name` |
-| `elite` | 精英化等级 | `requirements.elite` |
-| `level` | 等级 | `requirements.level` |
+| `elite` | 精英化等级 | 用于选人 / 排序 |
+| `level` | 等级 | 用于选人 / 排序 |
 | `rarity` | 稀有度 | 用于优先级排序 |
-| `potential` | 潜能 | `requirements.potential` |
-| `skill_level` / `skillLevel` | 技能等级 / 专精 | `requirements.skill_level` |
-| `module` | 模组编号 | `requirements.module` |
-| `module_level` / `moduleLevel` | 模组等级 | `requirements.module_level` |
+| `potential` | 潜能 | 用于选人 / 排序 |
+| `skill_level` / `skillLevel` | 技能等级 / 专精 | 用于选人 / 排序 |
+| `module` | 模组编号 | 用于选人 / 排序 |
+| `module_level` / `moduleLevel` | 模组等级 | 用于选人 / 排序 |
 | `cost` | 部署费用 | 粗费用时间线 |
 
 ---

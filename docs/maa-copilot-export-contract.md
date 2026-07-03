@@ -29,7 +29,7 @@ exporter 必须保留 `cooling`、`distance`、`skip_if_not_ready`、`doc` 和 `
 
 ## Requirements
 
-默认完整省略。只有 `requirementsMode: "player"` 才导出玩家数据；缺失字段不得使用推荐值伪造。该字段不是 MAA 强制切换配置的证明。
+MAAfight 生成的 copilot 始终省略 `requirements`。
 
 ## 验证
 
