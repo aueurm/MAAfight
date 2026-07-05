@@ -235,9 +235,9 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
   } else {
     const result = generateCopilotScript(stageName, mapData, {
       playerOperators: parsedOperators.playerOperators,
-      excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash, stageContentHash),
-      feedbackAdjustment: (_script, _hash, breakdown) => feedbackStore.feedbackAdjustment(
-        stageId, operatorBoxHash, { ...breakdown }, stageContentHash
+      excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash, stageContentHash, "v2-skill-v1"),
+      feedbackPenalty: (candidateScript, hash, breakdown) => feedbackStore.feedbackPenalty(
+        stageId, operatorBoxHash, { ...breakdown }, stageContentHash, candidateScript, "v2-skill-v1", hash
       ),
     });
     script = result.script;

@@ -14,8 +14,9 @@ function writeSource(root: string): string {
     groups: [],
     actions: [
       { type: "SpeedUp" },
-      { type: "Deploy", name: "能天使", location: [1, 2], direction: "Right" },
-      { type: "Deploy", name: "塞雷娅", location: [2, 2], direction: "Left" },
+      { type: "Deploy", name: "能天使", location: [1, 2], direction: "Right", pre_delay: 500 },
+      { type: "Deploy", name: "塞雷娅", location: [2, 2], direction: "Left", pre_delay: 250 },
+      { type: "Skill", name: "能天使", pre_delay: 1000 },
       { type: "SkillDaemon" },
     ],
   }), "utf8");
@@ -66,6 +67,9 @@ describe("public copilot training", () => {
       });
       expect(prior.stages["TEST-1"].deployHeatmap).toEqual({ "2,1": 1, "2,2": 1 });
       expect(prior.stages["TEST-1"].directionRates).toEqual({ Left: 0.5, Right: 0.5 });
+      expect(prior.stages["TEST-1"].directionHeatmap).toEqual({ "2,1:Right": 1, "2,2:Left": 1 });
+      expect(prior.stages["TEST-1"].deployTiming).toEqual({ "250": 1, "500": 1 });
+      expect(prior.stages["TEST-1"].skillTiming).toEqual({ "1000": 1 });
       expect(JSON.stringify(prior)).not.toContain("\"location\"");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

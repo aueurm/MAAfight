@@ -24,8 +24,11 @@ function defaultWebRoot(): string {
   return getRuntimePaths().webRoot;
 }
 
-function isPortInUse(err: unknown): boolean {
-  return typeof err === "object" && err !== null && "code" in err && (err as { code?: string }).code === "EADDRINUSE";
+export function isRetryableListenError(err: unknown): boolean {
+  return typeof err === "object"
+    && err !== null
+    && "code" in err
+    && ["EADDRINUSE", "EACCES"].includes(String((err as { code?: string }).code));
 }
 
 export async function createGuiServer(options: GuiServerOptions = {}): Promise<FastifyInstance> {
@@ -57,7 +60,7 @@ export async function createGuiServer(options: GuiServerOptions = {}): Promise<F
 export async function startGuiServer(options: GuiServerOptions = {}): Promise<StartedGuiServer> {
   const host = options.host || "127.0.0.1";
   const startPort = options.startPort || 14514;
-  const maxPortAttempts = options.maxPortAttempts || 10;
+  const maxPortAttempts = options.maxPortAttempts || 100;
   let lastError: unknown;
 
   for (let offset = 0; offset < maxPortAttempts; offset++) {
@@ -79,7 +82,7 @@ export async function startGuiServer(options: GuiServerOptions = {}): Promise<St
     } catch (err) {
       lastError = err;
       await app.close().catch(() => undefined);
-      if (!isPortInUse(err)) throw err;
+      if (!isRetryableListenError(err)) throw err;
     }
   }
 

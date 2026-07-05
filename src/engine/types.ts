@@ -88,7 +88,16 @@ export interface ResolvedOperatorProfile {
   modelCoverageGaps: string[];
 }
 
-export interface ScoreBreakdown {
+export interface CandidateScoreBreakdown {
+  publicPrior: number;
+  placement: number;
+  direction: number;
+  timing: number;
+  operatorPower: number;
+  feedbackPenalty: number;
+}
+
+export interface LegacyScoreBreakdown {
   combat: number;
   position: number;
   timing: number;
@@ -97,9 +106,12 @@ export interface ScoreBreakdown {
   automation: number;
 }
 
+export type ScoreBreakdown = CandidateScoreBreakdown;
+
 export interface EngineOptions {
   playerOperators?: Map<string, PlayerOperator>;
   excludedHashes?: Set<string>;
+  feedbackPenalty?: (script: BattleScript, scriptHash: string, breakdown: ScoreBreakdown) => number;
   feedbackAdjustment?: (script: BattleScript, scriptHash: string, breakdown: ScoreBreakdown) => number;
   now?: () => number;
   search?: Partial<SearchConfig>;
@@ -107,12 +119,28 @@ export interface EngineOptions {
 
 export interface SearchConfig {
   squadBeamWidth: number;
-  completeCandidateLimit: number;
+  candidateFrontierLimit: number;
+  candidatePoolLimit: number;
+  completeCandidateLimit?: number;
+  candidateVariantLimit?: number;
+  positionVariantCount: number;
+  directionVariantCount: number;
+  timingVariantCount: number;
+  orderVariantCount: number;
+  skillVariantCount: number;
   minimumFullCandidates: number;
   defaultFullCandidates: number;
   maximumFullCandidates: number;
   deadlineMs: number;
   deadlineCheckInterval: number;
+  diversityFirstDeployLimit: number;
+  diversityFirstThreeLimit: number;
+  diversityDeployCellsLimit: number;
+  diversityDirectionLimit: number;
+  diversityTimingLimit: number;
+  diversitySkillStrategyLimit: number;
+  diversitySquadLimit: number;
+  diversityReservedPerGroup: number;
 }
 
 export interface SearchStats {
@@ -150,7 +178,11 @@ export interface CandidateBuildInput {
   facts: StageFacts;
   picks: EnginePick[];
   positionVariant: number;
+  directionVariant?: number;
   timingVariant: number;
+  timingDelayMs?: number;
+  orderVariant?: number;
+  skillVariant?: number;
   options: EngineOptions;
 }
 

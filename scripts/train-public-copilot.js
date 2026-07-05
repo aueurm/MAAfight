@@ -156,6 +156,13 @@ function actionType(action) {
   return typeof action?.type === "string" && action.type.trim() ? action.type.trim() : "Deploy";
 }
 
+function deployTimingBucket(action) {
+  const value = ["pre_delay", "time_elapsed", "post_delay"]
+    .map(key => Number(action?.[key]))
+    .find(Number.isFinite) || 0;
+  return String(Math.round(Math.max(0, value) / 250) * 250);
+}
+
 function operatorEntries(content) {
   return [
     ...(Array.isArray(content.opers) ? content.opers : []),
@@ -189,8 +196,11 @@ function emptyBucket() {
     actionTypes: {},
     firstActions: {},
     directions: {},
+    directionHeatmap: {},
     deployHeatmap: {},
     firstDeploys: {},
+    deployTiming: {},
+    skillTiming: {},
     operatorUsage: {},
     skillUsage: {},
   };
@@ -209,12 +219,17 @@ function addOperation(bucket, operation) {
   if (actions.some(action => actionType(action).toLowerCase() === "skilldaemon")) bucket.skillDaemonCount++;
   if (actions[0]) increment(bucket.firstActions, actionType(actions[0]));
   for (const action of actions) increment(bucket.actionTypes, actionType(action));
+  for (const action of actions.filter(action => actionType(action).toLowerCase() === "skill")) {
+    increment(bucket.skillTiming, deployTimingBucket(action));
+  }
   for (const [index, action] of deploys.entries()) {
     if (typeof action.direction === "string") increment(bucket.directions, action.direction);
+    increment(bucket.deployTiming, deployTimingBucket(action));
     const location = Array.isArray(action.location) ? action.location : null;
     if (location && Number.isFinite(Number(location[0])) && Number.isFinite(Number(location[1]))) {
       const tile = `${Number(location[1])},${Number(location[0])}`;
       increment(bucket.deployHeatmap, tile);
+      if (typeof action.direction === "string") increment(bucket.directionHeatmap, `${tile}:${action.direction}`);
       if (index < 3) increment(bucket.firstDeploys, `${index + 1}:${tile}`);
     }
   }
@@ -261,8 +276,11 @@ function finalizeBucket(bucket) {
     actionTypesPerScript: rates(bucket.actionTypes, operations, 20),
     firstActionRates: rates(bucket.firstActions, operations, 10),
     directionRates: rates(bucket.directions, deploys, 8),
+    directionHeatmap: topCounts(bucket.directionHeatmap, 40),
     deployHeatmap: topCounts(bucket.deployHeatmap, 40),
     firstDeploys: topCounts(bucket.firstDeploys, 12),
+    deployTiming: topCounts(bucket.deployTiming, 12),
+    skillTiming: topCounts(bucket.skillTiming, 12),
     operatorUsage: topCounts(bucket.operatorUsage, 50),
     skillUsage: topCounts(bucket.skillUsage, 50),
   };

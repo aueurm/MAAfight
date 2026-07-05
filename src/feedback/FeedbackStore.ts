@@ -5,6 +5,17 @@ import { getMaafightDir } from "../player/PlayerConfig";
 import type { PracticeTestResult } from "../shared/practiceResult";
 import type { BattleScript, PlayerOperator } from "../types";
 
+export interface ScriptFingerprint {
+  scriptHash: string;
+  firstDeploy?: string;
+  firstThreeDeploys?: string[];
+  deployCells?: string[];
+  deployDirections?: string[];
+  operatorIds?: string[];
+  timingBucket?: string;
+  skillStrategy?: "daemon" | "none" | "manual" | "mixed";
+}
+
 export interface GenerationRecord {
   schemaVersion: 1 | 2;
   generationId: string;
@@ -114,6 +125,87 @@ export function hashScriptJson(rawJson: string): string {
   return createHash("sha256").update(JSON.stringify(parsed)).digest("hex");
 }
 
+const SCORE_DISTANCE_KEYS = ["publicPrior", "placement", "direction", "timing", "operatorPower"] as const;
+
+function scoreValue(breakdown: Record<string, number>, key: typeof SCORE_DISTANCE_KEYS[number]): number {
+  const value = breakdown[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (key === "publicPrior") return breakdown.corpus ?? 50;
+  if (key === "placement" || key === "direction") return breakdown.position ?? 50;
+  if (key === "operatorPower") return ((breakdown.tasks ?? 50) + (breakdown.combat ?? 50)) / 2;
+  return breakdown.timing ?? 50;
+}
+
+function deploySteps(script: BattleScript): Array<{ name?: string; row: number; col: number; direction?: string; delay: number }> {
+  return script.actions
+    .filter(action => action.type === "Deploy" && action.location)
+    .map(action => ({
+      name: action.name,
+      row: action.location![0],
+      col: action.location![1],
+      direction: action.direction,
+      delay: action.pre_delay || action.time_elapsed || 0,
+    }));
+}
+
+function deployKey(step: ReturnType<typeof deploySteps>[number]): string {
+  return `${step.name || "?"}@${step.row},${step.col}:${step.direction || "None"}`;
+}
+
+function jaccard(left: string[] = [], right: string[] = []): number {
+  if (left.length === 0 || right.length === 0) return 0;
+  const a = new Set(left);
+  const b = new Set(right);
+  const intersection = [...a].filter(value => b.has(value)).length;
+  return intersection / Math.max(1, new Set([...a, ...b]).size);
+}
+
+function orderedOverlap(left: string[] = [], right: string[] = []): number {
+  const length = Math.min(left.length, right.length);
+  if (length === 0) return 0;
+  let matches = 0;
+  for (let index = 0; index < length; index++) {
+    if (left[index] === right[index]) matches++;
+  }
+  return matches / Math.max(left.length, right.length);
+}
+
+function skillStrategy(script: BattleScript): ScriptFingerprint["skillStrategy"] {
+  const hasDaemon = script.actions.some(action => action.type === "SkillDaemon");
+  const hasManual = script.actions.some(action => action.type === "Skill");
+  if (hasDaemon && hasManual) return "mixed";
+  if (hasDaemon) return "daemon";
+  if (hasManual) return "manual";
+  return "none";
+}
+
+export function extractScriptFingerprint(script: BattleScript, scriptHash = ""): ScriptFingerprint {
+  const deploys = deploySteps(script);
+  const deployCells = deploys.map(step => `${step.row},${step.col}`);
+  return {
+    scriptHash,
+    firstDeploy: deploys[0] ? deployKey(deploys[0]) : undefined,
+    firstThreeDeploys: deploys.slice(0, 3).map(deployKey),
+    deployCells: [...new Set(deployCells)].sort(),
+    deployDirections: deploys.map(step => step.direction || "None"),
+    operatorIds: (script.opers || []).map(operator => operator.name).sort(),
+    timingBucket: deploys.map(step => Math.round(step.delay / 1000)).join("|"),
+    skillStrategy: skillStrategy(script),
+  };
+}
+
+export function fingerprintPenalty(candidate: ScriptFingerprint, failed: ScriptFingerprint): number {
+  if (candidate.scriptHash && candidate.scriptHash === failed.scriptHash) return 20;
+  let penalty = 0;
+  if (orderedOverlap(candidate.firstThreeDeploys, failed.firstThreeDeploys) >= 2 / 3) penalty += 8;
+  if (jaccard(candidate.deployCells, failed.deployCells) >= 0.7) penalty += 6;
+  if (orderedOverlap(candidate.deployDirections, failed.deployDirections) >= 0.7) penalty += 4;
+  if (candidate.timingBucket && candidate.timingBucket === failed.timingBucket) penalty += 4;
+  if (jaccard(candidate.operatorIds, failed.operatorIds) >= 0.8) penalty += 3;
+  if (candidate.skillStrategy && candidate.skillStrategy === failed.skillStrategy) penalty += 2;
+  return Math.min(18, penalty);
+}
+
 export class FeedbackStore {
   readonly generationPath: string;
   readonly feedbackPath: string;
@@ -213,12 +305,17 @@ export class FeedbackStore {
         && record.gameDataCommit === revision.gameDataCommit))).at(-1);
   }
 
-  excludedHashes(stageId: string, operatorBoxHash: string, stageContentHash?: string): Set<string> {
+  excludedHashes(stageId: string, operatorBoxHash: string, stageContentHash?: string, engineVersion?: string): Set<string> {
+    const generations = new Map(this.loadGenerations().records.map(record => [record.generationId, record]));
     return new Set(
       this.loadFeedback().records
-        .filter(record => record.stageId === stageId && record.operatorBoxHash === operatorBoxHash
-          && record.usableForLearning && record.ratio < 1
-          && (!stageContentHash || record.stageContentHash === stageContentHash))
+        .filter(record => {
+          const generation = record.generationId ? generations.get(record.generationId) : undefined;
+          return record.stageId === stageId && record.operatorBoxHash === operatorBoxHash
+            && record.usableForLearning && record.ratio < 1
+            && (!stageContentHash || record.stageContentHash === stageContentHash)
+            && (!engineVersion || generation?.engineVersion === engineVersion);
+        })
         .map(record => record.scriptHash)
     );
   }
@@ -229,26 +326,38 @@ export class FeedbackStore {
     breakdown: Record<string, number>,
     stageContentHash?: string
   ): number {
+    return -this.feedbackPenalty(stageId, operatorBoxHash, breakdown, stageContentHash);
+  }
+
+  feedbackPenalty(
+    stageId: string,
+    operatorBoxHash: string,
+    breakdown: Record<string, number>,
+    stageContentHash?: string,
+    script?: BattleScript,
+    engineVersion?: string,
+    scriptHash = ""
+  ): number {
     const generations = new Map(this.loadGenerations().records.map(record => [record.generationId, record]));
     const records = this.loadFeedback().records.filter(record =>
       record.usableForLearning && record.stageId === stageId && record.operatorBoxHash === operatorBoxHash && record.generationId
+      && record.ratio < 1
       && (!stageContentHash || record.stageContentHash === stageContentHash)
+      && (!engineVersion || generations.get(record.generationId!)?.engineVersion === engineVersion)
     );
     if (records.length === 0) return 0;
-    let weightedResidual = 0;
-    let totalWeight = 0;
+    let penalty = 0;
+    const candidateFingerprint = script ? extractScriptFingerprint(script, scriptHash) : null;
     for (const feedback of records) {
       const generation = generations.get(feedback.generationId!);
       if (!generation) continue;
-      const keys = ["combat", "position", "timing", "corpus", "tasks", "automation"];
-      const distance = keys.reduce((sum, key) => sum + Math.abs((breakdown[key] || 0) - (generation.scoreBreakdown[key] || 0)) / 100, 0) / keys.length;
-      const weight = Math.exp(-3 * distance);
-      weightedResidual += (feedback.ratio * 100 - generation.candidateScore) * weight;
-      totalWeight += weight;
+      const value = candidateFingerprint
+        ? fingerprintPenalty(candidateFingerprint, extractScriptFingerprint(generation.script, generation.scriptHash))
+        : Math.exp(-4 * SCORE_DISTANCE_KEYS.reduce((sum, key) =>
+          sum + Math.abs(scoreValue(breakdown, key) - scoreValue(generation.scoreBreakdown, key)) / 100, 0) / SCORE_DISTANCE_KEYS.length);
+      penalty += candidateFingerprint ? value * (1 - feedback.ratio) : (1 - feedback.ratio) * 30 * value;
     }
-    if (totalWeight === 0) return 0;
-    const alpha = Math.min(0.35, records.length / (records.length + 10));
-    return weightedResidual / totalWeight * alpha;
+    return Math.min(18, penalty);
   }
 
   summary(stageId?: string): FeedbackSummary {

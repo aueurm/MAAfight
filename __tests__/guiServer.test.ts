@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { FastifyInstance } from "fastify";
-import { createGuiServer } from "../src/gui/server";
+import { createGuiServer, isRetryableListenError } from "../src/gui/server";
 
 jest.setTimeout(60000);
 
@@ -16,6 +16,12 @@ async function makeApp(options: { configCwd?: string } = {}): Promise<FastifyIns
 }
 
 describe("GUI server routes", () => {
+  it("should retry when Windows denies the preferred GUI port", () => {
+    expect(isRetryableListenError({ code: "EADDRINUSE" })).toBe(true);
+    expect(isRetryableListenError({ code: "EACCES" })).toBe(true);
+    expect(isRetryableListenError({ code: "ENOENT" })).toBe(false);
+  });
+
   it("should return health success", async () => {
     const app = await makeApp();
     const res = await app.inject({ method: "GET", url: "/api/health" });
@@ -186,11 +192,19 @@ describe("GUI server routes", () => {
       payload: { scriptHash: generated.scriptHash, killed: 42, total: 42 },
     });
     const summaryRes = await app.inject({ method: "GET", url: `/api/feedback/summary?stage=${generated.stageId}` });
+    const reusedRes = await app.inject({
+      method: "POST",
+      url: "/api/generate",
+      payload: { stage: "GT-1", outputDir, fileName: "feedback-reused.json" },
+    });
+    const reused = JSON.parse(reusedRes.body);
     await app.close();
 
     expect(feedbackRes.statusCode).toBe(200);
     expect(JSON.parse(feedbackRes.body).record.ratio).toBe(1);
     expect(JSON.parse(summaryRes.body).summary).toMatchObject({ count: 1, usableCount: 1, fullClearCount: 1 });
+    expect(reused.success).toBe(true);
+    expect(reused.scriptHash).toBe(generated.scriptHash);
   });
 
   it("should return error for invalid output directory without crashing", async () => {

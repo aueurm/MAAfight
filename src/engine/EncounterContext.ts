@@ -92,7 +92,7 @@ export function buildEncounterContext(mapData: MapData, facts: StageFacts): Enco
       ),
       control: clamp(fast / Math.max(1, totalCount) + facts.eliteCount / Math.max(1, totalCount), 0, 1),
       antiAir: clamp(flying / Math.max(1, totalCount) * 2, 0, 1),
-      coverage: clamp(facts.laneCount / 4 + facts.routeCells.length / 40, 0, 1),
+      coverage: 0,
       singleTarget: clamp(eliteBossCount / Math.max(1, totalCount) * 3 + facts.bossCount * 0.35, 0, 1),
       area: clamp(largestGroup / 10 + totalCount / Math.max(1, windows.length * 25), 0, 1),
       laneHold: clamp(groundShare * (facts.laneCount / 4 + windows.length / 12), 0, 1),

@@ -429,8 +429,10 @@ async function cmdGenerate(args: Args): Promise<void> {
   } else {
     const result = generateCopilotScript(displayName, mapData, {
       playerOperators,
-      excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash, stageContentHash),
-      feedbackAdjustment: (_script, _hash, breakdown) => feedbackStore.feedbackAdjustment(stageId, operatorBoxHash, { ...breakdown }, stageContentHash),
+      excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash, stageContentHash, revision.engineVersion),
+      feedbackPenalty: (candidateScript, hash, breakdown) => feedbackStore.feedbackPenalty(
+        stageId, operatorBoxHash, { ...breakdown }, stageContentHash, candidateScript, revision.engineVersion, hash
+      ),
     });
     script = result.script;
     modelVersion = result.modelVersion;
