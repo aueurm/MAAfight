@@ -4,7 +4,7 @@
 
 MAAfight 是一个 TypeScript / Node.js 本地工具，提供 CLI 和 Web GUI。它读取 PRTS.Map 关卡数据，通过语料先验和确定性 Beam Search 生成可导入 MAA 的 copilot JSON v3 草稿。
 
-MAAfight 不执行 MAA、ADB 或图像识别，也不把候选评分当作通关率。生成结果需要通过 MAA 实战验证。
+生成引擎不直接执行 MAA、ADB 或图像识别，也不把候选评分当作通关率。GUI / runner 可以调用本机 MAA 进入演习、执行 Copilot 并读取结算结果，用于实战验证和反馈闭环。
 
 ## 核心流水线
 
@@ -29,6 +29,8 @@ Stage ID / code / local data
 - `src/copilot/`：MAA 协议验证与导出。
 - `src/core/pipeline.ts`：CLI / GUI 共用生成入口。
 - `src/feedback/`：实战反馈记录与复用。
+- `src/model-core/`：BattleDSL、候选枚举、CPU ranker 与状态内归一化 Beam Search。
+- `src/runner/`：本机 MAA 执行、画面观测与演习结果采集。
 
 仓库中不得重新引入旧 rules 生成器、旧 `src/battle/` 模块或生成失败 fallback。旧实现只保留在 GitHub 历史中。
 

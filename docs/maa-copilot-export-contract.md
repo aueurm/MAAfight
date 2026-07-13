@@ -9,7 +9,7 @@
 - 默认省略 `requirements`
 - 文件名、`stage_name` 和标题使用正式关卡编号
 
-v2 不提供 groups / hybrid 生成模式。
+v2 始终导出空 `groups`。`hybrid-core` 只在生成阶段选择一份完整脚本，不产生 MAA groups 或混合动作脚本。
 
 ## 名字
 

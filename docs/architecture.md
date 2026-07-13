@@ -2,7 +2,7 @@
 
 ## 核心原则
 
-v2 只有一套生成引擎。`src/engine/` 不得依赖已删除的旧战斗模块，也不存在备用生成器或降级脚本。
+GUI / pipeline 提供三种显式生成模式：`rule-core` 使用 v2 引擎，`model-core` 使用 CPU action ranker，`hybrid-core` 同时生成并通过 shadow 比较选择。`src/engine/` 不依赖 model-core，两者都只能经共享 pipeline 导出与验证。
 
 ```text
 Stage code / local JSON
@@ -13,6 +13,15 @@ Stage code / local JSON
   -> squad Beam (operator + skill)
   -> deployment Beam + cheap scoring
   -> bounded skill engagement scoring
+  -> ScriptValidator + MAAProtocolValidator
+  -> ScriptExporter
+```
+
+```text
+model-core
+  -> owned E2 operators covered by the ranker
+  -> StageFeatures / OperatorFeatures
+  -> candidate enumeration + CPU ranker + state-normalized Beam Search
   -> ScriptValidator + MAAProtocolValidator
   -> ScriptExporter
 ```
@@ -43,6 +52,7 @@ src/
   loader/     关卡、敌人数据库与索引加载
   player/     玩家干员库
   gui/        本地 HTTP API
+  model-core/ BattleDSL、候选枚举、CPU ranker 与 model Beam Search
 ```
 
 ## 引擎模块
@@ -70,3 +80,9 @@ src/
 - runner 层可以调用外部 MAA，但不得被 engine 依赖。
 - 默认执行评估必须走演习保护；普通理智作战只能显式开启。
 - CLI 和 GUI 不实现自己的生成分支，只调用同一 pipeline / engine。
+
+## Model-core 生成边界
+
+公共作业中的 group 按声明顺序解析为首选真实干员。训练样本使用作业内真实 roster；应用内生成先枚举玩家库中模型认识的精二干员，导出时再收敛为 fixed 12 人和 `groups: []`，并拒绝任何不在玩家干员库中的动作。训练样本只保留推理候选空间可表达的正样本；SpeedUp 由应用层补入，无时机条件的 Retreat 不进入生成候选，但历史 Retreat 仍会释放占位并允许后续再部署。
+
+线性 ranker 只比较同一状态内的候选。Beam Search 先用 roster、部署上限和可用点位推导基础部署数，在基础阵容形成前只扩展 Deploy / SkillDaemon；之后才允许 Skill / End。每个状态的候选分数经 log-softmax 后累积，避免把不可跨状态比较的 raw ranker 分直接相加。

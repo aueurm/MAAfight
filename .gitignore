@@ -20,6 +20,8 @@ benchmark-results/
 release/
 logs/
 debug/
+__pycache__/
+*.py[cod]
 
 # 生成脚本
 output/
@@ -34,6 +36,8 @@ test-data/
 # 数据目录
 data/
 !src/data/
+models/*
+!models/cpu-action-ranker-latest-100.json
 
 # 环境配置
 .env
@@ -50,6 +54,8 @@ data/
 *~
 
 # 开发杂项
+.zcode/
+/20
 map_ark_nights_preview.html
 AGENTS.md
 

@@ -125,6 +125,60 @@ textarea {
   height: 16px;
 }
 
+.core-mode {
+  border: 0;
+  margin: 0 0 13px;
+  padding: 0;
+}
+
+.core-mode legend {
+  color: #5f6f84;
+  font-size: 13px;
+  margin-bottom: 7px;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid #c7d2df;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented-control label {
+  display: block;
+  margin: 0;
+}
+
+.segmented-control label + label {
+  border-left: 1px solid #c7d2df;
+}
+
+.segmented-control input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented-control span {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  color: #4f6075;
+  background: #fbfcfe;
+  cursor: pointer;
+}
+
+.segmented-control input:checked + span {
+  color: #ffffff;
+  background: #226fd1;
+}
+
+.segmented-control input:focus-visible + span {
+  box-shadow: inset 0 0 0 3px rgba(43, 125, 233, 0.3);
+}
+
 .actions {
   display: grid;
   align-content: start;

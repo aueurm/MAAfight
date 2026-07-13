@@ -5,7 +5,7 @@ import { PRTSMapAdapter } from "../adapter/PRTSMapAdapter";
 import { resolveStage, searchStages } from "../loader/levelIndex";
 import { validateScript } from "../copilot/ScriptValidator";
 import { validateMAAProtocol } from "../copilot/MAAProtocolValidator";
-import { exportToCopilotFormat } from "../copilot/ScriptExporter";
+import { exportToCopilotFormat, toCopilotObject } from "../copilot/ScriptExporter";
 import { computeScriptHash, extractStageFacts, generateCopilotScript, type StageFacts } from "../engine";
 import { getCombatModelInfo } from "../engine/CombatModel";
 import { computeStageContentHash } from "../engine/EncounterContext";
@@ -13,6 +13,13 @@ import { FeedbackStore, hashOperatorBox } from "../feedback/FeedbackStore";
 import { OperatorBox } from "../player/OperatorBox";
 import { loadConfiguredOperatorBox } from "../player/PlayerConfig";
 import { getRuntimePaths } from "../runtime/paths";
+import { generateAppModelScript } from "../model-core/appGenerator";
+import {
+  compareShadowScripts,
+  type ShadowComparison,
+  type ShadowCoreMode,
+  type ShadowCoreName,
+} from "../model-core/shadowCore";
 import { inferStageIdFromDataPath, getDisplayStageName } from "./stageDisplay";
 import type {
   BattleScript,
@@ -32,6 +39,7 @@ export interface PipelineOptions {
   cacheDir?: string;
   dataUrl?: string;
   stateDir?: string;
+  modelCorePath?: string;
 }
 
 export interface AnalyzeStageInput extends OperatorInput {
@@ -44,6 +52,7 @@ export interface GenerateStageInput extends OperatorInput {
   outputDir?: string;
   fileName?: string;
   newCandidate?: boolean;
+  core?: ShadowCoreMode;
 }
 
 export interface ValidateScriptInput {
@@ -72,6 +81,9 @@ export interface GenerateStageResult extends AnalyzeStageResult {
   modelVersion: string;
   combatCoverage: number;
   skillCoverage: number;
+  requestedCore: ShadowCoreMode;
+  selectedCore: ShadowCoreName;
+  shadowComparison?: ShadowComparison;
 }
 
 export interface ValidateScriptResult {
@@ -94,6 +106,22 @@ export interface StageSuggestion {
 export const DEFAULT_CACHE_DIR = getRuntimePaths().cacheLevelsDir;
 export const DEFAULT_DATA_URL = process.env.MAAFIGHT_DATA_URL || "https://map.ark-nights.com";
 export const DEFAULT_OUTPUT_DIR = getRuntimePaths().outputDir;
+
+function coreMode(value: unknown): ShadowCoreMode {
+  const mode = value || "rule-core";
+  if (mode !== "rule-core" && mode !== "model-core" && mode !== "hybrid-core") {
+    throw new Error("core must be rule-core, model-core, or hybrid-core");
+  }
+  return mode;
+}
+
+function modelCorePath(options: PipelineOptions): string {
+  const file = path.resolve(options.modelCorePath
+    || process.env.MAAFIGHT_MODEL_CORE_PATH
+    || path.join(getRuntimePaths().homeDir, "models", "cpu-action-ranker-latest-100.json"));
+  if (!fs.existsSync(file)) throw new Error(`Model core weights not found: ${file}`);
+  return file;
+}
 
 function sanitizeFileName(name: string): string {
   const baseName = path.basename(name).trim();
@@ -200,6 +228,7 @@ export async function analyzeStage(input: AnalyzeStageInput, options: PipelineOp
 
 export async function generateStage(input: GenerateStageInput, options: PipelineOptions = {}): Promise<GenerateStageResult> {
   if (!input.stage?.trim()) throw new Error("stage is required");
+  const requestedCore = coreMode(input.core);
   const parsedOperators = parseOperatorInput(input, options.stateDir);
   const warnings = [...parsedOperators.warnings];
   const { mapData, facts, stageId, stageName, resolved } = await buildStageContext(input.stage.trim(), options);
@@ -207,7 +236,7 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
   const operatorBoxHash = hashOperatorBox(parsedOperators.playerOperators);
   const stageContentHash = computeStageContentHash(mapData);
   const combatModel = getCombatModelInfo();
-  const successful = !input.newCandidate ? feedbackStore.successfulGeneration(stageId, operatorBoxHash, {
+  const successful = requestedCore === "rule-core" && !input.newCandidate ? feedbackStore.successfulGeneration(stageId, operatorBoxHash, {
     engineVersion: "v2-skill-v1",
     stageContentHash,
     gameDataCommit: combatModel.commit,
@@ -221,6 +250,8 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
   let candidateScore: number;
   let scoreBreakdown: Record<string, number>;
   let reusedFromGenerationId: string | undefined;
+  let selectedCore: ShadowCoreName = "rule-core";
+  let shadowComparison: ShadowComparison | undefined;
 
   if (successful && successful.engineVersion === "v2-skill-v1") {
     script = JSON.parse(JSON.stringify(successful.script)) as BattleScript;
@@ -250,6 +281,30 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     warnings.push(...result.warnings);
   }
 
+  if (requestedCore !== "rule-core") {
+    const model = generateAppModelScript({
+      stageName,
+      mapData,
+      facts,
+      squadScript: script,
+      playerOperators: parsedOperators.playerOperators,
+      modelPath: modelCorePath(options),
+    });
+    shadowComparison = compareShadowScripts({
+      mode: requestedCore,
+      ruleScript: requestedCore === "hybrid-core" ? toCopilotObject(script) as unknown as BattleScript : undefined,
+      modelScript: toCopilotObject(model.script) as unknown as BattleScript,
+    });
+    selectedCore = shadowComparison.selectedCore;
+    if (selectedCore === "model-core") {
+      script = model.script;
+      modelVersion = model.modelVersion;
+      candidateScore = model.score;
+      scoreBreakdown = { actionRanker: model.score };
+    }
+    warnings.push(`Requested ${requestedCore}; selected ${selectedCore}: ${shadowComparison.selectionReason}.`);
+  }
+
   const validation = validateScript(script, mapData);
   const protocol = validateMAAProtocol(script);
   if (!validation.valid || !protocol.valid) {
@@ -273,7 +328,9 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     stageId,
     stageName,
     operatorBoxHash,
-    engineVersion: "v2-skill-v1",
+    engineVersion: requestedCore === "rule-core"
+      ? "v2-skill-v1"
+      : requestedCore === "model-core" ? "cpu-core-v0" : "hybrid-core-v0",
     modelVersion,
     combatDataVersion,
     candidateScore,
@@ -302,6 +359,7 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     protocol,
     explain: [
       `Stage: ${facts.stageId}`,
+      `Core: ${requestedCore} -> ${selectedCore}`,
       `Facts: ${facts.summary}`,
       `Candidate score: ${candidateScore.toFixed(2)} (ranking only, not a clear rate)`,
       ...warnings.map(warning => `Warning: ${warning}`),
@@ -313,6 +371,9 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     modelVersion,
     combatCoverage,
     skillCoverage,
+    requestedCore,
+    selectedCore,
+    shadowComparison,
   };
 }
 

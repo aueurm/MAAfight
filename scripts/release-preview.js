@@ -159,7 +159,7 @@ function maybeZipPackage() {
 }
 
 function main() {
-  for (const required of ["dist", "web/dist", "node_modules"]) {
+  for (const required of ["dist", "web/dist", "node_modules", "models/cpu-action-ranker-latest-100.json"]) {
     const fullPath = path.join(repoRoot, required);
     if (!fs.existsSync(fullPath)) {
       throw new Error(`Missing ${required}. Run npm install and npm run build first.`);
@@ -181,6 +181,11 @@ function main() {
   if (fs.existsSync(path.join(repoRoot, "cache"))) {
     copyDir(path.join(repoRoot, "cache"), path.join(packageRoot, "cache"));
   }
+  fs.mkdirSync(path.join(packageRoot, "models"), { recursive: true });
+  fs.copyFileSync(
+    path.join(repoRoot, "models", "cpu-action-ranker-latest-100.json"),
+    path.join(packageRoot, "models", "cpu-action-ranker-latest-100.json")
+  );
 
   writeStartBat();
   writeReadme();

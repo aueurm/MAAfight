@@ -189,6 +189,7 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
         outputDir,
         fileName: body.fileName,
         newCandidate: body.newCandidate,
+        core: body.core,
       }, {
         cacheDir: runtime.cacheLevelsDir,
         stateDir: cwd,
@@ -196,7 +197,7 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
       saveLastOutputDir(result.outputDir, cwd);
       writeGuiLog("generate_success", {
         stage: body.stage,
-        engine: "v2",
+        engine: body.core || "rule-core",
         outputPath: result.outputPath,
         warningCount: result.warnings.length + result.validation.warnings.length + result.protocol.warnings.length,
         errorCount: result.validation.errors.length + result.protocol.errors.length,
@@ -205,7 +206,7 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
     } catch (err) {
       writeGuiLog("generate_failed", {
         stage: body.stage,
-        engine: "v2",
+        engine: body.core || "rule-core",
         errorCount: 1,
         error: errorMessage(err),
       });

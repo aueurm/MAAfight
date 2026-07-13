@@ -1,18 +1,3 @@
-export interface ApiSuccess<T> {
-  success: true;
-  warnings: string[];
-  errors: string[];
-  data: T;
-}
-
-export interface ApiFailure {
-  success: false;
-  warnings: string[];
-  errors: string[];
-}
-
-export type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
-
 export interface AnalyzeRequest {
   stage?: string;
   operatorsJson?: string;
@@ -24,6 +9,7 @@ export interface GenerateRequest extends AnalyzeRequest {
   outputDir?: string;
   fileName?: string;
   newCandidate?: boolean;
+  core?: "rule-core" | "model-core" | "hybrid-core";
 }
 
 export interface EnterPracticeRequest {

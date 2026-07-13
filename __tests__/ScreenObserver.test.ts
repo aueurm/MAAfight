@@ -45,6 +45,19 @@ describe("sampleSettlementStars", () => {
     });
   });
 
+  it("counts lit cyan-blue stars and dark grey unlit star", () => {
+    const bgr = blank();
+    paint(bgr, 102, 322, 240, 210, 50);
+    paint(bgr, 174, 322, 240, 210, 50);
+    paint(bgr, 246, 322, 45, 45, 45);
+
+    expect(sampleSettlementStars(bgr)).toMatchObject({
+      recognized: true,
+      stars: 2,
+      outcome: "partial_clear",
+    });
+  });
+
   it("keeps outcome unknown when star regions are not recognized", () => {
     expect(sampleSettlementStars(blank())).toMatchObject({
       recognized: false,

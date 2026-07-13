@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { FastifyInstance } from "fastify";
+import { getCombatOperatorByName } from "../src/engine/CombatModel";
 import { createGuiServer } from "../src/gui/server";
 
 jest.setTimeout(60000);
@@ -13,6 +14,14 @@ async function makeApp(options: { configCwd?: string } = {}): Promise<FastifyIns
     openDir: async () => undefined,
     configCwd,
   });
+}
+
+function modelOwnedOperators(): Array<Record<string, unknown>> {
+  const model = JSON.parse(fs.readFileSync(path.join(process.cwd(), "models", "cpu-action-ranker-latest-100.json"), "utf-8"));
+  return Object.keys(model.operatorPriors)
+    .filter(name => getCombatOperatorByName(name))
+    .slice(0, 12)
+    .map((name, index) => ({ id: `owned-${index}`, name, rarity: 6, own: true, elite: 2, level: 90, potential: 1 }));
 }
 
 describe("GUI server routes", () => {
@@ -168,6 +177,41 @@ describe("GUI server routes", () => {
     expect(generated.opers.every((operator: { requirements?: unknown }) => operator.requirements === undefined)).toBe(true);
     expect(generated.actions.some((action: { type: string }) => action.type === "Wait")).toBe(false);
     expect(configBody.defaultOutputDir).toBe(outputDir);
+  });
+
+  it("should generate through model and hybrid cores", async () => {
+    const configCwd = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-cores-config-"));
+    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-cores-output-"));
+    const app = await makeApp({ configCwd });
+    const operators = modelOwnedOperators();
+    const ownedNames = new Set(operators.map(operator => String(operator.name)));
+
+    for (const core of ["model-core", "hybrid-core"] as const) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/generate",
+        payload: { stage: "GT-1", core, operatorsJson: JSON.stringify(operators), outputDir, fileName: `${core}.json` },
+      });
+      const body = JSON.parse(res.body);
+
+      expect(res.statusCode).toBe(200);
+      expect(body.success).toBe(true);
+      expect(body.requestedCore).toBe(core);
+      expect(body.selectedCore).toBe(core === "model-core" ? "model-core" : "rule-core");
+      expect(body.validation.valid).toBe(true);
+      expect(body.protocol.valid).toBe(true);
+      expect(fs.existsSync(body.outputPath)).toBe(true);
+      expect(body.script.opers).toHaveLength(12);
+      expect(body.script.opers.every((operator: { name: string }) => ownedNames.has(operator.name))).toBe(true);
+      expect(body.script.actions.filter((action: { name?: string }) => action.name)
+        .every((action: { name: string }) => ownedNames.has(action.name))).toBe(true);
+      if (core === "hybrid-core") {
+        expect(body.shadowComparison.ruleCore.validationPassed).toBe(true);
+        expect(body.shadowComparison.modelCore.validationPassed).toBe(true);
+      }
+    }
+
+    await app.close();
   });
 
   it("should record and summarize battle feedback", async () => {

@@ -1,4 +1,5 @@
 export type PracticeTestResult = "进入失败" | "失败" | "二星" | "三星";
+export type GenerationCoreMode = "rule-core" | "model-core" | "hybrid-core";
 
 export interface ApiBase {
   success: boolean;
@@ -58,6 +59,9 @@ export interface GenerateResponse extends AnalyzeResponse {
   candidateScore?: number;
   modelVersion?: string;
   combatCoverage?: number;
+  requestedCore?: GenerationCoreMode;
+  selectedCore?: "rule-core" | "model-core";
+  shadowComparison?: unknown;
 }
 
 export interface ValidateResponse extends ApiBase {
@@ -107,6 +111,7 @@ export interface GenerateRequest {
   outputDir?: string;
   fileName?: string;
   newCandidate?: boolean;
+  core?: GenerationCoreMode;
 }
 
 export interface FeedbackResponse extends ApiBase {

@@ -812,6 +812,16 @@ function joinOperationWithMap(feature, mapResult) {
   }
 
   const publicMetrics = { ...metrics };
+  publicMetrics.deploymentPoints = join.deploymentPoints;
+  publicMetrics.routeCells = [...new Map(
+    join.routePoints.map(point => [`${point.row},${point.col}`, point])
+  ).values()];
+  publicMetrics.goalCells = [...new Map(
+    join.endPoints.map(point => [`${point.row},${point.col}`, point])
+  ).values()];
+  publicMetrics.chokeCells = [...new Map(
+    join.chokepoints.map(point => [`${point.row},${point.col}`, point])
+  ).values()];
   delete publicMetrics._join;
   return {
     mapMatched: true,

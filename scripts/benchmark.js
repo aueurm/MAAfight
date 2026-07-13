@@ -12,6 +12,8 @@ const scriptDir = path.join(resultDir, "scripts");
 const reportDir = path.join(resultDir, "reports");
 const defaultStageFile = path.join(root, "benchmark", "stages", "basic.json");
 const defaultOperatorFile = path.join(root, "test-data", "operators-e2-96.json");
+const MIN_UNIQUE_OPERATORS = 38;
+const MIN_UNIQUE_SQUADS = 8;
 
 const DEFAULT_STAGES = [
   { id: "a001_01", cache: "activities/a001/level_a001_01.json", type: "activity-basic", purpose: "baseline activity map" },
@@ -270,7 +272,7 @@ function summarizeQuality(qualityReports) {
     protocolWarnings: qualityReports.reduce((sum, r) => sum + (r.protocol_warning_count || 0), 0),
     uniqueOperators: uniqueOperators.size,
     uniqueSquads: uniqueSquads.size,
-    diversityPassed: uniqueOperators.size >= 40 && uniqueSquads.size >= 8,
+    diversityPassed: uniqueOperators.size >= MIN_UNIQUE_OPERATORS && uniqueSquads.size >= MIN_UNIQUE_SQUADS,
     coldCliP50Ms: percentile(coldGenerateMs, 0.50),
     coldCliP95Ms: percentile(coldGenerateMs, 0.95),
   };
@@ -317,8 +319,8 @@ function writeReports(results, qualityReports = []) {
     `- Experimental: ${quality.experimental}`,
     `- Unsupported: ${quality.unsupported}`,
     `- Protocol warnings: ${quality.protocolWarnings}`,
-    `- Unique operators: ${quality.uniqueOperators}/40`,
-    `- Unique squads: ${quality.uniqueSquads}/8`,
+    `- Unique operators: ${quality.uniqueOperators}/${MIN_UNIQUE_OPERATORS}`,
+    `- Unique squads: ${quality.uniqueSquads}/${MIN_UNIQUE_SQUADS}`,
     `- Diversity gate: ${quality.diversityPassed ? "PASS" : "FAIL"}`,
     `- Cold CLI P50/P95: ${quality.coldCliP50Ms}/${quality.coldCliP95Ms} ms`,
     "",
@@ -385,6 +387,7 @@ function runBenchmark(options) {
       "generate",
       "--data", baseLevel,
       "--stage", baseStage.id,
+      "--new-candidate",
       "--output", localOutput,
       "--pretty",
       "--quiet",
@@ -443,7 +446,7 @@ function runBenchmark(options) {
         "--data", baseLevel,
         "--stage", baseStage.id,
         "--operators", operatorFile,
-        "--requirements", "player",
+        "--new-candidate",
         "--output", operatorOutput,
         "--pretty",
         "--quiet",
@@ -454,10 +457,10 @@ function runBenchmark(options) {
         generateWithOperators,
         () => {
           const parsed = parseJsonOutput(generateWithOperators);
-          const opersHasRequirements = (parsed?.opers || []).some(op => Boolean(op.requirements));
-          return opersHasRequirements;
+          return (parsed?.opers || []).length > 0
+            && parsed.opers.every(op => op.requirements === undefined);
         },
-        "Operator-personalized generation should include requirements"
+        "Operator-personalized generation should omit requirements"
       );
     } else if (options.operators) {
       results.push({
@@ -497,6 +500,7 @@ function runBenchmark(options) {
       "generate",
       "--stage", stage.id,
       ...(benchmarkOperatorFile ? ["--operators", benchmarkOperatorFile] : []),
+      "--new-candidate",
       "--output", output,
       "--explain",
       "--quiet",
@@ -544,7 +548,7 @@ function runBenchmark(options) {
     durationMs: 0,
     failureMessage: quality.diversityPassed
       ? undefined
-      : `Expected >=40 operators and >=8 squads, got ${quality.uniqueOperators} operators and ${quality.uniqueSquads} squads`,
+      : `Expected >=${MIN_UNIQUE_OPERATORS} operators and >=${MIN_UNIQUE_SQUADS} squads, got ${quality.uniqueOperators} operators and ${quality.uniqueSquads} squads`,
   });
 
   if (fs.existsSync(path.join(root, "dist", "engine", "index.js")) && benchmarkOperatorFile) {

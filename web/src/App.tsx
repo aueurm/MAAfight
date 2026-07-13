@@ -11,6 +11,7 @@ import {
   validateScript,
   type ConfigResponse,
   type FeedbackSummary,
+  type GenerationCoreMode,
   type GenerateResponse,
   type StageSuggestion,
 } from "./api";
@@ -80,6 +81,7 @@ export default function App() {
   const [maaPath, setMaaPath] = useState("");
   const [showOperatorsPaste, setShowOperatorsPaste] = useState(false);
   const [newCandidate, setNewCandidate] = useState(false);
+  const [coreMode, setCoreMode] = useState<GenerationCoreMode>("rule-core");
   const [pretty, setPretty] = useState(true);
   const [outputDir, setOutputDir] = useState("");
   const [fileName, setFileName] = useState("");
@@ -224,6 +226,7 @@ export default function App() {
         outputDir,
         fileName: fileName.trim() || undefined,
         newCandidate,
+        core: coreMode,
       });
       setWarnings(response.warnings || []);
       setResult(response);
@@ -453,6 +456,8 @@ export default function App() {
       maaPath,
       stage,
       engine: "v2",
+      coreMode,
+      selectedCore: result?.selectedCore,
       pretty,
       fileName: fileName || result?.fileName,
       warningCount: warnings.length,
@@ -582,6 +587,28 @@ export default function App() {
             )}
           </label>
 
+          <fieldset className="core-mode">
+            <legend>生成模式</legend>
+            <div className="segmented-control">
+              {([
+                ["rule-core", "传统"],
+                ["model-core", "模型"],
+                ["hybrid-core", "综合"],
+              ] as const).map(([value, label]) => (
+                <label key={value}>
+                  <input
+                    type="radio"
+                    name="core-mode"
+                    value={value}
+                    checked={coreMode === value}
+                    onChange={() => setCoreMode(value)}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
           <div className="operator-card">
             <div>
               <span className="section-label">本地干员库</span>
@@ -680,6 +707,7 @@ export default function App() {
           {statusMessage && errors.length === 0 && !practiceTestResult && <div className="alert success"><p>{statusMessage}</p></div>}
           {!statusMessage && !practiceTestResult && result?.success && errors.length === 0 && <div className="alert success"><p>成功</p></div>}
           {analysisSummary && <pre className="summary">{analysisSummary}</pre>}
+          {result?.requestedCore && <p className="hint">生成模式：{result.requestedCore}；采用：{result.selectedCore || "-"}</p>}
           {result?.explain && <pre className="summary">{result.explain}</pre>}
           {result?.validation !== undefined && <pre className="summary">{asJson(result.validation)}</pre>}
           {result?.scriptHash && (

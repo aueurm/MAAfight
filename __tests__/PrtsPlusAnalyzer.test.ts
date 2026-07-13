@@ -40,8 +40,13 @@ describe("PRTS Plus corpus analyzer", () => {
       stageId: "test",
       tiles: [[{ row: 0, col: 0 }]],
       deploymentPoints: [],
-      routes: [],
-      strategicPoints: [],
+      routes: [{
+        startPosition: { row: 0, col: 0 },
+        checkpoints: [{ row: 0, col: 0 }],
+        endPosition: { row: 0, col: 0 },
+        motionMode: "walk",
+      }],
+      strategicPoints: [{ type: "chokepoint", row: 0, col: 0 }],
       enemyDetails: [
         {
           id: "enemy_boss",
@@ -78,6 +83,12 @@ describe("PRTS Plus corpus analyzer", () => {
     expect(metrics.deploymentPointCount).toBe(1);
     expect(metrics.flexiblePointCount).toBe(1);
     expect(metrics.bossTypeCount).toBe(1);
+    expect(joined.map.deploymentPoints).toEqual([
+      { row: 0, col: 0, buildableType: "all" },
+    ]);
+    expect(joined.map.routeCells).toEqual([{ row: 0, col: 0 }]);
+    expect(joined.map.goalCells).toEqual([{ row: 0, col: 0 }]);
+    expect(joined.map.chokeCells).toEqual([{ type: "chokepoint", row: 0, col: 0 }]);
     expect(joined.deploymentMapFeatures.matchedDeployableCount).toBe(1);
     expect(joined.deploymentMapFeatures.flexibleDeployCount).toBe(1);
   });

@@ -102,7 +102,7 @@ function isLitStar(b: number, g: number, r: number): boolean {
 function isNeutralStar(b: number, g: number, r: number): boolean {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
-  return max >= 95 && max <= 225 && max - min <= 28;
+  return max >= 25 && max <= 225 && max - min <= 30;
 }
 
 function outcomeFromStars(stars: number): RunOutcome {
