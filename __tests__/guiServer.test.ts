@@ -2,7 +2,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { FastifyInstance } from "fastify";
-import { getCombatOperatorByName } from "../src/engine/CombatModel";
+import { listCombatOperators } from "../src/engine/CombatModel";
+import { publishThreeStarCandidate } from "../src/gui/routes";
 import { createGuiServer } from "../src/gui/server";
 
 jest.setTimeout(60000);
@@ -16,12 +17,26 @@ async function makeApp(options: { configCwd?: string } = {}): Promise<FastifyIns
   });
 }
 
-function modelOwnedOperators(): Array<Record<string, unknown>> {
-  const model = JSON.parse(fs.readFileSync(path.join(process.cwd(), "models", "cpu-action-ranker-latest-100.json"), "utf-8"));
-  return Object.keys(model.operatorPriors)
-    .filter(name => getCombatOperatorByName(name))
+function deepSeekOwnedOperators(): Array<Record<string, unknown>> {
+  return listCombatOperators()
+    .filter(operator => operator.skills[0]?.unlockPhase <= 2)
     .slice(0, 12)
-    .map((name, index) => ({ id: `owned-${index}`, name, rarity: 6, own: true, elite: 2, level: 90, potential: 1 }));
+    .map((operator, index) => ({ id: `owned-${index}`, name: operator.name, rarity: 6, own: true, elite: 2, level: 90, potential: 1 }));
+}
+
+function deepSeekCandidate(context: any) {
+  const selected = new Set<string>();
+  const lines = context.roster.slice(0, 12).map((operator: { name: string }) => `operator(${operator.name}, 1, 1)`);
+  for (const front of context.stage.blueGateFronts.flatMap((gate: { blockingPoints: Array<{ x: number; y: number; direction: string }> }) => gate.blockingPoints)) {
+    const operator = context.roster.find((item: { name: string; position: string }) => !selected.has(item.name) && item.position === "MELEE");
+    if (!operator) continue;
+    selected.add(operator.name);
+    lines.push(`deploy(${operator.name}, ${front.x}, ${front.y}, ${front.direction})`);
+  }
+  lines.push("skillDaemon()");
+  return {
+    battleDsl: lines.join("\n"),
+  };
 }
 
 describe("GUI server routes", () => {
@@ -179,39 +194,60 @@ describe("GUI server routes", () => {
     expect(configBody.defaultOutputDir).toBe(outputDir);
   });
 
-  it("should generate through model and hybrid cores", async () => {
-    const configCwd = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-cores-config-"));
-    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-cores-output-"));
+  it("should generate a DeepSeek candidate without publishing it", async () => {
+    const configCwd = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-deepseek-config-"));
+    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-gui-deepseek-output-"));
     const app = await makeApp({ configCwd });
-    const operators = modelOwnedOperators();
-    const ownedNames = new Set(operators.map(operator => String(operator.name)));
+    const operators = deepSeekOwnedOperators();
+    const oldKey = process.env.DEEPSEEK_API_KEY;
+    const oldFetch = global.fetch;
+    process.env.DEEPSEEK_API_KEY = "test-key";
+    global.fetch = jest.fn(async (_url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body);
+      const payload = JSON.parse(body.messages[1].content);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(deepSeekCandidate(payload.context)) } }] }), { status: 200 });
+    }) as unknown as typeof fetch;
 
-    for (const core of ["model-core", "hybrid-core"] as const) {
+    try {
       const res = await app.inject({
         method: "POST",
         url: "/api/generate",
-        payload: { stage: "GT-1", core, operatorsJson: JSON.stringify(operators), outputDir, fileName: `${core}.json` },
+        payload: { stage: "GT-1", core: "deepseek-core", operatorsJson: JSON.stringify(operators), outputDir, fileName: "deepseek.json" },
       });
       const body = JSON.parse(res.body);
 
       expect(res.statusCode).toBe(200);
       expect(body.success).toBe(true);
-      expect(body.requestedCore).toBe(core);
-      expect(body.selectedCore).toBe(core === "model-core" ? "model-core" : "rule-core");
+      expect(body.requestedCore).toBe("deepseek-core");
       expect(body.validation.valid).toBe(true);
       expect(body.protocol.valid).toBe(true);
       expect(fs.existsSync(body.outputPath)).toBe(true);
+      expect(body.outputPath).toBe(path.join(outputDir, ".candidates", "deepseek.json"));
+      expect(fs.existsSync(path.join(outputDir, "deepseek.json"))).toBe(false);
       expect(body.script.opers).toHaveLength(12);
-      expect(body.script.opers.every((operator: { name: string }) => ownedNames.has(operator.name))).toBe(true);
-      expect(body.script.actions.filter((action: { name?: string }) => action.name)
-        .every((action: { name: string }) => ownedNames.has(action.name))).toBe(true);
-      if (core === "hybrid-core") {
-        expect(body.shadowComparison.ruleCore.validationPassed).toBe(true);
-        expect(body.shadowComparison.modelCore.validationPassed).toBe(true);
-      }
+      expect(body.publicationStatus).toBe("candidate");
+    } finally {
+      if (oldKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+      else process.env.DEEPSEEK_API_KEY = oldKey;
+      global.fetch = oldFetch;
+      await app.close();
     }
+  });
 
-    await app.close();
+  it("should only promote an internal DeepSeek candidate after a three-star result", () => {
+    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-deepseek-publish-"));
+    const candidateDir = path.join(outputDir, ".candidates");
+    const candidatePath = path.join(candidateDir, "candidate.json");
+    fs.mkdirSync(candidateDir, { recursive: true });
+    fs.writeFileSync(candidatePath, JSON.stringify({
+      doc: { title: "candidate", details: "Internal candidate; not rehearsal-verified." },
+      metadata: { source: "maafight-deepseek-core" },
+    }), "utf8");
+
+    expect(publishThreeStarCandidate(candidatePath)).toBe(path.join(outputDir, "candidate.json"));
+    expect(fs.existsSync(path.join(outputDir, "candidate.json"))).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(outputDir, "candidate.json"), "utf8")).doc.details).toBe("Three-star rehearsal verified.");
+    expect(publishThreeStarCandidate(path.join(outputDir, "candidate.json"))).toBeUndefined();
   });
 
   it("should record and summarize battle feedback", async () => {

@@ -13,9 +13,7 @@ Stage ID / code / local data
   -> PRTSMapLoader
   -> PRTSMapAdapter
   -> StageFacts
-  -> CandidateBuilder
-  -> six-part scoring
-  -> deterministic Beam Search
+  -> rule-core 确定性搜索 或 deepseek-core 结构化规划
   -> ScriptValidator / MAAProtocolValidator
   -> ScriptExporter
 ```
@@ -29,7 +27,7 @@ Stage ID / code / local data
 - `src/copilot/`：MAA 协议验证与导出。
 - `src/core/pipeline.ts`：CLI / GUI 共用生成入口。
 - `src/feedback/`：实战反馈记录与复用。
-- `src/model-core/`：BattleDSL、候选枚举、CPU ranker 与状态内归一化 Beam Search。
+- `src/deepseek-core/`：固定 Prompt、DeepSeek API 调用和候选确定性编译。
 - `src/runner/`：本机 MAA 执行、画面观测与演习结果采集。
 
 仓库中不得重新引入旧 rules 生成器、旧 `src/battle/` 模块或生成失败 fallback。旧实现只保留在 GitHub 历史中。
@@ -43,6 +41,7 @@ Stage ID / code / local data
 - 模型、搜索或协议验证失败时直接报错。
 - CLI stdout 输出 JSON 时，warning 和 explain 走 stderr。
 - 评分只用于候选排序，不得描述为歼灭率或通关率。
+- `deepseek-core` 从 `.env` 读取 `DEEPSEEK_API_KEY`；不得打印、记录或提交密钥。静态合法候选只能写入 `output/.candidates/`，真实三星演习后才可发布到 `output/`。
 
 修改 engine、copilot、pipeline 或 GUI 生成入口前，先读 `docs/maa-copilot-export-contract.md`。
 

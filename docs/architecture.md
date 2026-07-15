@@ -2,7 +2,7 @@
 
 ## 核心原则
 
-GUI / pipeline 提供三种显式生成模式：`rule-core` 使用 v2 引擎，`model-core` 使用 CPU action ranker，`hybrid-core` 同时生成并通过 shadow 比较选择。`src/engine/` 不依赖 model-core，两者都只能经共享 pipeline 导出与验证。
+GUI / pipeline 只提供两条显式路线：`rule-core` 使用 v2 确定性引擎；`deepseek-core` 使用 DeepSeek API 规划、再由本地确定性编译器校验。两者共用 copilot 导出与验证，任何 DeepSeek 候选都不能绕过本地校验或演习发布门槛。
 
 ```text
 Stage code / local JSON
@@ -18,12 +18,12 @@ Stage code / local JSON
 ```
 
 ```text
-model-core
-  -> owned E2 operators covered by the ranker
-  -> StageFeatures / OperatorFeatures
-  -> candidate enumeration + CPU ranker + state-normalized Beam Search
-  -> ScriptValidator + MAAProtocolValidator
-  -> ScriptExporter
+deepseek-core
+  -> 固定应用层 Prompt + 关卡 / 地图 / 玩家干员上下文
+  -> DeepSeek chat completions
+  -> BattleDSL + ScriptValidator + MAAProtocolValidator
+  -> output/.candidates/（静态合法的内部候选）
+  -> GUI 三星演习后发布到 output/
 ```
 
 执行评估层独立于生成链路：
@@ -52,7 +52,7 @@ src/
   loader/     关卡、敌人数据库与索引加载
   player/     玩家干员库
   gui/        本地 HTTP API
-  model-core/ BattleDSL、候选枚举、CPU ranker 与 model Beam Search
+  deepseek-core/ 固定 Prompt、API 调用与候选确定性编译
 ```
 
 ## 引擎模块
@@ -80,9 +80,6 @@ src/
 - runner 层可以调用外部 MAA，但不得被 engine 依赖。
 - 默认执行评估必须走演习保护；普通理智作战只能显式开启。
 - CLI 和 GUI 不实现自己的生成分支，只调用同一 pipeline / engine。
-
-## Model-core 生成边界
-
-公共作业中的 group 按声明顺序解析为首选真实干员。训练样本使用作业内真实 roster；应用内生成先枚举玩家库中模型认识的精二干员，导出时再收敛为 fixed 12 人和 `groups: []`，并拒绝任何不在玩家干员库中的动作。训练样本只保留推理候选空间可表达的正样本；SpeedUp 由应用层补入，无时机条件的 Retreat 不进入生成候选，但历史 Retreat 仍会释放占位并允许后续再部署。
-
-线性 ranker 只比较同一状态内的候选。Beam Search 先用 roster、部署上限和可用点位推导基础部署数，在基础阵容形成前只扩展 Deploy / SkillDaemon；之后才允许 Skill / End。每个状态的候选分数经 log-softmax 后累积，避免把不可跨状态比较的 raw ranker 分直接相加。
+- DeepSeek 连接直接使用原生 `fetch` 和 `.env` 中的 `DEEPSEEK_API_KEY`，不引入 Provider 抽象或外部 SDK。
+- DeepSeek 的固定 Prompt 不接受用户自由战术要求；输入只包含关卡事实、合法部署点、路线、敌人和当前玩家干员 / 技能。
+- `deepseek-core` 将 `MANUAL`、`AUTO`、`PASSIVE` 技能类型提供给规划模型：仅手动技能可生成 `Skill`；条件撤退和手动技能条件使用 MAA 原生字段，含 `time_elapsed` 的候选在编译时自动从 `ResetStopwatch` 开始计时。

@@ -31,6 +31,7 @@ describe("exportToCopilotFormat", () => {
     expect(parsed.actions).toBeDefined();
     expect(parsed.groups).toBeDefined();
     expect(parsed.version).toBe(3);
+    expect(parsed.metadata).toMatchObject({ source: "ai" });
   });
 
   it("should produce pretty-printed JSON by default", () => {

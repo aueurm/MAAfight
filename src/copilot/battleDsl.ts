@@ -2,7 +2,7 @@ import type { BattleScriptAction, ValidationResult } from "../types";
 
 export const DELAY_BUCKETS = [0, 250, 500, 750, 1000, 1500, 3000, 5000] as const;
 export const DIRECTIONS = ["Up", "Down", "Left", "Right", "None"] as const;
-const ACTION_TYPES = ["SpeedUp", "Deploy", "SkillDaemon", "SkillUse", "Retreat", "End"] as const;
+const ACTION_TYPES = ["SpeedUp", "Deploy", "SkillDaemon", "SkillUse", "Retreat", "ResetStopwatch", "End"] as const;
 
 export type DelayBucket = typeof DELAY_BUCKETS[number];
 export type Direction = typeof DIRECTIONS[number];
@@ -16,6 +16,11 @@ export type BattleAction = {
   y?: number;
   direction?: Direction | string;
   skillIndex?: number;
+  kills?: number;
+  costs?: number;
+  costChanges?: number;
+  cooling?: number;
+  timeElapsed?: number;
   raw?: unknown;
 };
 
@@ -61,8 +66,31 @@ function normalizeActionType(value: unknown): BattleActionType | null {
   if (key === "skilldaemon") return "SkillDaemon";
   if (key === "skill" || key === "skilluse") return "SkillUse";
   if (key === "retreat") return "Retreat";
+  if (key === "resetstopwatch") return "ResetStopwatch";
   if (key === "end") return "End";
   return null;
+}
+
+function conditionFromAction(action: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    if (action[key] !== undefined) return action[key];
+  }
+  return undefined;
+}
+
+function copyConditions(action: BattleAction, raw: Record<string, unknown>): void {
+  const output = action as unknown as Record<string, unknown>;
+  const conditions: Array<[keyof BattleAction, string[]]> = [
+    ["kills", ["kills"]],
+    ["costs", ["costs"]],
+    ["costChanges", ["costChanges", "cost_changes"]],
+    ["cooling", ["cooling"]],
+    ["timeElapsed", ["timeElapsed", "time_elapsed"]],
+  ];
+  for (const [key, aliases] of conditions) {
+    const value = conditionFromAction(raw, aliases);
+    if (value !== undefined) output[key] = value;
+  }
 }
 
 function operatorId(action: Record<string, unknown>): string | undefined {
@@ -84,7 +112,7 @@ function convertAction(raw: unknown): BattleAction | null {
   if (!isRecord(raw)) return null;
   const type = normalizeActionType(raw.type);
   if (!type) return null;
-  if (type === "SpeedUp" || type === "SkillDaemon" || type === "End") {
+  if (type === "SpeedUp" || type === "SkillDaemon" || type === "ResetStopwatch" || type === "End") {
     return { type, delay: delayFromAction(raw), raw };
   }
 
@@ -102,6 +130,7 @@ function convertAction(raw: unknown): BattleAction | null {
   }
   const skillIndex = finiteInt(raw.skillIndex ?? raw.skill);
   if (skillIndex !== undefined) action.skillIndex = skillIndex;
+  copyConditions(action, raw);
   return action;
 }
 
@@ -124,10 +153,19 @@ function withDelay(output: Record<string, unknown>, delay: DelayBucket | undefin
   else delete output.pre_delay;
 }
 
+function withConditions(output: Record<string, unknown>, action: BattleAction): void {
+  for (const key of ["kills", "costs", "costChanges", "cost_changes", "cooling", "timeElapsed", "time_elapsed"]) delete output[key];
+  if (action.kills !== undefined) output.kills = action.kills;
+  if (action.costs !== undefined) output.costs = action.costs;
+  if (action.costChanges !== undefined) output.cost_changes = action.costChanges;
+  if (action.cooling !== undefined) output.cooling = action.cooling;
+  if (action.timeElapsed !== undefined) output.time_elapsed = action.timeElapsed;
+}
+
 function toCopilotAction(action: BattleAction): BattleScriptAction | null {
   if (action.type === "End") return null;
   const output = cloneRecord(action.raw);
-  if (action.type === "SpeedUp" || action.type === "SkillDaemon") {
+  if (action.type === "SpeedUp" || action.type === "SkillDaemon" || action.type === "ResetStopwatch") {
     output.type = action.type;
   } else if (action.type === "SkillUse" || action.type === "Retreat") {
     output.type = action.type === "SkillUse" ? "Skill" : "Retreat";
@@ -140,6 +178,7 @@ function toCopilotAction(action: BattleAction): BattleScriptAction | null {
     output.direction = action.direction;
   }
   withDelay(output, action.delay);
+  withConditions(output, action);
   delete output.delay;
   return output as unknown as BattleScriptAction;
 }
@@ -158,6 +197,14 @@ export function battleDslToCopilotJson(script: BattleScript): unknown {
 
 function issue(code: string, message: string, actionIndex?: number): ValidationResult["errors"][number] {
   return { code, message, ...(actionIndex !== undefined ? { location: { actionIndex } } : {}) };
+}
+
+function hasConditions(action: BattleAction): boolean {
+  return [action.kills, action.costs, action.costChanges, action.cooling, action.timeElapsed].some(value => value !== undefined);
+}
+
+function validInteger(value: unknown, minimum?: number): boolean {
+  return Number.isFinite(Number(value)) && Number.isInteger(Number(value)) && (minimum === undefined || Number(value) >= minimum);
 }
 
 export function validateBattleDsl(script: BattleScript): ValidationResult {
@@ -181,6 +228,21 @@ export function validateBattleDsl(script: BattleScript): ValidationResult {
     }
     if ((action.type === "SkillUse" || action.type === "Retreat") && !action.operatorId) {
       errors.push(issue("MISSING_OPERATOR_ID", `${action.type} action missing operatorId`, index));
+    }
+    if (hasConditions(action) && action.type !== "SkillUse" && action.type !== "Retreat") {
+      errors.push(issue("INVALID_ACTION_CONDITIONS", `${action.type} cannot use native action conditions`, index));
+    }
+    for (const [key, value, minimum] of [
+      ["kills", action.kills, 0],
+      ["costs", action.costs, 0],
+      ["costChanges", action.costChanges, undefined],
+      ["cooling", action.cooling, 0],
+      ["timeElapsed", action.timeElapsed, 1],
+    ] as const) {
+      if (value !== undefined && !validInteger(value, minimum)) {
+        const rule = key === "costChanges" ? "an integer" : key === "timeElapsed" ? "a positive integer" : "a non-negative integer";
+        errors.push(issue("INVALID_ACTION_CONDITION", `${key} must be ${rule}`, index));
+      }
     }
   }
   if (endCount > 1) errors.push(issue("MULTIPLE_END", "BattleDSL allows at most one End action"));

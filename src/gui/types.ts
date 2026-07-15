@@ -9,7 +9,7 @@ export interface GenerateRequest extends AnalyzeRequest {
   outputDir?: string;
   fileName?: string;
   newCandidate?: boolean;
-  core?: "rule-core" | "model-core" | "hybrid-core";
+  core?: "rule-core" | "deepseek-core";
 }
 
 export interface EnterPracticeRequest {

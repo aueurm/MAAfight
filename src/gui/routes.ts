@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import * as path from "path";
 import { spawn } from "child_process";
 import type { FastifyInstance } from "fastify";
@@ -102,6 +103,21 @@ function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: str
       }
     }));
   });
+}
+
+export function publishThreeStarCandidate(scriptPath: string): string | undefined {
+  const candidatePath = path.resolve(scriptPath);
+  const candidateDir = path.dirname(candidatePath);
+  if (path.basename(candidateDir) !== ".candidates") return undefined;
+  const candidate = JSON.parse(fs.readFileSync(candidatePath, "utf8")) as {
+    doc?: { details?: unknown };
+    metadata?: { source?: unknown };
+  };
+  if (candidate.metadata?.source !== "maafight-deepseek-core") return undefined;
+  const outputPath = path.join(path.dirname(candidateDir), path.basename(candidatePath));
+  if (candidate.doc) candidate.doc.details = "Three-star rehearsal verified.";
+  fs.writeFileSync(outputPath, `${JSON.stringify(candidate, null, 2)}\n`, "utf8");
+  return outputPath;
 }
 
 export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteOptions = {}): Promise<void> {
@@ -258,6 +274,13 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
       }
       const testResult = normalizePracticeTestResult(result);
       if (testResult) result.testResult = testResult;
+      if (testResult === "三星" && scriptPath) {
+        const publishedOutputPath = publishThreeStarCandidate(scriptPath);
+        if (publishedOutputPath) {
+          result.publishedOutputPath = publishedOutputPath;
+          warnings.push(`DeepSeek candidate published after three-star rehearsal: ${publishedOutputPath}`);
+        }
+      }
       if (body.scriptHash?.trim() && testResult) {
         try {
           const configured = loadConfiguredOperatorBox(cwd);

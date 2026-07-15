@@ -6,7 +6,7 @@ const path = require("path");
 
 function loadBattleDsl() {
   try {
-    return require("../dist/model-core/battleDsl");
+    return require("../dist/copilot/battleDsl");
   } catch (error) {
     throw new Error("Build first: npm run build:node");
   }

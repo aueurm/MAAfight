@@ -9,7 +9,6 @@
 7. [CLI 与 GUI](cli-design.md)：命令、接口和本地目录。
 8. [PRTS.Map 适配器](prts-map-adapter.md)：输入解析和地图规范化。
 9. [MAA 干员导出](maa-operator-export.md)：玩家干员库格式。
-10. [CPU BattleCore](model-core.md)：动作数据集、线性 ranker、Beam Search 和反馈闭环。
-11. [实测关卡](test-levels.md)：训练集外验收关卡与公共脚本留出集。
+10. [实测关卡](test-levels.md)：训练集外验收关卡与静态验证边界。
 
 仓库内文档只描述 v2。v1 战斗实现及其历史文档通过 GitHub `v1.0.0-alpha` 标签查看。

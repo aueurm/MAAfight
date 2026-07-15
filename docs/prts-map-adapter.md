@@ -376,35 +376,9 @@ function adaptEnemies(
 }
 ```
 
-#### 5. 部署顺序推断
+#### 5. 边界
 
-```typescript
-// 启发式算法, 基于:
-// 1. 敌人波次时间 → 先出怪的路线上先部署
-// 2. 可部署点位距蓝门距离 → 近蓝门优先
-// 3. 瓦片类型 → 近战位优先于高台位(先锋先下)
-
-function inferDeploymentOrder(
-  deploymentPoints: DeploymentPoint[],
-  spawnTimeline: SpawnEvent[],
-  routes: EnemyRoute[],
-  strategicPoints: StrategicPoint[]
-): DeploymentRecommendation[] {
-  // 1. 找出最早出怪的路线
-  const earliestByRoute = new Map<number, number>();
-  for (const event of spawnTimeline) {
-    if (!earliestByRoute.has(event.routeIndex) || event.time < earliestByRoute.get(event.routeIndex)!) {
-      earliestByRoute.set(event.routeIndex, event.time);
-    }
-  }
-
-  // 2. 计算每个部署点到蓝门(出口)的距离
-  const endPoints = strategicPoints.filter(p => p.type === "end");
-
-  // 3. 排序: 最早出怪路径上的点位 > 近战位 > 高台位 > 距离蓝门近的
-  // ...
-}
-```
+adapter 只输出地图、路线、波次、敌人、战略点和威胁区域等结构化事实，不推断干员、技能、朝向或部署顺序。这些决策分别由 `rule-core` 或 `deepseek-core` 在 adapter 之后完成。
 
 ### 主转换入口
 

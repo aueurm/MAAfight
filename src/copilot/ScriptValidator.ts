@@ -48,7 +48,7 @@ export function validateScript(script: BattleScript, mapData?: MapData): Validat
   }
   const deployCount = actions.filter(action => action.type === "Deploy").length;
   if (deployCount < 3) warnings.push({ code: "LOW_DEPLOY_COUNT", message: `Only ${deployCount} deployments` });
-  if (deployCount > 0 && !actions.some(action => action.type === "SkillDaemon")) {
+  if (deployCount > 0 && !actions.some(action => action.type === "SkillDaemon" || action.type === "Skill")) {
     warnings.push({ code: "NO_SKILL_DAEMON", message: "No SkillDaemon found" });
   }
   return { valid: errors.length === 0, errors, warnings, score: Math.max(0, 100 - errors.length * 20 - warnings.length * 5) };

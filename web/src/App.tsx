@@ -295,7 +295,12 @@ export default function App() {
       }
       const testResult = normalizePracticeTestResult(response.result);
       setPracticeTestResult(testResult);
-      setStatusMessage(testResult ? `测试结果：${testResult}` : `脚本验证通过，已执行 ${response.result?.stage || stageName} 演习作业${response.result?.closedProxy ? "，已关闭代理指挥" : ""}`);
+      if (response.result?.publishedOutputPath) {
+        setResult(prev => prev ? { ...prev, outputPath: response.result!.publishedOutputPath, publicationStatus: "published" } : prev);
+      }
+      setStatusMessage(testResult
+        ? `测试结果：${testResult}${response.result?.publishedOutputPath ? "；DeepSeek 候选已发布" : ""}`
+        : `脚本验证通过，已执行 ${response.result?.stage || stageName} 演习作业${response.result?.closedProxy ? "，已关闭代理指挥" : ""}`);
       if (response.result?.feedbackRecord) {
         setFeedbackStatus(response.result.feedbackRecord.usableForLearning ? "测试结果已加入可学习反馈" : "测试结果已记录，仅用于统计");
         if (result?.stageId) {
@@ -457,7 +462,7 @@ export default function App() {
       stage,
       engine: "v2",
       coreMode,
-      selectedCore: result?.selectedCore,
+      publicationStatus: result?.publicationStatus,
       pretty,
       fileName: fileName || result?.fileName,
       warningCount: warnings.length,
@@ -592,8 +597,7 @@ export default function App() {
             <div className="segmented-control">
               {([
                 ["rule-core", "传统"],
-                ["model-core", "模型"],
-                ["hybrid-core", "综合"],
+                ["deepseek-core", "DeepSeek"],
               ] as const).map(([value, label]) => (
                 <label key={value}>
                   <input
@@ -707,13 +711,18 @@ export default function App() {
           {statusMessage && errors.length === 0 && !practiceTestResult && <div className="alert success"><p>{statusMessage}</p></div>}
           {!statusMessage && !practiceTestResult && result?.success && errors.length === 0 && <div className="alert success"><p>成功</p></div>}
           {analysisSummary && <pre className="summary">{analysisSummary}</pre>}
-          {result?.requestedCore && <p className="hint">生成模式：{result.requestedCore}；采用：{result.selectedCore || "-"}</p>}
+          {result?.requestedCore && <p className="hint">生成模式：{result.requestedCore}；发布状态：{result.publicationStatus === "candidate" ? "待三星演习" : "已发布"}</p>}
           {result?.explain && <pre className="summary">{result.explain}</pre>}
           {result?.validation !== undefined && <pre className="summary">{asJson(result.validation)}</pre>}
           {result?.scriptHash && (
             <div className="paste-panel">
               <span className="section-label">实战反馈</span>
-              <p className="hint">候选评分：{result.candidateScore?.toFixed(2) ?? "-"}；模型：{result.modelVersion || "-"}</p>
+              <p className="hint">
+                {result.requestedCore === "rule-core"
+                  ? `候选评分：${result.candidateScore?.toFixed(2) ?? "-"}`
+                  : "DeepSeek 候选：等待三星演习发布"}
+                ；模型：{result.modelVersion || "-"}
+              </p>
               <p className="hint">
                 已记录 {feedbackSummary?.count ?? 0} 次；可学习 {feedbackSummary?.usableCount ?? 0} 次；满歼 {feedbackSummary?.fullClearCount ?? 0} 次
               </p>

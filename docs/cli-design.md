@@ -69,7 +69,9 @@ maafight run --file GT-1.json --mode manual-normal --allow-sanity
 - `GET /api/run/:id`
 - `GET /api/run/summary`
 
-`/api/config` 返回 `engine: "v2"`。`/api/generate` 只接受 v2 公共字段，不提供旧生成器选择。
+`/api/config` 返回 `engine: "v2"`。`/api/generate` 的 `core` 只接受 `rule-core` 或 `deepseek-core`：前者使用确定性搜索；后者从根目录 `.env` 读取 `DEEPSEEK_API_KEY`，把固定 Prompt、关卡上下文和玩家库发送给 DeepSeek。
+
+DeepSeek 只返回内部候选。它先通过 BattleDSL、地图和 MAA 协议验证，再写入 `output/.candidates/`；`POST /api/enter-practice` 观测到三星时才会发布同名文件到 `output/`。API key 不会返回到 GUI、日志或生成记录。
 
 ## 本地目录
 

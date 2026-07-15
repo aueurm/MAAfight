@@ -47,6 +47,7 @@ export function toCopilotObject(script: BattleScript): Record<string, unknown> {
       if (action.doc_color !== undefined) output.doc_color = action.doc_color;
       return output;
     }),
+    metadata: script.metadata,
     version: script.version || 3,
   };
 }

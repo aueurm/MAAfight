@@ -5,7 +5,7 @@ import {
   normalizeDelayToBucket,
   validateBattleDsl,
   type BattleAction,
-} from "../src/model-core/battleDsl";
+} from "../src/copilot/battleDsl";
 import type { BattleScript as MaaBattleScript } from "../src/types";
 
 function copilot() {
@@ -33,6 +33,11 @@ function semantic(actions: BattleAction[]) {
     y: action.y,
     direction: action.direction,
     delay: action.delay,
+    kills: action.kills,
+    costs: action.costs,
+    costChanges: action.costChanges,
+    cooling: action.cooling,
+    timeElapsed: action.timeElapsed,
   }));
 }
 
@@ -71,6 +76,39 @@ describe("BattleDSL", () => {
 
     expect(script.actions.some(action => action.type === "SkillDaemon")).toBe(true);
     expect(script.actions.at(-1)).toEqual({ type: "End", delay: 0 });
+  });
+
+  it("round-trips ResetStopwatch and native action conditions", () => {
+    const script = copilotJsonToBattleDsl({
+      stage_name: "x",
+      actions: [
+        { type: "ResetStopwatch" },
+        { type: "Skill", name: "煌", kills: 5, costs: 20, cost_changes: -1, cooling: 0, time_elapsed: 30 },
+        { type: "Retreat", name: "煌", kills: 10 },
+      ],
+    });
+    const output = battleDslToCopilotJson(script) as { actions: Array<Record<string, unknown>> };
+
+    expect(script.actions[0].type).toBe("ResetStopwatch");
+    expect(script.actions[1]).toMatchObject({ type: "SkillUse", kills: 5, costs: 20, costChanges: -1, cooling: 0, timeElapsed: 30 });
+    expect(validateBattleDsl(script).valid).toBe(true);
+    expect(output.actions[1]).toMatchObject({ type: "Skill", kills: 5, costs: 20, cost_changes: -1, cooling: 0, time_elapsed: 30 });
+    expect(copilotJsonToBattleDsl(output).actions[1]).toMatchObject(script.actions[1]);
+  });
+
+  it("rejects invalid native action conditions", () => {
+    const result = validateBattleDsl({
+      stageId: "x",
+      actions: [
+        { type: "Deploy", operatorId: "煌", x: 1, y: 2, direction: "Right", kills: 1, delay: 0 },
+        { type: "SkillUse", operatorId: "煌", timeElapsed: 0, delay: 0 },
+        { type: "Retreat", operatorId: "煌", costs: -1, delay: 0 },
+        { type: "End", delay: 0 },
+      ],
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.map(error => error.code)).toEqual(expect.arrayContaining(["INVALID_ACTION_CONDITIONS", "INVALID_ACTION_CONDITION"]));
   });
 
   it("maps delay values into buckets", () => {

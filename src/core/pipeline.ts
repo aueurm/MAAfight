@@ -5,21 +5,16 @@ import { PRTSMapAdapter } from "../adapter/PRTSMapAdapter";
 import { resolveStage, searchStages } from "../loader/levelIndex";
 import { validateScript } from "../copilot/ScriptValidator";
 import { validateMAAProtocol } from "../copilot/MAAProtocolValidator";
-import { exportToCopilotFormat, toCopilotObject } from "../copilot/ScriptExporter";
+import { exportToCopilotFormat } from "../copilot/ScriptExporter";
 import { computeScriptHash, extractStageFacts, generateCopilotScript, type StageFacts } from "../engine";
-import { getCombatModelInfo } from "../engine/CombatModel";
+import { getCombatModelInfo, getCombatOperatorByName } from "../engine/CombatModel";
 import { computeStageContentHash } from "../engine/EncounterContext";
+import { DEEPSEEK_MODEL, requestDeepSeekCandidate } from "../deepseek-core/DeepSeekCore";
+import { generateDeepSeekScript } from "../deepseek-core/DeepSeekCompiler";
 import { FeedbackStore, hashOperatorBox } from "../feedback/FeedbackStore";
 import { OperatorBox } from "../player/OperatorBox";
 import { loadConfiguredOperatorBox } from "../player/PlayerConfig";
 import { getRuntimePaths } from "../runtime/paths";
-import { generateAppModelScript } from "../model-core/appGenerator";
-import {
-  compareShadowScripts,
-  type ShadowComparison,
-  type ShadowCoreMode,
-  type ShadowCoreName,
-} from "../model-core/shadowCore";
 import { inferStageIdFromDataPath, getDisplayStageName } from "./stageDisplay";
 import type {
   BattleScript,
@@ -39,7 +34,6 @@ export interface PipelineOptions {
   cacheDir?: string;
   dataUrl?: string;
   stateDir?: string;
-  modelCorePath?: string;
 }
 
 export interface AnalyzeStageInput extends OperatorInput {
@@ -52,7 +46,7 @@ export interface GenerateStageInput extends OperatorInput {
   outputDir?: string;
   fileName?: string;
   newCandidate?: boolean;
-  core?: ShadowCoreMode;
+  core?: GenerationCore;
 }
 
 export interface ValidateScriptInput {
@@ -81,9 +75,9 @@ export interface GenerateStageResult extends AnalyzeStageResult {
   modelVersion: string;
   combatCoverage: number;
   skillCoverage: number;
-  requestedCore: ShadowCoreMode;
-  selectedCore: ShadowCoreName;
-  shadowComparison?: ShadowComparison;
+  requestedCore: GenerationCore;
+  publicationStatus: "published" | "candidate";
+  finalOutputPath: string;
 }
 
 export interface ValidateScriptResult {
@@ -107,20 +101,14 @@ export const DEFAULT_CACHE_DIR = getRuntimePaths().cacheLevelsDir;
 export const DEFAULT_DATA_URL = process.env.MAAFIGHT_DATA_URL || "https://map.ark-nights.com";
 export const DEFAULT_OUTPUT_DIR = getRuntimePaths().outputDir;
 
-function coreMode(value: unknown): ShadowCoreMode {
+export type GenerationCore = "rule-core" | "deepseek-core";
+
+function coreMode(value: unknown): GenerationCore {
   const mode = value || "rule-core";
-  if (mode !== "rule-core" && mode !== "model-core" && mode !== "hybrid-core") {
-    throw new Error("core must be rule-core, model-core, or hybrid-core");
+  if (mode !== "rule-core" && mode !== "deepseek-core") {
+    throw new Error("core must be rule-core or deepseek-core");
   }
   return mode;
-}
-
-function modelCorePath(options: PipelineOptions): string {
-  const file = path.resolve(options.modelCorePath
-    || process.env.MAAFIGHT_MODEL_CORE_PATH
-    || path.join(getRuntimePaths().homeDir, "models", "cpu-action-ranker-latest-100.json"));
-  if (!fs.existsSync(file)) throw new Error(`Model core weights not found: ${file}`);
-  return file;
 }
 
 function sanitizeFileName(name: string): string {
@@ -250,10 +238,7 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
   let candidateScore: number;
   let scoreBreakdown: Record<string, number>;
   let reusedFromGenerationId: string | undefined;
-  let selectedCore: ShadowCoreName = "rule-core";
-  let shadowComparison: ShadowComparison | undefined;
-
-  if (successful && successful.engineVersion === "v2-skill-v1") {
+  if (requestedCore === "rule-core" && successful?.engineVersion === "v2-skill-v1") {
     script = JSON.parse(JSON.stringify(successful.script)) as BattleScript;
     modelVersion = successful.modelVersion;
     combatDataVersion = successful.combatDataVersion;
@@ -263,7 +248,7 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     scoreBreakdown = successful.scoreBreakdown;
     reusedFromGenerationId = successful.generationId;
     warnings.push(`Reused a 100% v2 generation ${successful.generationId}.`);
-  } else {
+  } else if (requestedCore === "rule-core") {
     const result = generateCopilotScript(stageName, mapData, {
       playerOperators: parsedOperators.playerOperators,
       excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash, stageContentHash),
@@ -279,30 +264,25 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     candidateScore = result.score;
     scoreBreakdown = { ...result.breakdown };
     warnings.push(...result.warnings);
-  }
-
-  if (requestedCore !== "rule-core") {
-    const model = generateAppModelScript({
+  } else {
+    if (!parsedOperators.playerOperators) throw new Error("DeepSeek core requires player operator data");
+    const generated = await generateDeepSeekScript({
       stageName,
       mapData,
       facts,
-      squadScript: script,
-      playerOperators: parsedOperators.playerOperators,
-      modelPath: modelCorePath(options),
+      players: parsedOperators.playerOperators,
+      getCombatOperatorByName,
+      requestCandidate: input => requestDeepSeekCandidate(input),
     });
-    shadowComparison = compareShadowScripts({
-      mode: requestedCore,
-      ruleScript: requestedCore === "hybrid-core" ? toCopilotObject(script) as unknown as BattleScript : undefined,
-      modelScript: toCopilotObject(model.script) as unknown as BattleScript,
-    });
-    selectedCore = shadowComparison.selectedCore;
-    if (selectedCore === "model-core") {
-      script = model.script;
-      modelVersion = model.modelVersion;
-      candidateScore = model.score;
-      scoreBreakdown = { actionRanker: model.score };
-    }
-    warnings.push(`Requested ${requestedCore}; selected ${selectedCore}: ${shadowComparison.selectionReason}.`);
+    if (!generated.valid || !generated.script) throw new Error(`DeepSeek candidate failed validation: ${generated.errors.join("; ")}`);
+    script = generated.script;
+    modelVersion = DEEPSEEK_MODEL;
+    combatDataVersion = combatModel.modelVersion;
+    combatCoverage = 0;
+    skillCoverage = 0;
+    candidateScore = 0;
+    scoreBreakdown = {};
+    warnings.push(`DeepSeek candidate passed static validation after ${generated.attempts} attempt(s); rehearsal is required before publication.`);
   }
 
   const validation = validateScript(script, mapData);
@@ -314,12 +294,14 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
 
   const outputDir = path.resolve(input.outputDir || DEFAULT_OUTPUT_DIR);
   const fileName = sanitizeFileName(input.fileName || makeDefaultScriptFileName(stageName, resolved));
-  const outputPath = path.join(outputDir, fileName);
+  const finalOutputPath = path.join(outputDir, fileName);
+  const publicationStatus = requestedCore === "deepseek-core" ? "candidate" : "published";
+  const outputPath = publicationStatus === "candidate" ? path.join(outputDir, ".candidates", fileName) : finalOutputPath;
   const scriptHash = computeScriptHash(script);
   const generationId = feedbackStore.createGenerationId();
   script.metadata = { ...script.metadata, generationId, scriptHash };
   const json = exportToCopilotFormat(script, { compress: !input.pretty });
-  fs.mkdirSync(outputDir, { recursive: true });
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, json, "utf8");
   feedbackStore.appendGeneration({
     schemaVersion: 2,
@@ -328,9 +310,7 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     stageId,
     stageName,
     operatorBoxHash,
-    engineVersion: requestedCore === "rule-core"
-      ? "v2-skill-v1"
-      : requestedCore === "model-core" ? "cpu-core-v0" : "hybrid-core-v0",
+    engineVersion: requestedCore === "rule-core" ? "v2-skill-v1" : DEEPSEEK_MODEL,
     modelVersion,
     combatDataVersion,
     candidateScore,
@@ -359,9 +339,9 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     protocol,
     explain: [
       `Stage: ${facts.stageId}`,
-      `Core: ${requestedCore} -> ${selectedCore}`,
+      `Core: ${requestedCore}`,
       `Facts: ${facts.summary}`,
-      `Candidate score: ${candidateScore.toFixed(2)} (ranking only, not a clear rate)`,
+      ...(requestedCore === "rule-core" ? [`Candidate score: ${candidateScore.toFixed(2)} (ranking only, not a clear rate)`] : ["DeepSeek candidate is internal until a real three-star rehearsal publishes it."]),
       ...warnings.map(warning => `Warning: ${warning}`),
     ].join("\n"),
     warnings,
@@ -372,8 +352,8 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     combatCoverage,
     skillCoverage,
     requestedCore,
-    selectedCore,
-    shadowComparison,
+    publicationStatus,
+    finalOutputPath,
   };
 }
 

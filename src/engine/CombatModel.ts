@@ -9,6 +9,7 @@ import type {
 
 interface SkillLevelRecord {
   rank: number;
+  skillType: string;
   spType: string;
   spCost: number;
   initSp: number;

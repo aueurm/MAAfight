@@ -1,5 +1,5 @@
 export type PracticeTestResult = "进入失败" | "失败" | "二星" | "三星";
-export type GenerationCoreMode = "rule-core" | "model-core" | "hybrid-core";
+export type GenerationCoreMode = "rule-core" | "deepseek-core";
 
 export interface ApiBase {
   success: boolean;
@@ -60,8 +60,8 @@ export interface GenerateResponse extends AnalyzeResponse {
   modelVersion?: string;
   combatCoverage?: number;
   requestedCore?: GenerationCoreMode;
-  selectedCore?: "rule-core" | "model-core";
-  shadowComparison?: unknown;
+  publicationStatus?: "published" | "candidate";
+  finalOutputPath?: string;
 }
 
 export interface ValidateResponse extends ApiBase {
@@ -100,6 +100,7 @@ export interface EnterPracticeResponse extends ApiBase {
       usableForLearning: boolean;
       operatorBoxChanged: boolean;
     };
+    publishedOutputPath?: string;
   };
 }
 
