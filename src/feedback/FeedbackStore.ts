@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "crypto";
-import * as fs from "fs";
 import * as path from "path";
 import { getMaafightDir } from "../player/PlayerConfig";
+import { appendJsonLine, readJsonLines } from "../shared/jsonl";
 import type { PracticeTestResult } from "../shared/practiceResult";
 import type { BattleScript, PlayerOperator } from "../types";
 
@@ -67,28 +67,6 @@ export interface RecordPracticeTestInput {
   scriptHash: string;
   testResult: PracticeTestResult;
   currentOperatorBoxHash: string;
-}
-
-function appendJsonLine(filePath: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.appendFileSync(filePath, `${JSON.stringify(value)}\n`, "utf8");
-}
-
-function readJsonLines<T>(filePath: string): { records: T[]; warnings: string[] } {
-  if (!fs.existsSync(filePath)) return { records: [], warnings: [] };
-  const records: T[] = [];
-  const warnings: string[] = [];
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index].trim();
-    if (!line) continue;
-    try {
-      records.push(JSON.parse(line) as T);
-    } catch {
-      warnings.push(`Skipped invalid JSONL line ${index + 1} in ${path.basename(filePath)}.`);
-    }
-  }
-  return { records, warnings };
 }
 
 export function hashOperatorBox(playerOperators?: Map<string, PlayerOperator>): string {

@@ -222,39 +222,6 @@ export interface MapOptions {
   costIncreaseTime: number;
 }
 
-// ====================== Copilot 输出 ======================
-
-export interface CopilotOperator {
-  name: string;
-  skill?: number;
-  skill_usage?: number;
-}
-
-export interface CopilotOutput {
-  stage_name: string;
-  minimum_required: string;
-  doc: {
-    title: string;
-    details: string;
-  };
-  opers: CopilotOperator[];
-  groups: CopilotGroup[];
-  actions: CopilotAction[];
-  version: number;
-}
-
-export interface CopilotGroup {
-  name: string;
-  opers: { name: string; skill: number; skill_usage: number }[];
-}
-
-export type CopilotAction =
-  | { type: "SpeedUp" }
-  | { type: "SkillDaemon" }
-  | { type: "Deploy"; name: string; location: [number, number]; direction: string }
-  | { type: "Skill"; name: string }
-  | { type: "Retreat"; name: string };
-
 // ====================== 战斗脚本 (内部) ======================
 
 export interface BattleScript {

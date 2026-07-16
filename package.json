@@ -17,7 +17,6 @@
     "corpus:audit": "node scripts/build-corpus-model.js --audit-only",
     "model:build": "node scripts/build-corpus-model.js",
     "combat-data:build": "node scripts/build-operator-combat-model.js",
-    "battle-dsl": "node scripts/battle-dsl.js",
     "verify": "tsc && jest --coverage && node scripts/benchmark.js --skip-build",
     "test": "jest --coverage",
     "test:watch": "jest --watch"

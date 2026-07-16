@@ -67,13 +67,13 @@ function stageCodeRank(entry: StageIndexEntry): number {
 
 export function resolveStage(stageId: string): StageIndexEntry | null {
   const clean = stageId.replace(/#f#/g, "");
-  return entries.find(e => e.stageId === clean) || null;
+  return entries.find(entry => entry.stageId === clean) || null;
 }
 
 export function resolveByCode(code: string): StageIndexEntry | null {
   const normalized = code.toLowerCase();
   const byCode = entries
-    .filter(e => e.code?.toLowerCase() === normalized)
+    .filter(entry => entry.code?.toLowerCase() === normalized)
     .sort((a, b) => stageCodeRank(a) - stageCodeRank(b) || a.stageId.localeCompare(b.stageId))[0];
   if (byCode) return byCode;
 
@@ -90,18 +90,10 @@ export function resolveByFilePath(filePath: string): StageIndexEntry | null {
 export function searchStages(query: string): StageIndexEntry[] {
   const q = query.toLowerCase();
   return entries.filter(
-    e =>
-      e.stageId.toLowerCase().includes(q) ||
-      e.filePath.toLowerCase().includes(q) ||
-      (e.code && e.code.toLowerCase().includes(q)) ||
-      (e.name && e.name.toLowerCase().includes(q))
+    entry =>
+      entry.stageId.toLowerCase().includes(q) ||
+      entry.filePath.toLowerCase().includes(q) ||
+      (entry.code && entry.code.toLowerCase().includes(q)) ||
+      (entry.name && entry.name.toLowerCase().includes(q))
   );
-}
-
-export function listByCategory(category: string): StageIndexEntry[] {
-  return entries.filter(e => e.category === category);
-}
-
-export function listStages(): StageIndexEntry[] {
-  return entries;
 }

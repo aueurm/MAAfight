@@ -6,7 +6,7 @@ import {
   resolveByFilePath,
   searchStages as stageSearch,
   resolveStage as stageResolve,
-} from "./stageIndex";
+} from "./stageMetadata";
 
 function parseStageId(filePath: string): string {
   const match = filePath.match(/level_(.+)\.json$/);

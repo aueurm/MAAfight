@@ -1,4 +1,4 @@
-import { DELAY_BUCKETS, type BattleAction, type DelayBucket, type Direction } from "../copilot/battleDsl";
+import { DELAY_BUCKETS, type BattleAction, type DelayBucket, type Direction } from "./BattleDsl";
 
 type Operator = { name: string; skill: number; skillUsage: number };
 

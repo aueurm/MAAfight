@@ -10,7 +10,7 @@ import {
   compileDeepSeekCandidate,
   generateDeepSeekScript,
 } from "../src/deepseek-core/DeepSeekCompiler";
-import type { BattleAction } from "../src/copilot/battleDsl";
+import type { BattleAction } from "../src/deepseek-core/BattleDsl";
 import type { StageFacts } from "../src/engine/types";
 import type { MapData, PlayerOperator } from "../src/types";
 

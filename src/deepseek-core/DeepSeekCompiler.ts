@@ -1,7 +1,7 @@
 import { exportToCopilotFormat } from "../copilot/ScriptExporter";
 import { validateMAAProtocol } from "../copilot/MAAProtocolValidator";
 import { validateScript } from "../copilot/ScriptValidator";
-import { type BattleAction, validateBattleDsl } from "../copilot/battleDsl";
+import { type BattleAction, validateBattleDsl } from "./BattleDsl";
 import { parseDeepSeekBattleDsl } from "./BattleDslParser";
 import type { StageFacts } from "../engine/types";
 import type { BattleScript, BattleScriptAction, MapData, PlayerOperator } from "../types";

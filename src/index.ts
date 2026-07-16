@@ -1,11 +1,6 @@
 import * as fs from "fs";
-import * as path from "path";
-import { PRTSMapLoader } from "./loader/PRTSMapLoader";
-import { PRTSMapAdapter } from "./adapter/PRTSMapAdapter";
 import { validateScript } from "./copilot/ScriptValidator";
 import { validateMAAProtocol } from "./copilot/MAAProtocolValidator";
-import { exportToCopilotFormat } from "./copilot/ScriptExporter";
-import { computeScriptHash, extractStageFacts, generateCopilotScript } from "./engine";
 import { listStages, searchStages, listByCategory, resolveStage } from "./loader/levelIndex";
 import { OperatorBox } from "./player/OperatorBox";
 import { loadConfiguredOperatorBox, saveOperatorConfig } from "./player/PlayerConfig";
@@ -14,14 +9,12 @@ import { openUrl } from "./gui/openBrowser";
 import { getRuntimePaths } from "./runtime/paths";
 import { writeGuiLog } from "./runtime/logger";
 import { FeedbackStore, hashOperatorBox, hashScriptJson } from "./feedback/FeedbackStore";
-import { getCombatModelInfo } from "./engine/CombatModel";
-import { computeStageContentHash } from "./engine/EncounterContext";
-import { inferStageIdFromDataPath, getDisplayStageName } from "./core/stageDisplay";
+import { analyzeStage, generateStage, loadStageContext } from "./core/pipeline";
 import { isSpawnActionType, normalizeBuildableType } from "./shared/prtsMap";
 import { RunResultStore } from "./runner/RunResultStore";
 import { connectMaaEnvironment, probeMaaEnvironment } from "./runner/probe";
 import { recordCallbackRun, recordDryRun, recordScreenObservedRun } from "./runner/run";
-import type { BattleScript, PRTSLevelData, StageIndexEntry } from "./types";
+import type { BattleScript, PRTSLevelData } from "./types";
 
 const CACHE_DIR = getRuntimePaths().cacheLevelsDir;
 const DATA_URL = process.env.MAAFIGHT_DATA_URL || "https://map.ark-nights.com";
@@ -361,137 +354,33 @@ async function cmdGenerate(args: Args): Promise<void> {
     process.exit(1);
   }
 
-  const loader = new PRTSMapLoader(CACHE_DIR, DATA_URL);
-  const adapter = new PRTSMapAdapter(loader);
+  const result = await generateStage({
+    stage: args.stage,
+    dataPath: args.data,
+    noCache: args.noCache,
+    operatorFilePath: args.operators,
+    newCandidate: args.newCandidate,
+    pretty: args.pretty,
+    outputPath: args.output,
+    writeOutput: Boolean(args.output),
+  }, { cacheDir: CACHE_DIR, dataUrl: DATA_URL, stateDir: getRuntimePaths().homeDir });
 
-  let prtsData: PRTSLevelData;
-  let stageId: string;
-  let resolved: StageIndexEntry | null = null;
-
-  if (args.data) {
-    if (!fs.existsSync(args.data)) {
-      console.error(`Error: File not found: ${args.data}`);
-      process.exit(1);
-    }
-    const raw = fs.readFileSync(args.data, "utf-8");
-    prtsData = JSON.parse(raw) as PRTSLevelData;
-    const inputStage = args.stage || inferStageIdFromDataPath(args.data);
-    resolved = resolveStage(inputStage);
-    stageId = resolved ? resolved.stageId : inputStage;
-  } else {
-    const inputStage = args.stage!;
-    resolved = resolveStage(inputStage);
-    prtsData = await loader.load(inputStage, { noCache: args.noCache });
-    stageId = resolved ? resolved.stageId : inputStage;
-  }
-
-  await loader.loadEnemyDatabase();
-  const displayName = getDisplayStageName(stageId, resolved);
-  const mapData = adapter.adapt(prtsData, stageId, displayName);
-  const facts = extractStageFacts(mapData);
-  const operatorSource = loadOperatorBoxForGeneration(args);
-  const playerOperators = operatorSource?.box.playerMap;
-  if (operatorSource) {
-    const mode = operatorSource.configured ? "local operator database" : "player data";
-    if (!args.quiet) {
-      console.error(`Loaded ${operatorSource.box.size} owned operators from ${mode}: ${operatorSource.source}`);
-    }
-  }
-  const feedbackStore = new FeedbackStore(getRuntimePaths().homeDir);
-  const operatorBoxHash = hashOperatorBox(playerOperators);
-  let reusedFromGenerationId: string | undefined;
-  let script: BattleScript;
-  let modelVersion: string;
-  let combatDataVersion: string;
-  let combatCoverage: number;
-  let skillCoverage: number;
-  let candidateScore: number;
-  let scoreBreakdown: Record<string, number>;
-
-  const stageContentHash = computeStageContentHash(mapData);
-  const combatModel = getCombatModelInfo();
-  const revision = {
-    engineVersion: "v2-skill-v1",
-    stageContentHash,
-    gameDataCommit: combatModel.commit,
-  };
-  const successful = !args.newCandidate ? feedbackStore.successfulGeneration(stageId, operatorBoxHash, revision) : undefined;
-  if (successful?.engineVersion === "v2-skill-v1") {
-    script = JSON.parse(JSON.stringify(successful.script)) as BattleScript;
-    reusedFromGenerationId = successful.generationId;
-    modelVersion = successful.modelVersion;
-    combatDataVersion = successful.combatDataVersion;
-    combatCoverage = successful.combatCoverage;
-    skillCoverage = successful.skillCoverage ?? 0;
-    candidateScore = successful.candidateScore;
-    scoreBreakdown = successful.scoreBreakdown;
-    if (!args.quiet) console.error(`Reused 100% feedback generation: ${successful.generationId}`);
-  } else {
-    const result = generateCopilotScript(displayName, mapData, {
-      playerOperators,
-      excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash, stageContentHash),
-      feedbackAdjustment: (_script, _hash, breakdown) => feedbackStore.feedbackAdjustment(stageId, operatorBoxHash, { ...breakdown }, stageContentHash),
-    });
-    script = result.script;
-    modelVersion = result.modelVersion;
-    combatDataVersion = result.combatModelVersion;
-    combatCoverage = result.combatCoverage;
-    skillCoverage = result.skillCoverage;
-    candidateScore = result.score;
-    scoreBreakdown = { ...result.breakdown };
-    if (!args.quiet) result.warnings.forEach(warning => console.error(`Warning: ${warning}`));
-  }
-  const validation = validateScript(script, mapData);
-  const protocol = validateMAAProtocol(script);
-  if (!validation.valid || !protocol.valid) {
-    const errors = [...validation.errors.map(error => error.message), ...protocol.errors.map(error => error.message)];
-    throw new Error(`V2 candidate failed validation: ${errors.join("; ")}`);
-  }
+  if (!args.quiet) result.warnings.forEach(warning => console.error(`Warning: ${warning}`));
 
   if (args.explain) {
     process.stderr.write([
-      `Stage: ${displayName}`,
-      `Facts: ${facts.summary}`,
-      `Candidate score: ${candidateScore.toFixed(2)} (ranking only, not a clear rate)`,
+      `Stage: ${result.stageName}`,
+      `Facts: ${result.analysis.summary}`,
+      `Candidate score: ${result.candidateScore.toFixed(2)} (ranking only, not a clear rate)`,
     ].join("\n") + "\n");
   }
 
-  const scriptHash = computeScriptHash(script);
-  const generationId = feedbackStore.createGenerationId();
-  script.metadata = { ...script.metadata, generationId, scriptHash };
-  const output = exportToCopilotFormat(script, { compress: !args.pretty });
-  const outputPath = args.output ? path.resolve(args.output) : "";
-
   if (args.output) {
-    fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
-    fs.writeFileSync(args.output, output, "utf-8");
     if (!args.quiet) console.error(`Script written to: ${args.output}`);
   } else {
-    process.stdout.write(output);
+    process.stdout.write(result.json);
     if (!args.quiet) process.stdout.write("\n");
   }
-  feedbackStore.appendGeneration({
-    schemaVersion: 2,
-    generationId,
-    scriptHash,
-    stageId,
-    stageName: displayName,
-    operatorBoxHash,
-    engineVersion: "v2-skill-v1",
-    modelVersion,
-    combatDataVersion,
-    candidateScore,
-    scoreBreakdown,
-    combatCoverage,
-    skillCoverage,
-    stageContentHash,
-    gameDataCommit: combatModel.commit,
-    enemyTotal: facts.enemyCount,
-    outputPath,
-    script,
-    reusedFromGenerationId,
-    createdAt: new Date().toISOString(),
-  });
 }
 
 function cmdList(args: Args): void {
@@ -535,41 +424,15 @@ async function cmdAnalyze(args: Args): Promise<void> {
     process.exit(1);
   }
 
-  const loader = new PRTSMapLoader(CACHE_DIR, DATA_URL);
-  const adapter = new PRTSMapAdapter(loader);
+  const result = await analyzeStage({
+    stage: args.stage,
+    dataPath: args.data,
+    noCache: args.noCache,
+    operatorFilePath: args.operators,
+  }, { cacheDir: CACHE_DIR, dataUrl: DATA_URL, stateDir: getRuntimePaths().homeDir });
 
-  let prtsData: PRTSLevelData;
-  let stageId: string;
-  let resolved: StageIndexEntry | null = null;
-
-  if (args.data) {
-    if (!fs.existsSync(args.data)) {
-      console.error(`Error: File not found: ${args.data}`);
-      process.exit(1);
-    }
-    const raw = fs.readFileSync(args.data, "utf-8");
-    prtsData = JSON.parse(raw) as PRTSLevelData;
-    const inputStage = args.stage || inferStageIdFromDataPath(args.data);
-    resolved = resolveStage(inputStage);
-    stageId = resolved ? resolved.stageId : inputStage;
-  } else {
-    const inputStage = args.stage!;
-    resolved = resolveStage(inputStage);
-    prtsData = await loader.load(inputStage, { noCache: args.noCache });
-    stageId = resolved ? resolved.stageId : inputStage;
-  }
-
-  await loader.loadEnemyDatabase();
-  const displayName = getDisplayStageName(stageId, resolved);
-  const mapData = adapter.adapt(prtsData, stageId, displayName);
-  const analysis = extractStageFacts(mapData);
-
-  if (args.operators && fs.existsSync(args.operators)) {
-    const box = new OperatorBox(args.operators);
-    console.error(`Loaded ${box.size} owned operators from player data`);
-  }
-
-  console.log(JSON.stringify(analysis, null, args.pretty ? 2 : 0));
+  if (!args.quiet) result.warnings.forEach(warning => console.error(`Warning: ${warning}`));
+  console.log(JSON.stringify(result.analysis, null, args.pretty ? 2 : 0));
 }
 
 function cmdValidate(args: Args): void {
@@ -612,27 +475,12 @@ async function cmdInfo(args: Args): Promise<void> {
     process.exit(1);
   }
 
-  let prtsData: PRTSLevelData;
-  let stageId: string;
-  let resolved: StageIndexEntry | null = null;
-
-  if (args.data) {
-    if (!fs.existsSync(args.data)) {
-      console.error(`Error: File not found: ${args.data}`);
-      process.exit(1);
-    }
-    const raw = fs.readFileSync(args.data, "utf-8");
-    prtsData = JSON.parse(raw) as PRTSLevelData;
-    const inputStage = args.stage || inferStageIdFromDataPath(args.data);
-    resolved = resolveStage(inputStage);
-    stageId = resolved ? resolved.stageId : inputStage;
-  } else {
-    const loader = new PRTSMapLoader(CACHE_DIR, DATA_URL);
-    const inputStage = args.stage!;
-    resolved = resolveStage(inputStage);
-    stageId = resolved ? resolved.stageId : inputStage;
-    prtsData = await loader.load(inputStage, { noCache: args.noCache });
-  }
+  const { prtsData, stageId, resolved } = await loadStageContext({
+    stage: args.stage,
+    dataPath: args.data,
+    noCache: args.noCache,
+    includeEnemyData: false,
+  }, { cacheDir: CACHE_DIR, dataUrl: DATA_URL });
 
   const mapSize = `${prtsData.mapData.map.length} × ${prtsData.mapData.map[0]?.length || 0}`;
   const deployable = countDeploymentTiles(prtsData);

@@ -36,15 +36,22 @@ export interface PipelineOptions {
   stateDir?: string;
 }
 
-export interface AnalyzeStageInput extends OperatorInput {
-  stage: string;
+export interface StageInput {
+  stage?: string;
+  dataPath?: string;
+  noCache?: boolean;
+  includeEnemyData?: boolean;
 }
 
-export interface GenerateStageInput extends OperatorInput {
-  stage: string;
+export interface AnalyzeStageInput extends OperatorInput, StageInput {
+}
+
+export interface GenerateStageInput extends OperatorInput, StageInput {
   pretty?: boolean;
   outputDir?: string;
   fileName?: string;
+  outputPath?: string;
+  writeOutput?: boolean;
   newCandidate?: boolean;
   core?: GenerationCore;
 }
@@ -58,6 +65,15 @@ export interface AnalyzeStageResult {
   stageName: string;
   analysis: StageFacts;
   warnings: string[];
+}
+
+export interface StageContext {
+  prtsData: PRTSLevelData;
+  mapData: MapData;
+  facts: StageFacts;
+  stageId: string;
+  stageName: string;
+  resolved: StageIndexEntry | null;
 }
 
 export interface GenerateStageResult extends AnalyzeStageResult {
@@ -190,36 +206,46 @@ export function searchStageSuggestions(query: string, limit = 24): StageSuggesti
     }));
 }
 
-async function buildStageContext(stage: string, options: PipelineOptions): Promise<{
-  mapData: MapData;
-  facts: StageFacts;
-  stageId: string;
-  stageName: string;
-  resolved: StageIndexEntry | null;
-}> {
+export async function loadStageContext(input: StageInput, options: PipelineOptions = {}): Promise<StageContext> {
+  const stage = input.stage?.trim();
+  const dataPath = input.dataPath?.trim();
+  if (!stage && !dataPath) throw new Error("stage or dataPath is required");
+
   const loader = new PRTSMapLoader(options.cacheDir || DEFAULT_CACHE_DIR, options.dataUrl || DEFAULT_DATA_URL);
-  const resolved = resolveStage(stage);
-  const prtsData: PRTSLevelData = await loader.load(stage);
-  const stageId = resolved?.stageId || inferStageIdFromDataPath(stage);
-  await loader.loadEnemyDatabase();
+  let prtsData: PRTSLevelData;
+  let resolved: StageIndexEntry | null;
+  let stageId: string;
+
+  if (dataPath) {
+    const filePath = path.resolve(dataPath);
+    if (!fs.existsSync(filePath)) throw new Error(`Stage data file not found: ${filePath}`);
+    prtsData = JSON.parse(fs.readFileSync(filePath, "utf8")) as PRTSLevelData;
+    const inputStage = stage || inferStageIdFromDataPath(filePath);
+    resolved = resolveStage(inputStage);
+    stageId = resolved?.stageId || inputStage;
+  } else {
+    resolved = resolveStage(stage!);
+    prtsData = await loader.load(stage!, { noCache: input.noCache });
+    stageId = resolved?.stageId || stage!;
+  }
+
+  if (input.includeEnemyData !== false) await loader.loadEnemyDatabase();
   const stageName = getDisplayStageName(stageId, resolved);
   const mapData = new PRTSMapAdapter(loader).adapt(prtsData, stageId, stageName);
-  return { mapData, facts: extractStageFacts(mapData), stageId, stageName, resolved };
+  return { prtsData, mapData, facts: extractStageFacts(mapData), stageId, stageName, resolved };
 }
 
 export async function analyzeStage(input: AnalyzeStageInput, options: PipelineOptions = {}): Promise<AnalyzeStageResult> {
-  if (!input.stage?.trim()) throw new Error("stage is required");
   const { warnings } = parseOperatorInput(input, options.stateDir);
-  const { facts, stageId, stageName } = await buildStageContext(input.stage.trim(), options);
+  const { facts, stageId, stageName } = await loadStageContext(input, options);
   return { stageId, stageName, analysis: facts, warnings };
 }
 
 export async function generateStage(input: GenerateStageInput, options: PipelineOptions = {}): Promise<GenerateStageResult> {
-  if (!input.stage?.trim()) throw new Error("stage is required");
   const requestedCore = coreMode(input.core);
   const parsedOperators = parseOperatorInput(input, options.stateDir);
   const warnings = [...parsedOperators.warnings];
-  const { mapData, facts, stageId, stageName, resolved } = await buildStageContext(input.stage.trim(), options);
+  const { mapData, facts, stageId, stageName, resolved } = await loadStageContext(input, options);
   const feedbackStore = new FeedbackStore(options.stateDir || getRuntimePaths().homeDir);
   const operatorBoxHash = hashOperatorBox(parsedOperators.playerOperators);
   const stageContentHash = computeStageContentHash(mapData);
@@ -292,17 +318,27 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     throw new Error(`V2 candidate failed validation: ${errors.join("; ")}`);
   }
 
-  const outputDir = path.resolve(input.outputDir || DEFAULT_OUTPUT_DIR);
-  const fileName = sanitizeFileName(input.fileName || makeDefaultScriptFileName(stageName, resolved));
-  const finalOutputPath = path.join(outputDir, fileName);
+  const requestedOutputPath = input.outputPath?.trim();
+  const finalOutputPath = requestedOutputPath
+    ? path.resolve(requestedOutputPath)
+    : path.join(
+      path.resolve(input.outputDir || DEFAULT_OUTPUT_DIR),
+      sanitizeFileName(input.fileName || makeDefaultScriptFileName(stageName, resolved))
+    );
+  const outputDir = path.dirname(finalOutputPath);
+  const fileName = path.basename(finalOutputPath);
   const publicationStatus = requestedCore === "deepseek-core" ? "candidate" : "published";
-  const outputPath = publicationStatus === "candidate" ? path.join(outputDir, ".candidates", fileName) : finalOutputPath;
+  const targetOutputPath = publicationStatus === "candidate" ? path.join(outputDir, ".candidates", fileName) : finalOutputPath;
+  const writeOutput = input.writeOutput ?? true;
+  const outputPath = writeOutput ? targetOutputPath : "";
   const scriptHash = computeScriptHash(script);
   const generationId = feedbackStore.createGenerationId();
   script.metadata = { ...script.metadata, generationId, scriptHash };
   const json = exportToCopilotFormat(script, { compress: !input.pretty });
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, json, "utf8");
+  if (writeOutput) {
+    fs.mkdirSync(path.dirname(targetOutputPath), { recursive: true });
+    fs.writeFileSync(targetOutputPath, json, "utf8");
+  }
   feedbackStore.appendGeneration({
     schemaVersion: 2,
     generationId,
