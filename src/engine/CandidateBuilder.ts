@@ -28,6 +28,7 @@ const PREFERRED_OPERATORS = new Set([...Object.keys(PREFERRED_SKILLS), "斩业�
 // ponytail: fixed preference bonus; add feedback-calibrated weights only after rehearsal data proves it necessary.
 const PREFERENCE_BONUS = 8.5;
 const MELEE_INCOMING_BONUS = 45;
+const MELEE_GOAL_FRONT_BONUS = 120;
 const RANGED_BLOCK_COVERAGE_BONUS = 100;
 const RANGED_ALL_BLOCKS_BONUS = 200;
 
@@ -396,17 +397,35 @@ function preferredIncomingDirection(
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0];
 }
 
+function goalFrontByPoint(mapData: MapData): Map<string, string> {
+  const fronts = new Map<string, string>();
+  const goals = new Map(mapData.routes
+    .filter(route => route.motionMode === "walk")
+    .map(route => [`${route.endPosition.row},${route.endPosition.col}`, route.endPosition]));
+  for (const [goalKey, goal] of goals) {
+    const adjacent = mapData.deploymentPoints.filter(point =>
+      point.buildableType !== "ranged" && distance(point, goal) === 1
+    );
+    const roadAdjacent = adjacent.filter(point => mapData.tiles[point.row]?.[point.col]?.key === "road");
+    // ponytail: only exact goal-adjacent melee tiles are modeled; trace route fronts only if a map has no such tile.
+    for (const point of roadAdjacent.length ? roadAdjacent : adjacent) fronts.set(`${point.row},${point.col}`, goalKey);
+  }
+  return fronts;
+}
+
 function placementPreference(
   pick: EnginePick,
   placement: RankedPlacement,
   meleeBlocks: DeploymentPoint[],
   mapData: MapData,
-  threats: Map<number, number>
+  threats: Map<number, number>,
+  goalFronts: Map<string, string>,
+  securedGoals: Set<string>,
 ): number {
   if (pick.profile.position === "MELEE") {
-    return placement.direction === preferredIncomingDirection(placement.point, mapData, threats)
-      ? MELEE_INCOMING_BONUS
-      : 0;
+    const goal = goalFronts.get(`${placement.point.row},${placement.point.col}`);
+    return Number(Boolean(goal && !securedGoals.has(goal))) * MELEE_GOAL_FRONT_BONUS
+      + Number(placement.direction === preferredIncomingDirection(placement.point, mapData, threats)) * MELEE_INCOMING_BONUS;
   }
   if (meleeBlocks.length === 0) return 0;
   const coveredBlocks = meleeBlocks.filter(block => pick.profile.range.some(offset => {
@@ -427,6 +446,8 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
   const usedPositions = new Set<string>();
   const meleeBlocks: DeploymentPoint[] = [];
   const threats = routeThreats(input.mapData);
+  const goalFronts = goalFrontByPoint(input.mapData);
+  const securedGoals = new Set<string>();
   const actions: BattleScript["actions"] = [{ type: "SpeedUp" }];
   const deployLimit = Math.min(9, input.facts.characterLimit || 9, input.facts.deploymentPoints.length);
 
@@ -436,7 +457,7 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       .filter(({ point }) => !usedPositions.has(`${point.row},${point.col}`))
       .map(placement => ({
         ...placement,
-        score: placement.score + placementPreference(pick, placement, meleeBlocks, input.mapData, threats),
+        score: placement.score + placementPreference(pick, placement, meleeBlocks, input.mapData, threats, goalFronts, securedGoals),
       }))
       .sort((left, right) => right.score - left.score
         || left.point.row - right.point.row || left.point.col - right.point.col
@@ -444,7 +465,11 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
     if (placements.length === 0) continue;
     const placement = placements[Math.min(input.positionVariant, placements.length - 1)];
     usedPositions.add(`${placement.point.row},${placement.point.col}`);
-    if (pick.profile.position === "MELEE") meleeBlocks.push(placement.point);
+    if (pick.profile.position === "MELEE") {
+      meleeBlocks.push(placement.point);
+      const goal = goalFronts.get(`${placement.point.row},${placement.point.col}`);
+      if (goal) securedGoals.add(goal);
+    }
     actions.push({
       type: "Deploy",
       name: pick.name,

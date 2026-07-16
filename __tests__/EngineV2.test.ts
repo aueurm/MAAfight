@@ -205,6 +205,33 @@ describe("v2 skill engine", () => {
     expect(built.script.actions.filter(action => action.type === "Deploy")[2].direction).toBe("Left");
   });
 
+  it("prefers distinct melee blockers at each goal front before a shared central choke", () => {
+    const mapData = makeMapData();
+    mapData.routes = [
+      { id: 0, motionMode: "walk", startPosition: { row: 2, col: 0 }, checkpoints: [{ row: 2, col: 2 }], endPosition: { row: 0, col: 6 } },
+      { id: 1, motionMode: "walk", startPosition: { row: 2, col: 0 }, checkpoints: [{ row: 2, col: 2 }], endPosition: { row: 4, col: 6 } },
+    ];
+    mapData.deploymentPoints = [
+      { row: 2, col: 2, buildableType: "melee" },
+      { row: 0, col: 5, buildableType: "melee" },
+      { row: 4, col: 5, buildableType: "melee" },
+    ];
+    const built = buildCandidate({
+      stageCode: "V2-1",
+      mapData,
+      facts: extractStageFacts(mapData),
+      picks: [testPick("melee-a", "MELEE"), testPick("melee-b", "MELEE")],
+      positionVariant: 0,
+      timingVariant: 0,
+      options: {},
+    });
+
+    expect(built.script.actions.filter(action => action.type === "Deploy").map(action => action.location)).toEqual([
+      [0, 5],
+      [4, 5],
+    ]);
+  });
+
   it("generates a deterministic fixed protocol-safe script", () => {
     const options = { playerOperators: playerOperators(), search: { deadlineMs: 10_000 } };
     const first = generateCopilotScript("V2-1", makeMapData(), options);
