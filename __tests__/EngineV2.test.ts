@@ -108,6 +108,22 @@ describe("v2 skill engine", () => {
     expect(beam.squads[0]).toHaveLength(11);
   });
 
+  it("applies preferred skills after filtering the player roster", () => {
+    const eyjafjalla = getCombatOperatorByName("艾雅法拉")!;
+    const saria = getCombatOperatorByName("塞雷娅")!;
+    const players = new Map([eyjafjalla, saria].map(record => [record.id, {
+      id: record.id, name: record.name, rarity: record.rarity, own: true,
+      elite: 2, level: 60, potential: 1,
+    }] as [string, PlayerOperator]));
+    const mapData = makeMapData();
+    const facts = extractStageFacts(mapData);
+    const picks = buildSquadBeam(facts, buildEncounterContext(mapData, facts), { playerOperators: players }).squads[0];
+
+    expect(picks).toHaveLength(2);
+    expect(picks.find(pick => pick.name === "艾雅法拉")?.skill).toBe(2);
+    expect(picks.find(pick => pick.name === "塞雷娅")?.skill).toBeGreaterThanOrEqual(1);
+  });
+
   it("generates a deterministic fixed protocol-safe script", () => {
     const options = { playerOperators: playerOperators(), search: { deadlineMs: 10_000 } };
     const first = generateCopilotScript("V2-1", makeMapData(), options);

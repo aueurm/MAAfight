@@ -16,6 +16,17 @@ import type {
 } from "./types";
 
 const DIRECTIONS = ["Right", "Down", "Left", "Up"] as const;
+const PREFERRED_SKILLS: Readonly<Record<string, readonly number[]>> = {
+  "凛御银灰": [2], "忍冬": [3], "怒潮凛冬": [2], "赤刃明霄陈": [2, 3],
+  "司霆惊蛰": [2, 3], "玛恩纳": [3], "乌尔比安": [2], "黍": [1],
+  "维什戴尔": [3], "圣聆初雪": [2], "澄闪": [2, 3], "荒芜拉普兰德": [3],
+  "逻各斯": [1], "艾雅法拉": [2], "凯尔希·思衡托": [2], "Mon3tr": [2, 3],
+  "纯烬艾雅法拉": [1], "遥": [2], "塑心": [1], "新约能天使": [2, 3],
+  "阿斯卡纶": [1], "歌蕾蒂娅": [1],
+};
+const PREFERRED_OPERATORS = new Set([...Object.keys(PREFERRED_SKILLS), "斩业星熊", "塞雷娅", "酒神"]);
+// ponytail: fixed preference bonus; add feedback-calibrated weights only after rehearsal data proves it necessary.
+const PREFERENCE_BONUS = 5;
 
 interface SquadState {
   picks: EnginePick[];
@@ -148,6 +159,10 @@ function reserveGapWeight(key: keyof CapabilityDemand): number {
   return key === "physical" || key === "arts" ? 0.2 : 1;
 }
 
+function preferenceBonus(pick: EnginePick): number {
+  return PREFERRED_OPERATORS.has(pick.name) ? PREFERENCE_BONUS : 0;
+}
+
 function marginalScore(
   previous: CapabilityDemand,
   addition: CapabilityDemand,
@@ -167,7 +182,7 @@ function marginalScore(
     const replacementFit = reserveGapWeight(focus) * demand[focus]
       * (saturated(previous[focus] + addition[focus], demand[focus]) - saturated(previous[focus], demand[focus]))
       * 100;
-    return replacementFit - pick.profile.attributes.cost * 0.04;
+    return replacementFit - pick.profile.attributes.cost * 0.04 + preferenceBonus(pick);
   }
   let gain = 0;
   for (const key of Object.keys(demand) as Array<keyof CapabilityDemand>) {
@@ -176,7 +191,7 @@ function marginalScore(
       * 100;
   }
   const earlyCostPenalty = pick.profile.attributes.cost * (slot < 3 ? 0.35 : 0.06);
-  return gain - earlyCostPenalty;
+  return gain - earlyCostPenalty + preferenceBonus(pick);
 }
 
 function eligibleOperators(options: EngineOptions): Array<{ record: CombatOperatorRecord; player?: PlayerOperator }> {
@@ -197,9 +212,10 @@ function eligibleOperators(options: EngineOptions): Array<{ record: CombatOperat
 function pickOptions(options: EngineOptions): EnginePick[] {
   return eligibleOperators(options).flatMap(({ record, player }) => {
     const skillCount = Math.max(1, record.skills.filter(skill => skill.unlockPhase <= 2).length);
-    return Array.from({ length: skillCount }, (_, index) => {
-      const skill = index + 1;
-      return {
+    const preferredSkills = PREFERRED_SKILLS[record.name];
+    return Array.from({ length: skillCount }, (_, index) => index + 1)
+      .filter(skill => !preferredSkills || preferredSkills.includes(skill))
+      .map(skill => ({
         operatorId: record.id,
         name: record.name,
         role: record.role,
@@ -207,8 +223,7 @@ function pickOptions(options: EngineOptions): EnginePick[] {
         skillRank: player?.skillLevel ?? 10,
         profile: resolveOperatorProfile(record, skill, player),
         player,
-      };
-    });
+      }));
   });
 }
 
