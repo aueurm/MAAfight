@@ -26,7 +26,7 @@ const PREFERRED_SKILLS: Readonly<Record<string, readonly number[]>> = {
 };
 const PREFERRED_OPERATORS = new Set([...Object.keys(PREFERRED_SKILLS), "斩业星熊", "塞雷娅", "酒神"]);
 // ponytail: fixed preference bonus; add feedback-calibrated weights only after rehearsal data proves it necessary.
-const PREFERENCE_BONUS = 5;
+const PREFERENCE_BONUS = 8.5;
 
 interface SquadState {
   picks: EnginePick[];
