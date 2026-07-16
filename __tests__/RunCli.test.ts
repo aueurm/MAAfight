@@ -91,6 +91,19 @@ describe("run command", () => {
     return Buffer.alloc(width * height * 3, 8);
   }
 
+  function failedResultBgr(): Buffer {
+    const buffer = blankBgr();
+    for (let y = 346; y <= 374; y++) {
+      for (let x = 136; x <= 164; x++) {
+        const offset = (y * 1280 + x) * 3;
+        buffer[offset] = 255;
+        buffer[offset + 1] = 255;
+        buffer[offset + 2] = 255;
+      }
+    }
+    return buffer;
+  }
+
   function bgrWithStars(stars: number): Buffer {
     const width = 1280;
     const buffer = blankBgr();
@@ -381,7 +394,7 @@ describe("run command", () => {
           const bgrPath = path.join(debugDir, "screen.bgr");
           const screenshotPath = path.join(debugDir, "screenshot.png");
           fs.mkdirSync(debugDir, { recursive: true });
-          fs.writeFileSync(bgrPath, captureScripts.length === 1 ? blankBgr() : bgrWithStars(0));
+          fs.writeFileSync(bgrPath, captureScripts.length === 1 ? failedResultBgr() : bgrWithStars(0));
           fs.writeFileSync(screenshotPath, "png", "utf8");
           return {
             stdout: JSON.stringify({

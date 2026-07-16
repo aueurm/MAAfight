@@ -9,6 +9,9 @@ const HEIGHT = 720;
 const BYTES_PER_PIXEL = 3;
 const LIT_RATIO = 0.04;
 const NEUTRAL_RATIO = 0.04;
+// ponytail: saved MAA result screens calibrate this fixed grey-star palette range; use template matching only if MAA restyles the result UI.
+const NEUTRAL_DOMINANT_RATIO_MIN = 0.2;
+const NEUTRAL_DOMINANT_RATIO_MAX = 0.5;
 const SCREEN_BYTES = WIDTH * HEIGHT * BYTES_PER_PIXEL;
 const IMAGE_BUFFER_BYTES = 16 * 1024 * 1024;
 const RESULT_CONTINUE_CLICK = { x: 640, y: 650, waitMs: 1000 };
@@ -18,6 +21,8 @@ const STAR_ROIS = [
   { name: "star2", cx: 174, cy: 322, radius: 24 },
   { name: "star3", cx: 246, cy: 322, radius: 24 },
 ] as const;
+const FAILURE_TITLE_ROI = { minX: 100, maxX: 199, minY: 340, maxY: 379 };
+const FAILURE_TITLE_BRIGHT_RATIO = 0.15;
 
 export interface StarSample {
   name: string;
@@ -28,6 +33,7 @@ export interface StarSample {
   neutralPixels: number;
   litRatio: number;
   neutralRatio: number;
+  neutralDominantRatio: number;
   lit: boolean;
   recognized: boolean;
 }
@@ -105,6 +111,10 @@ function isNeutralStar(b: number, g: number, r: number): boolean {
   return max >= 25 && max <= 225 && max - min <= 30;
 }
 
+function isBrightWhite(b: number, g: number, r: number): boolean {
+  return b >= 220 && g >= 220 && r >= 220;
+}
+
 function outcomeFromStars(stars: number): RunOutcome {
   if (stars === 3) return "clear";
   if (stars === 0) return "failed";
@@ -120,6 +130,8 @@ export function sampleSettlementStars(bgr: Buffer, width = WIDTH, height = HEIGH
     let pixels = 0;
     let litPixels = 0;
     let neutralPixels = 0;
+    let neutralDominantPixels = 0;
+    const neutralColors = new Map<number, number>();
     const minX = Math.max(0, roi.cx - roi.radius);
     const maxX = Math.min(width - 1, roi.cx + roi.radius);
     const minY = Math.max(0, roi.cy - roi.radius);
@@ -133,14 +145,25 @@ export function sampleSettlementStars(bgr: Buffer, width = WIDTH, height = HEIGH
         const r = bgr[offset + 2];
         pixels++;
         if (isLitStar(b, g, r)) litPixels++;
-        if (isNeutralStar(b, g, r)) neutralPixels++;
+        if (isNeutralStar(b, g, r)) {
+          neutralPixels++;
+          const color = b | (g << 8) | (r << 16);
+          const count = (neutralColors.get(color) || 0) + 1;
+          neutralColors.set(color, count);
+          neutralDominantPixels = Math.max(neutralDominantPixels, count);
+        }
       }
     }
 
     const litRatio = ratio(litPixels, pixels);
     const neutralRatio = ratio(neutralPixels, pixels);
+    const neutralDominantRatio = ratio(neutralDominantPixels, pixels);
     const lit = litRatio >= LIT_RATIO;
-    const recognized = lit || neutralRatio >= NEUTRAL_RATIO;
+    const recognized = lit || (
+      neutralRatio >= NEUTRAL_RATIO
+      && neutralDominantRatio >= NEUTRAL_DOMINANT_RATIO_MIN
+      && neutralDominantRatio <= NEUTRAL_DOMINANT_RATIO_MAX
+    );
     return {
       name: roi.name,
       center: { x: roi.cx, y: roi.cy },
@@ -150,6 +173,7 @@ export function sampleSettlementStars(bgr: Buffer, width = WIDTH, height = HEIGH
       neutralPixels,
       litRatio,
       neutralRatio,
+      neutralDominantRatio,
       lit,
       recognized,
     };
@@ -161,6 +185,22 @@ export function sampleSettlementStars(bgr: Buffer, width = WIDTH, height = HEIGH
 
   const stars = samples.filter(sample => sample.lit).length;
   return { width, height, outcome: outcomeFromStars(stars), stars, samples, recognized: true };
+}
+
+export function isFailureContinueScreen(bgr: Buffer, width = WIDTH, height = HEIGHT): boolean {
+  if (bgr.length < width * height * BYTES_PER_PIXEL) return false;
+
+  let brightPixels = 0;
+  let pixels = 0;
+  for (let y = FAILURE_TITLE_ROI.minY; y <= FAILURE_TITLE_ROI.maxY; y++) {
+    for (let x = FAILURE_TITLE_ROI.minX; x <= FAILURE_TITLE_ROI.maxX; x++) {
+      const offset = (y * width + x) * BYTES_PER_PIXEL;
+      if (isBrightWhite(bgr[offset], bgr[offset + 1], bgr[offset + 2])) brightPixels++;
+      pixels++;
+    }
+  }
+  // ponytail: fixed Official-client title ROI; add locale-aware image matching only if this screen changes.
+  return brightPixels / pixels >= FAILURE_TITLE_BRIGHT_RATIO;
 }
 
 function runMaaCoreScreencap(options: MaaCoreScreencapOptions): CaptureResult {
@@ -327,12 +367,14 @@ export function observeMaaScreen(options: ScreenObserverOptions): ScreenObservat
     let bgr = fs.readFileSync(capture.bgrPath);
     let sampled = sampleSettlementStars(bgr);
 
-    if (!sampled.recognized) {
+    if (!sampled.recognized && isFailureContinueScreen(bgr)) {
       fs.rmSync(capture.bgrPath, { force: true });
       capture = runMaaCoreScreencap({ ...captureOptions, click: RESULT_CONTINUE_CLICK });
       bgr = fs.readFileSync(capture.bgrPath);
       sampled = sampleSettlementStars(bgr);
       warnings.push("Initial result screen had no settlement stars; clicked once and resampled.");
+    } else if (!sampled.recognized) {
+      warnings.push("Settlement stars were not recognized; skipped result-screen click.");
     }
 
     let debugScreenshotPath = capture.screenshotPath && fs.existsSync(capture.screenshotPath)

@@ -1,4 +1,4 @@
-import { sampleSettlementStars } from "../src/runner/screenObserver";
+import { isFailureContinueScreen, sampleSettlementStars } from "../src/runner/screenObserver";
 
 const width = 1280;
 const height = 720;
@@ -16,6 +16,26 @@ function paint(buffer: Buffer, cx: number, cy: number, b: number, g: number, r: 
       buffer[offset + 2] = r;
     }
   }
+}
+
+function diffuseGreyBackground(): Buffer {
+  const bgr = Buffer.alloc(width * height * 3, 8);
+  for (let y = 298; y <= 346; y++) {
+    for (let x = 78; x <= 270; x++) {
+      const offset = (y * width + x) * 3;
+      if ((x + y) % 4 === 0) {
+        bgr[offset] = 35;
+        bgr[offset + 1] = 85;
+        bgr[offset + 2] = 135;
+      } else {
+        const tone = 35 + ((x * 7 + y * 11) % 150);
+        bgr[offset] = tone;
+        bgr[offset + 1] = tone;
+        bgr[offset + 2] = tone;
+      }
+    }
+  }
+  return bgr;
 }
 
 describe("sampleSettlementStars", () => {
@@ -63,5 +83,29 @@ describe("sampleSettlementStars", () => {
       recognized: false,
       outcome: "unknown",
     });
+  });
+
+  it("keeps outcome unknown when a non-result screen is uniformly grey at the star locations", () => {
+    const bgr = Buffer.alloc(width * height * 3, 80);
+
+    expect(sampleSettlementStars(bgr)).toMatchObject({
+      recognized: false,
+      outcome: "unknown",
+    });
+    expect(isFailureContinueScreen(bgr)).toBe(false);
+  });
+
+  it("does not mistake diffuse grey artwork for unlit stars", () => {
+    expect(sampleSettlementStars(diffuseGreyBackground())).toMatchObject({
+      recognized: false,
+      outcome: "unknown",
+    });
+  });
+
+  it("recognizes the mission-failed title before allowing a result-screen click", () => {
+    const bgr = blank();
+    paint(bgr, 150, 360, 255, 255, 255);
+
+    expect(isFailureContinueScreen(bgr)).toBe(true);
   });
 });
