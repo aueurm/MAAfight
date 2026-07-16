@@ -6,6 +6,7 @@ import { getCombatOperatorByName, getCombatModelInfo, listCombatOperators, resol
 import { buildEncounterContext } from "../src/engine/EncounterContext";
 import { validateMAAProtocol } from "../src/copilot/MAAProtocolValidator";
 import type { MapData, PlayerOperator } from "../src/types";
+import type { EnginePick } from "../src/engine/types";
 
 function makeMapData(): MapData {
   return {
@@ -69,6 +70,51 @@ function playerOperators(count = 24): Map<string, PlayerOperator> {
   }]));
 }
 
+function testPick(name: string, position: "MELEE" | "RANGED", range: Array<[number, number]> = [[0, 0]]): EnginePick {
+  return {
+    operatorId: name,
+    name,
+    role: "guard",
+    skill: 1,
+    skillRank: 10,
+    profile: {
+      operatorId: name,
+      name,
+      role: "guard",
+      subProfession: null,
+      position,
+      damageType: "physical",
+      skill: 1,
+      skillRank: 10,
+      baseRangeId: null,
+      skillRangeId: null,
+      range,
+      attributes: { hp: 1, atk: 1, def: 1, res: 0, cost: 1, block: 1, attackInterval: 1, attackSpeed: 100 },
+      metrics: { normalDps: 1, burstDps: 1, cycleDps: 1, healingHps: 0, physicalEhp: 1, artsEhp: 1, controlSeconds: 0 },
+      maxTargets: 1,
+      confidence: "exact",
+      modelCoverageGaps: [],
+    },
+  };
+}
+
+function makeBlockCoverageMap(): MapData {
+  const mapData = makeMapData();
+  mapData.routes = [{
+    id: 0,
+    motionMode: "walk",
+    startPosition: { row: 0, col: 0 },
+    checkpoints: [{ row: 0, col: 2 }, { row: 0, col: 3 }],
+    endPosition: { row: 0, col: 5 },
+  }];
+  mapData.deploymentPoints = [
+    { row: 2, col: 2, buildableType: "melee" },
+    { row: 2, col: 1, buildableType: "melee" },
+    { row: 1, col: 2, buildableType: "ranged" },
+  ];
+  return mapData;
+}
+
 describe("v2 skill engine", () => {
   it("loads a pinned full operator model without role fallback", () => {
     const info = getCombatModelInfo();
@@ -122,6 +168,41 @@ describe("v2 skill engine", () => {
     expect(picks).toHaveLength(2);
     expect(picks.find(pick => pick.name === "艾雅法拉")?.skill).toBe(2);
     expect(picks.find(pick => pick.name === "塞雷娅")?.skill).toBeGreaterThanOrEqual(1);
+  });
+
+  it("faces a melee blocker toward the highest-threat incoming route", () => {
+    const mapData = makeMapData();
+    mapData.deploymentPoints = [{ row: 2, col: 2, buildableType: "melee" }];
+    const built = buildCandidate({
+      stageCode: "V2-1",
+      mapData,
+      facts: extractStageFacts(mapData),
+      picks: [testPick("melee", "MELEE", [[0, 1], [0, 2]])],
+      positionVariant: 0,
+      timingVariant: 0,
+      options: {},
+    });
+
+    expect(built.script.actions.find(action => action.type === "Deploy")?.direction).toBe("Left");
+  });
+
+  it("strongly prefers a ranged direction covering all earlier melee blockers", () => {
+    const mapData = makeBlockCoverageMap();
+    const built = buildCandidate({
+      stageCode: "V2-1",
+      mapData,
+      facts: extractStageFacts(mapData),
+      picks: [
+        testPick("melee-a", "MELEE"),
+        testPick("melee-b", "MELEE"),
+        testPick("ranged", "RANGED", [[-1, 0], [-1, 1]]),
+      ],
+      positionVariant: 0,
+      timingVariant: 0,
+      options: {},
+    });
+
+    expect(built.script.actions.filter(action => action.type === "Deploy")[2].direction).toBe("Left");
   });
 
   it("generates a deterministic fixed protocol-safe script", () => {

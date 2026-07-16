@@ -5,7 +5,7 @@ import {
   type CombatOperatorRecord,
 } from "./CombatModel";
 import { rotateDirection, squadSignature } from "./helpers";
-import type { BattleScript, BattleScriptOper, DeploymentPoint, PlayerOperator } from "../types";
+import type { BattleScript, BattleScriptOper, DeploymentPoint, MapData, PlayerOperator } from "../types";
 import type {
   CandidateBuildInput,
   CapabilityDemand,
@@ -27,6 +27,9 @@ const PREFERRED_SKILLS: Readonly<Record<string, readonly number[]>> = {
 const PREFERRED_OPERATORS = new Set([...Object.keys(PREFERRED_SKILLS), "斩业星熊", "塞雷娅", "酒神"]);
 // ponytail: fixed preference bonus; add feedback-calibrated weights only after rehearsal data proves it necessary.
 const PREFERENCE_BONUS = 8.5;
+const MELEE_INCOMING_BONUS = 45;
+const RANGED_BLOCK_COVERAGE_BONUS = 100;
+const RANGED_ALL_BLOCKS_BONUS = 200;
 
 interface SquadState {
   picks: EnginePick[];
@@ -345,22 +348,103 @@ function rankedPlacements(pick: EnginePick, facts: StageFacts): RankedPlacement[
   return ranked;
 }
 
+function routeThreats(mapData: MapData): Map<number, number> {
+  const enemies = new Map(mapData.enemyDetails.map(enemy => [enemy.id, enemy]));
+  const threats = new Map<number, number>();
+  for (const spawn of mapData.spawnTimeline) {
+    const enemy = enemies.get(spawn.enemyId);
+    const multiplier = enemy?.isBoss ? 3 : enemy?.isElite ? 2 : 1;
+    const threat = Math.max(1, spawn.count) * (Math.max(1, enemy?.maxHp || 1) + Math.max(0, enemy?.atk || 0) * 10) * multiplier;
+    threats.set(spawn.routeIndex, (threats.get(spawn.routeIndex) || 0) + threat);
+  }
+  return threats;
+}
+
+function incomingDirection(point: DeploymentPoint, route: MapData["routes"][number]): typeof DIRECTIONS[number] | undefined {
+  const cells = [route.startPosition, ...route.checkpoints, route.endPosition];
+  let closestIndex = -1;
+  let closestDistance = Number.POSITIVE_INFINITY;
+  for (const [index, cell] of cells.entries()) {
+    const cellDistance = distance(point, cell);
+    if (cellDistance < closestDistance) {
+      closestIndex = index;
+      closestDistance = cellDistance;
+    }
+  }
+  if (closestDistance > 1 || closestIndex < 0 || cells.length < 2) return undefined;
+  const current = cells[closestIndex];
+  const upstream = closestIndex > 0 ? cells[closestIndex - 1] : cells[1];
+  const rowDelta = closestIndex > 0 ? upstream.row - point.row : current.row - upstream.row;
+  const colDelta = closestIndex > 0 ? upstream.col - point.col : current.col - upstream.col;
+  if (Math.abs(colDelta) >= Math.abs(rowDelta)) return colDelta < 0 ? "Left" : "Right";
+  return rowDelta < 0 ? "Up" : "Down";
+}
+
+function preferredIncomingDirection(
+  point: DeploymentPoint,
+  mapData: MapData,
+  threats: Map<number, number>
+): typeof DIRECTIONS[number] | undefined {
+  const directionThreats = new Map<typeof DIRECTIONS[number], number>();
+  for (const route of mapData.routes) {
+    if (route.motionMode !== "walk") continue;
+    const direction = incomingDirection(point, route);
+    if (!direction) continue;
+    directionThreats.set(direction, (directionThreats.get(direction) || 0) + (threats.get(route.id) || 0));
+  }
+  return [...directionThreats.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0];
+}
+
+function placementPreference(
+  pick: EnginePick,
+  placement: RankedPlacement,
+  meleeBlocks: DeploymentPoint[],
+  mapData: MapData,
+  threats: Map<number, number>
+): number {
+  if (pick.profile.position === "MELEE") {
+    return placement.direction === preferredIncomingDirection(placement.point, mapData, threats)
+      ? MELEE_INCOMING_BONUS
+      : 0;
+  }
+  if (meleeBlocks.length === 0) return 0;
+  const coveredBlocks = meleeBlocks.filter(block => pick.profile.range.some(offset => {
+    const [row, col] = rotateDirection(offset, placement.direction);
+    return placement.point.row + row === block.row && placement.point.col + col === block.col;
+  })).length;
+  if (coveredBlocks === 0) return 0;
+  // ponytail: earlier melee cells stand in for blocked enemies; add timed occupancy only if rehearsals show this static proxy is insufficient.
+  return coveredBlocks * RANGED_BLOCK_COVERAGE_BONUS
+    + Number(coveredBlocks === meleeBlocks.length) * RANGED_ALL_BLOCKS_BONUS;
+}
+
 function toOper(pick: EnginePick): BattleScriptOper {
   return { name: pick.name, skill: pick.skill, skill_usage: 1 };
 }
 
 export function buildCandidate(input: CandidateBuildInput): { script: BattleScript; picks: EnginePick[]; warnings: string[] } {
   const usedPositions = new Set<string>();
+  const meleeBlocks: DeploymentPoint[] = [];
+  const threats = routeThreats(input.mapData);
   const actions: BattleScript["actions"] = [{ type: "SpeedUp" }];
   const deployLimit = Math.min(9, input.facts.characterLimit || 9, input.facts.deploymentPoints.length);
 
   for (const pick of input.picks) {
     if (actions.filter(action => action.type === "Deploy").length >= deployLimit) break;
     const placements = rankedPlacements(pick, input.facts)
-      .filter(({ point }) => !usedPositions.has(`${point.row},${point.col}`));
+      .filter(({ point }) => !usedPositions.has(`${point.row},${point.col}`))
+      .map(placement => ({
+        ...placement,
+        score: placement.score + placementPreference(pick, placement, meleeBlocks, input.mapData, threats),
+      }))
+      .sort((left, right) => right.score - left.score
+        || left.point.row - right.point.row || left.point.col - right.point.col
+        || left.direction.localeCompare(right.direction));
     if (placements.length === 0) continue;
     const placement = placements[Math.min(input.positionVariant, placements.length - 1)];
     usedPositions.add(`${placement.point.row},${placement.point.col}`);
+    if (pick.profile.position === "MELEE") meleeBlocks.push(placement.point);
     actions.push({
       type: "Deploy",
       name: pick.name,
