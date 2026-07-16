@@ -1,4 +1,4 @@
-import { isFailureContinueScreen, sampleSettlementStars } from "../src/runner/screenObserver";
+import { isFailureContinueScreen, pollUntilRecognized, sampleSettlementStars } from "../src/runner/screenObserver";
 
 const width = 1280;
 const height = 720;
@@ -107,5 +107,23 @@ describe("sampleSettlementStars", () => {
     paint(bgr, 150, 360, 255, 255, 255);
 
     expect(isFailureContinueScreen(bgr)).toBe(true);
+  });
+});
+
+describe("pollUntilRecognized", () => {
+  it("polls an unrecognized frame until a settlement frame is returned", () => {
+    let now = 0;
+    const capture = jest.fn()
+      .mockReturnValueOnce({ recognized: false })
+      .mockReturnValueOnce({ recognized: false })
+      .mockReturnValue({ recognized: true, stars: 0 });
+
+    expect(pollUntilRecognized(capture, {
+      maximumWaitMs: 10,
+      intervalMs: 5,
+      now: () => now,
+      sleep: milliseconds => { now += milliseconds; },
+    })).toMatchObject({ recognized: true, stars: 0 });
+    expect(capture).toHaveBeenCalledTimes(3);
   });
 });

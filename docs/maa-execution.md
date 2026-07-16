@@ -31,7 +31,7 @@ MAA 回调中的 `SubTaskExtraInfo.what = "StageDrops"` 包含 `stage`、`drops`
 
 当前 connect 只用于 MaaCore 与 adb 目标的连接握手：优先读取 MAA GUI 配置中的 `Connect.AdbPath`、`Connect.Address` 和 `Connect.ConnectConfig`，也可通过 CLI 参数覆盖。它只调用 `AsstCreate`、`AsstConnect`、`AsstConnected` 和 `AsstDestroy`，不调用 `AsstAppendTask` 或 `AsstStart`，不会执行 `Fight`、`Copilot` 或 `SingleStep`。connect 成功只代表 MaaCore 已连上 adb 目标，不代表已进入关卡或可以开始评测。
 
-当前 `run observe-screen` 只用于 Copilot 已结束后的结果观察：复用 MaaCore `AsstAsyncScreencap` + `AsstGetImageBgr` / `AsstGetImage` 获取当前截图，不直接调用 `adb shell screencap`。观察器只采样 1280x720 结算页固定星星区域颜色，判断 `stars = 0 / 1 / 2 / 3`；识别不到星星时保留 `outcome = "unknown"`。每次观察保留一张 debug screenshot 和 `samples.json`，用于后续校准 ROI 与阈值。
+当前 `run observe-screen` 只用于 Copilot 已结束后的结果观察：复用 MaaCore `AsstAsyncScreencap` + `AsstGetImageBgr` / `AsstGetImage` 获取当前截图，不直接调用 `adb shell screencap`。Copilot 的动作队列可能先于战斗结算完成，观察器会在未识别到结算星星时每 5 秒重试、最多等待 90 秒。它只采样 1280x720 结算页固定星星区域颜色，判断 `stars = 0 / 1 / 2 / 3`；到期仍无法识别时保留 `outcome = "unknown"`。每次观察保留最终 debug screenshot 和 `samples.json`，用于后续校准 ROI 与阈值。
 
 当前 `scripts/start-mumu.ps1` 复用 MAA GUI 的 `Start.EmulatorPath` 和 `Start.OpenEmulatorAfterLaunch` 配置，可在 `npm run gui` 前启动 MuMu；MAA 路径优先来自 GUI 保存的 `maaPath`、`MAAFIGHT_MAA_PATH` 或脚本参数。`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口：先执行 MAA 日常 `StartUp` 唤醒明日方舟，再通过 MAA `Fight times=0` 复用关卡导航，确认 1280x720 关卡详情页后，若代理指挥开关亮起则先关闭，再点击演习按钮。传入生成脚本路径时，它会继续追加 MAA `Copilot` 任务执行该作业文件，并在结束后复用截图观察器读取结算星级。
 
@@ -89,7 +89,7 @@ MAA 回调中的 `SubTaskExtraInfo.what = "StageDrops"` 包含 `stage`、`drops`
 | MAA 任务错误 | `execution_error` |
 | 任务结束但无 `StageDrops` | `unknown` |
 
-当前截图观察器只识别结算页星星，不做 OCR，也不读取右上角敌人计数。后续若需要实时 `killed / total`，继续复用同一 MaaCore 截图通道，只增加两个数字区域的识别。
+当前截图观察器会等待结算页星星，但仍不做 OCR，也不读取右上角敌人计数。后续若需要实时 `killed / total`，继续复用同一 MaaCore 截图通道，只增加两个数字区域的识别。
 
 ## RunResult
 

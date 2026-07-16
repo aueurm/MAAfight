@@ -15,6 +15,9 @@ const NEUTRAL_DOMINANT_RATIO_MAX = 0.5;
 const SCREEN_BYTES = WIDTH * HEIGHT * BYTES_PER_PIXEL;
 const IMAGE_BUFFER_BYTES = 16 * 1024 * 1024;
 const RESULT_CONTINUE_CLICK = { x: 640, y: 650, waitMs: 1000 };
+const SETTLEMENT_POLL_INTERVAL_MS = 5_000;
+// ponytail: fixed window covers Copilot completing before the battle; expose configuration only if a slower client actually needs it.
+const SETTLEMENT_WAIT_MS = 90_000;
 
 const STAR_ROIS = [
   { name: "star1", cx: 102, cy: 322, radius: 24 },
@@ -62,12 +65,26 @@ export interface ScreenObserverOptions extends MaaConnectOptions {
   timeoutMs?: number;
 }
 
+export interface SettlementPollOptions {
+  maximumWaitMs?: number;
+  intervalMs?: number;
+  now?: () => number;
+  sleep?: (milliseconds: number) => void;
+}
+
 interface CaptureResult {
   maaCoreVersion: string | null;
   bgrPath: string;
   bgrBytes: number;
   screenshotPath?: string;
   screenshotBytes?: number;
+}
+
+interface CapturedSettlement {
+  capture: CaptureResult;
+  bgr: Buffer;
+  sampled: StarObservation;
+  recognized: boolean;
 }
 
 interface ScreenClick {
@@ -119,6 +136,27 @@ function outcomeFromStars(stars: number): RunOutcome {
   if (stars === 3) return "clear";
   if (stars === 0) return "failed";
   return "partial_clear";
+}
+
+function sleepSynchronously(milliseconds: number): void {
+  const duration = Math.max(0, Math.floor(milliseconds));
+  if (duration > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, duration);
+}
+
+export function pollUntilRecognized<T extends { recognized: boolean }>(
+  capture: () => T,
+  options: SettlementPollOptions = {},
+): T {
+  const now = options.now || Date.now;
+  const sleep = options.sleep || sleepSynchronously;
+  const deadline = now() + Math.max(0, options.maximumWaitMs ?? SETTLEMENT_WAIT_MS);
+  const interval = Math.max(1, options.intervalMs ?? SETTLEMENT_POLL_INTERVAL_MS);
+  let current = capture();
+  while (!current.recognized && now() < deadline) {
+    sleep(Math.min(interval, deadline - now()));
+    current = capture();
+  }
+  return current;
 }
 
 export function sampleSettlementStars(bgr: Buffer, width = WIDTH, height = HEIGHT): StarObservation {
@@ -363,18 +401,25 @@ export function observeMaaScreen(options: ScreenObserverOptions): ScreenObservat
       connectConfig: connect.connectConfig,
       timeoutMs: options.timeoutMs || 30000,
     };
-    let capture = runMaaCoreScreencap(captureOptions);
-    let bgr = fs.readFileSync(capture.bgrPath);
-    let sampled = sampleSettlementStars(bgr);
+    let failureContinueClicked = false;
+    const captureSettlement = (): CapturedSettlement => {
+      let capture = runMaaCoreScreencap(captureOptions);
+      let bgr = fs.readFileSync(capture.bgrPath);
+      let sampled = sampleSettlementStars(bgr);
 
-    if (!sampled.recognized && isFailureContinueScreen(bgr)) {
-      fs.rmSync(capture.bgrPath, { force: true });
-      capture = runMaaCoreScreencap({ ...captureOptions, click: RESULT_CONTINUE_CLICK });
-      bgr = fs.readFileSync(capture.bgrPath);
-      sampled = sampleSettlementStars(bgr);
-      warnings.push("Initial result screen had no settlement stars; clicked once and resampled.");
-    } else if (!sampled.recognized) {
-      warnings.push("Settlement stars were not recognized; skipped result-screen click.");
+      if (!sampled.recognized && !failureContinueClicked && isFailureContinueScreen(bgr)) {
+        failureContinueClicked = true;
+        fs.rmSync(capture.bgrPath, { force: true });
+        capture = runMaaCoreScreencap({ ...captureOptions, click: RESULT_CONTINUE_CLICK });
+        bgr = fs.readFileSync(capture.bgrPath);
+        sampled = sampleSettlementStars(bgr);
+        warnings.push("Initial result screen had no settlement stars; clicked once and resampled.");
+      }
+      return { capture, bgr, sampled, recognized: sampled.recognized };
+    };
+    const { capture, bgr, sampled } = pollUntilRecognized(captureSettlement);
+    if (!sampled.recognized) {
+      warnings.push("Settlement stars were not recognized after 90 seconds; skipped result-screen click.");
     }
 
     let debugScreenshotPath = capture.screenshotPath && fs.existsSync(capture.screenshotPath)
