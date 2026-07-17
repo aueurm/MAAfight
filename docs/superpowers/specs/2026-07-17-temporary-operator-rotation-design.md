@@ -18,7 +18,7 @@
 
 ## 数据与协议
 
-`operatorCombat.v2.json` 当前没有再部署时间。数据构建器从其既有游戏源的角色表读取 `respawnTime`，写入干员记录并在 `CandidateBuilder` 使用。缺失、非正或未建模的数据均视为未知。
+`operatorCombat.v2.json` 当前没有再部署时间。数据构建器从其既有游戏源的角色属性帧读取 `respawnTime`，并叠加玩家潜能已解锁的 `RESPAWN_TIME` 加法修正后供 `CandidateBuilder` 使用。缺失、非正或未建模的数据均视为未知。
 
 MAA 动作顺序用 `pre_delay` 表示驻场和再部署等待；不使用 `cooling`，因为它表示全局冷却中的干员数量而非某一名干员是否转好。
 
