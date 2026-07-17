@@ -60,6 +60,16 @@ export interface MaaConnectResult {
   warnings: string[];
 }
 
+export interface MaaAdbCaptureEnvironment {
+  maaFound: boolean;
+  maaPath: string | null;
+  maaInstallDir: string | null;
+  adbPath: string | null;
+  address: string | null;
+  connectConfig: string;
+  warnings: string[];
+}
+
 interface MaaCandidate {
   path: string;
   kind: MaaKind;
@@ -378,24 +388,41 @@ export function probeMaaEnvironment(options: MaaProbeOptions = {}): MaaProbeResu
   };
 }
 
-export function connectMaaEnvironment(options: MaaConnectOptions = {}): MaaConnectResult {
+export function resolveMaaAdbCaptureEnvironment(options: MaaConnectOptions = {}): MaaAdbCaptureEnvironment {
   const warnings: string[] = [];
   const maa = findMaaForConnect(options, warnings);
-  const corePath = maa ? existingFile(path.join(maa.installDir, "MaaCore.dll")) : null;
   const guiConfig = maa ? readMaaGuiConnectConfig(maa.installDir) : {};
   const adbPath = options.adbPath || guiConfig.adbPath || findOnPath(["adb.exe", "adb"], options);
   const address = options.address || guiConfig.address || null;
   const connectConfig = options.connectConfig || guiConfig.connectConfig || "General";
 
   if (!maa) warnings.push("MAA not found. Use --maa <path> or set MAAFIGHT_MAA_PATH.");
-  if (!corePath) warnings.push("MaaCore.dll not found; cannot connect.");
   if (!adbPath) warnings.push("adb path not found. Use --adb <path> or configure MAA GUI connection.");
   if (adbPath && !existingFile(adbPath)) warnings.push(`adb path does not exist: ${adbPath}`);
   if (!address) warnings.push("adb address is missing. Use --address <serial-or-host:port>.");
 
-  const canAttempt = Boolean(corePath && adbPath && existingFile(adbPath) && address);
+  return {
+    maaFound: Boolean(maa),
+    maaPath: maa?.path ?? null,
+    maaInstallDir: maa?.installDir ?? null,
+    adbPath: adbPath ?? null,
+    address,
+    connectConfig,
+    warnings,
+  };
+}
+
+export function connectMaaEnvironment(options: MaaConnectOptions = {}): MaaConnectResult {
+  const environment = resolveMaaAdbCaptureEnvironment(options);
+  const warnings = [...environment.warnings];
+  const corePath = environment.maaInstallDir
+    ? existingFile(path.join(environment.maaInstallDir, "MaaCore.dll"))
+    : null;
+  if (!corePath) warnings.push("MaaCore.dll not found; cannot connect.");
+
+  const canAttempt = Boolean(corePath && environment.adbPath && existingFile(environment.adbPath) && environment.address);
   const connect = canAttempt
-    ? runMaaCoreConnectProbe(corePath!, maa!.installDir, adbPath!, address!, connectConfig)
+    ? runMaaCoreConnectProbe(corePath!, environment.maaInstallDir!, environment.adbPath!, environment.address!, environment.connectConfig)
     : {
       maaCoreVersion: null,
       connectCommand: null,
@@ -408,14 +435,14 @@ export function connectMaaEnvironment(options: MaaConnectOptions = {}): MaaConne
   if (connect.warning) warnings.push(connect.warning);
 
   return {
-    maaFound: Boolean(maa),
-    maaPath: maa?.path ?? null,
-    maaInstallDir: maa?.installDir ?? null,
+    maaFound: environment.maaFound,
+    maaPath: environment.maaPath,
+    maaInstallDir: environment.maaInstallDir,
     maaCorePath: corePath,
     maaCoreVersion: connect.maaCoreVersion,
-    adbPath: adbPath ?? null,
-    address,
-    connectConfig,
+    adbPath: environment.adbPath,
+    address: environment.address,
+    connectConfig: environment.connectConfig,
     connectAttempted: canAttempt,
     connectCommand: connect.connectCommand,
     connectExitCode: connect.connectExitCode,

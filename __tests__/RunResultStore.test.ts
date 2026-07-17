@@ -3,7 +3,12 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { parseCallbackMessages } from "../src/runner/callback";
-import { connectMaaEnvironment, parseAdbDevices, probeMaaEnvironment } from "../src/runner/probe";
+import {
+  connectMaaEnvironment,
+  parseAdbDevices,
+  probeMaaEnvironment,
+  resolveMaaAdbCaptureEnvironment,
+} from "../src/runner/probe";
 import { RunResultStore } from "../src/runner/RunResultStore";
 import type { RunResult } from "../src/runner/types";
 
@@ -208,6 +213,42 @@ describe("probeMaaEnvironment", () => {
 
 describe("connectMaaEnvironment", () => {
   afterEach(() => jest.restoreAllMocks());
+
+  it("resolves GUI ADB capture settings without starting MaaCore", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-adb-capture-"));
+    try {
+      const maaDir = path.join(cwd, "maa");
+      const configDir = path.join(maaDir, "config");
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(maaDir, "MAA.exe"), "", "utf8");
+      const adbPath = path.join(cwd, "adb.exe");
+      fs.writeFileSync(adbPath, "", "utf8");
+      fs.writeFileSync(path.join(configDir, "gui.json"), JSON.stringify({
+        Current: "Default",
+        Configurations: {
+          Default: {
+            "Connect.AdbPath": adbPath,
+            "Connect.Address": "127.0.0.1:16384",
+            "Connect.ConnectConfig": "MuMuEmulator12",
+          },
+        },
+      }), "utf8");
+      const spawn = jest.spyOn(childProcess, "spawnSync");
+
+      const result = resolveMaaAdbCaptureEnvironment({
+        maaPath: path.join(maaDir, "MAA.exe"), env: { MAAFIGHT_MAA_PATH: "" }, pathEnv: "",
+      });
+
+      expect(result).toMatchObject({
+        adbPath,
+        address: "127.0.0.1:16384",
+        connectConfig: "MuMuEmulator12",
+      });
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 
   it("uses MAA GUI connection config and calls only MaaCore connect functions", () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-connect-"));
