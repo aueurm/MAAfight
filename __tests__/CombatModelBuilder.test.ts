@@ -17,8 +17,8 @@ function writeFixture(root: string): void {
         maxLevel: 90,
         rangeId: "test-range",
         attributesKeyFrames: [
-          { level: 1, data: { maxHp: 1000, atk: 300, def: 200, magicResistance: 0, cost: 18, baseAttackTime: 1.2, attackSpeed: 100, blockCnt: 2 } },
-          { level: 90, data: { maxHp: 2400, atk: 700, def: 450, magicResistance: 10, cost: 20, baseAttackTime: 1.2, attackSpeed: 100, blockCnt: 2 } },
+          { level: 1, data: { maxHp: 1000, atk: 300, def: 200, magicResistance: 0, cost: 18, baseAttackTime: 1.2, attackSpeed: 100, blockCnt: 2, respawnTime: 18 } },
+          { level: 90, data: { maxHp: 2400, atk: 700, def: 450, magicResistance: 10, cost: 20, baseAttackTime: 1.2, attackSpeed: 100, blockCnt: 2, respawnTime: 18 } },
         ],
       }],
       favorKeyFrames: [{ level: 50, data: { maxHp: 100, atk: 50, def: 20, magicResistance: 0 } }],
@@ -29,6 +29,11 @@ function writeFixture(root: string): void {
         prefabKey: "simple-talent",
         blackboard: [{ key: "atk", value: 0.1 }],
       }] }],
+      potentialRanks: [{}, {}, {
+        buff: { attributes: { attributeModifiers: [
+          { attributeType: "RESPAWN_TIME", formulaItem: "ADDITION", value: -2 },
+        ] } },
+      }],
     },
   }), "utf8");
   fs.writeFileSync(path.join(root, "skill_table.json"), JSON.stringify({
@@ -87,6 +92,7 @@ describe("operator combat model builder", () => {
 
     const model = JSON.parse(fs.readFileSync(first, "utf8"));
     expect(model.schemaVersion).toBe(2);
+    expect(model.builderVersion).toBe("operator-combat-builder-v2.2");
     expect(model.source.commit).toBe(COMMIT);
     expect(Object.keys(model.source.tableHashes).sort()).toEqual([
       "battle_equip_table", "character_table", "range_table", "skill_table", "uniequip_table",
@@ -97,6 +103,8 @@ describe("operator combat model builder", () => {
       name: "测试干员",
       role: "guard",
       position: "MELEE",
+      respawnTime: 18,
+      potentialRespawnTimeModifiers: [0, 0, -2],
       e2: { minLevel: 1, maxLevel: 90, rangeId: "test-range" },
     });
     expect(model.operators.char_test.skills[0].levels[9]).toMatchObject({

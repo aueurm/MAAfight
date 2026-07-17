@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const BUILDER_VERSION = "operator-combat-builder-v2.1";
+const BUILDER_VERSION = "operator-combat-builder-v2.2";
 const TABLES = [
   "character_table",
   "skill_table",
@@ -232,6 +232,12 @@ function compileModules(characterId, equipDict, battleEquipTable) {
     });
 }
 
+function potentialRespawnTimeModifiers(character) {
+  return (character.potentialRanks || []).map(rank => (rank?.buff?.attributes?.attributeModifiers || [])
+    .filter(modifier => modifier?.attributeType === "RESPAWN_TIME" && modifier?.formulaItem === "ADDITION")
+    .reduce((total, modifier) => total + number(modifier.value), 0));
+}
+
 function compileOperator(id, character, tables) {
   const role = ROLE_BY_PROFESSION[character.profession];
   const phase = character.phases?.[2];
@@ -252,6 +258,8 @@ function compileOperator(id, character, tables) {
     subProfession: character.subProfessionId || null,
     position: character.position || "UNKNOWN",
     rarity: rarityNumber(character.rarity),
+    respawnTime: Math.max(0, number(frames.at(-1)?.data?.respawnTime)),
+    potentialRespawnTimeModifiers: potentialRespawnTimeModifiers(character),
     e2: {
       minLevel: number(frames[0].level, 1),
       maxLevel: number(phase.maxLevel, number(frames.at(-1).level, 1)),
