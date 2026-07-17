@@ -48,9 +48,9 @@ maafight run --file GT-1.json --mode manual-normal --allow-sanity
 
 当前 `run` 实现了 dry-run skeleton、MAA callback import、结算页截图观察、战斗过程截图观察、结果 summary、`run probe` 环境探测和 `run connect` MaaCore 连接握手：dry-run 只读取并校验脚本、写入 `source: "dry_run"` 的 `RunResult`，不会调用 MAA、ADB 或模拟器，也不计入真实通过率。传入 `--callback-log` 时只导入已有 MAA 回调 JSON / JSONL，识别 `StageDrops` 并写入 `source: "maa_callback"` 的 `RunResult`。
 
-`run observe-screen` 在 Copilot 已结束后使用 MaaCore `AsstAsyncScreencap` + `AsstGetImageBgr` / `AsstGetImage` 获取当前截图，只采样固定星星区域颜色，不做 OCR，不直接调用 `adb shell screencap`。Copilot 可能先于战斗结束；未识别到星星时每 5 秒重试，最多等待 90 秒。超过期限才写入 `source: "screen_observer"`、`outcome: "unknown"`，并保留最终 debug screenshot 与 `samples.json`。
+`run observe-screen` 在 Copilot 已结束后使用 MaaCore `AsstAsyncScreencap` + `AsstGetImageBgr` / `AsstGetImage` 获取当前截图，同时校验固定结果标题和星星区域，不做 OCR，不直接调用 `adb shell screencap`。Copilot 可能先于战斗结束；未识别到结果页时每 5 秒重试，最多等待 90 秒。超过期限才写入 `source: "screen_observer"`、`outcome: "unknown"`，并保留最终 debug screenshot 与 `samples.json`。
 
-`run observe-battle` 用于已经开始的演习或 Copilot：每 5 秒通过同一 MaaCore 截图通道保存一张 PNG，最多 10 分钟；在识别到结算星星后停止。结果写入 `.maafight/battle-observer/<runId>/frames/<unix-ms>.png` 和 `manifest.json`，不点击屏幕、不启动作战、不读取敌人计数，也不写入 `RunResult` 或学习反馈。连接失败、截图失败或超时时保留已采集帧并以非零退出码返回。
+`run observe-battle` 用于已经开始的演习或 Copilot：每 5 秒通过同一 MaaCore 截图通道保存一张 PNG，最多 10 分钟；只有结果标题与结算星星同时命中才停止。结果写入 `.maafight/battle-observer/<runId>/frames/<unix-ms>.png` 和 `manifest.json`；命中暂停页时会点击一次播放并立即复查，仍暂停则返回 `paused`。它不启动作战、不读取敌人计数，也不写入 `RunResult` 或学习反馈。连接失败、截图失败、暂停或超时时保留已采集帧并以非零退出码返回。
 
 `run probe` 只检查本机 MAA / ADB 是否存在，并最多调用 `MaaPiCli.exe --help` / `--version` / `-h` 或 MaaCore `AsstGetVersion` 这类安全只读探测，不会启动 GUI、连接游戏或开始作战。`run connect` 只调用 MaaCore `AsstCreate`、`AsstConnect`、`AsstConnected` 和 `AsstDestroy`，不追加任务、不调用 `AsstStart`，不执行 `Fight` 或 `SingleStep`；connect 成功只代表 MaaCore 已连上 adb 目标，不代表可以实战。普通理智作战模式必须显式传入 `--allow-sanity`。
 

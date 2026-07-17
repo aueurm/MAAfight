@@ -15,6 +15,7 @@ const NEUTRAL_DOMINANT_RATIO_MAX = 0.5;
 const SCREEN_BYTES = WIDTH * HEIGHT * BYTES_PER_PIXEL;
 const IMAGE_BUFFER_BYTES = 16 * 1024 * 1024;
 const RESULT_CONTINUE_CLICK = { x: 640, y: 650, waitMs: 1000 };
+const PAUSE_RESUME_CLICK = { x: 1205, y: 54, waitMs: 1000 };
 const SETTLEMENT_POLL_INTERVAL_MS = 5_000;
 // ponytail: fixed window covers Copilot completing before the battle; expose configuration only if a slower client actually needs it.
 const SETTLEMENT_WAIT_MS = 90_000;
@@ -26,6 +27,10 @@ const STAR_ROIS = [
   { name: "star2", cx: 174, cy: 322, radius: 24 },
   { name: "star3", cx: 246, cy: 322, radius: 24 },
 ] as const;
+const SETTLEMENT_TITLE_ROI = { minX: 45, maxX: 380, minY: 176, maxY: 280 };
+const SETTLEMENT_TITLE_BRIGHT_RATIO = 0.15;
+const PAUSE_TITLE_ROI = { minX: 455, maxX: 825, minY: 275, maxY: 415 };
+const PAUSE_TITLE_NEUTRAL_RATIO = 0.1;
 const FAILURE_TITLE_ROI = { minX: 100, maxX: 199, minY: 340, maxY: 379 };
 const FAILURE_TITLE_BRIGHT_RATIO = 0.15;
 
@@ -67,7 +72,7 @@ export interface ScreenObserverOptions extends MaaConnectOptions {
   timeoutMs?: number;
 }
 
-export type BattleObservationStatus = "settled" | "timeout" | "connect_failed" | "capture_failed";
+export type BattleObservationStatus = "settled" | "paused" | "timeout" | "connect_failed" | "capture_failed";
 
 export interface BattleFrame {
   file: string;
@@ -162,6 +167,12 @@ function isBrightWhite(b: number, g: number, r: number): boolean {
   return b >= 220 && g >= 220 && r >= 220;
 }
 
+function isLightNeutral(b: number, g: number, r: number): boolean {
+  const maximum = Math.max(r, g, b);
+  const minimum = Math.min(r, g, b);
+  return maximum >= 150 && maximum <= 225 && maximum - minimum <= 20;
+}
+
 function outcomeFromStars(stars: number): RunOutcome {
   if (stars === 3) return "clear";
   if (stars === 0) return "failed";
@@ -253,6 +264,42 @@ export function sampleSettlementStars(bgr: Buffer, width = WIDTH, height = HEIGH
 
   const stars = samples.filter(sample => sample.lit).length;
   return { width, height, outcome: outcomeFromStars(stars), stars, samples, recognized: true };
+}
+
+export function isSettlementTitleScreen(bgr: Buffer, width = WIDTH, height = HEIGHT): boolean {
+  if (bgr.length < width * height * BYTES_PER_PIXEL) return false;
+
+  let brightPixels = 0;
+  let pixels = 0;
+  for (let y = SETTLEMENT_TITLE_ROI.minY; y <= SETTLEMENT_TITLE_ROI.maxY; y++) {
+    for (let x = SETTLEMENT_TITLE_ROI.minX; x <= SETTLEMENT_TITLE_ROI.maxX; x++) {
+      const offset = (y * width + x) * BYTES_PER_PIXEL;
+      if (isBrightWhite(bgr[offset], bgr[offset + 1], bgr[offset + 2])) brightPixels++;
+      pixels++;
+    }
+  }
+  // ponytail: calibrated against real 11-20 result and battle frames; use OCR only if the client result layout changes.
+  return brightPixels / pixels >= SETTLEMENT_TITLE_BRIGHT_RATIO;
+}
+
+export function isPausedScreen(bgr: Buffer, width = WIDTH, height = HEIGHT): boolean {
+  if (bgr.length < width * height * BYTES_PER_PIXEL) return false;
+
+  let neutralPixels = 0;
+  let pixels = 0;
+  for (let y = PAUSE_TITLE_ROI.minY; y <= PAUSE_TITLE_ROI.maxY; y++) {
+    for (let x = PAUSE_TITLE_ROI.minX; x <= PAUSE_TITLE_ROI.maxX; x++) {
+      const offset = (y * width + x) * BYTES_PER_PIXEL;
+      if (isLightNeutral(bgr[offset], bgr[offset + 1], bgr[offset + 2])) neutralPixels++;
+      pixels++;
+    }
+  }
+  // ponytail: fixed pause overlay ROI; use image matching only if this recovery begins missing real pauses.
+  return neutralPixels / pixels >= PAUSE_TITLE_NEUTRAL_RATIO;
+}
+
+function isVerifiedSettlement(bgr: Buffer, sampled: StarObservation): boolean {
+  return sampled.recognized && isSettlementTitleScreen(bgr);
 }
 
 export function isFailureContinueScreen(bgr: Buffer, width = WIDTH, height = HEIGHT): boolean {
@@ -441,20 +488,22 @@ export function observeMaaScreen(options: ScreenObserverOptions): ScreenObservat
       let capture = runMaaCoreScreencap(captureOptions);
       let bgr = fs.readFileSync(capture.bgrPath);
       let sampled = sampleSettlementStars(bgr);
+      let recognized = isVerifiedSettlement(bgr, sampled);
 
-      if (!sampled.recognized && !failureContinueClicked && isFailureContinueScreen(bgr)) {
+      if (!recognized && !failureContinueClicked && isFailureContinueScreen(bgr)) {
         failureContinueClicked = true;
         fs.rmSync(capture.bgrPath, { force: true });
         capture = runMaaCoreScreencap({ ...captureOptions, click: RESULT_CONTINUE_CLICK });
         bgr = fs.readFileSync(capture.bgrPath);
         sampled = sampleSettlementStars(bgr);
+        recognized = isVerifiedSettlement(bgr, sampled);
         warnings.push("Initial result screen had no settlement stars; clicked once and resampled.");
       }
-      return { capture, bgr, sampled, recognized: sampled.recognized };
+      return { capture, bgr, sampled, recognized };
     };
-    const { capture, bgr, sampled } = pollUntilRecognized(captureSettlement);
-    if (!sampled.recognized) {
-      warnings.push("Settlement stars were not recognized after 90 seconds; skipped result-screen click.");
+    const { capture, bgr, sampled, recognized } = pollUntilRecognized(captureSettlement);
+    if (!recognized) {
+      warnings.push("Settlement result was not recognized after 90 seconds; skipped result-screen click.");
     }
 
     let debugScreenshotPath = capture.screenshotPath && fs.existsSync(capture.screenshotPath)
@@ -466,14 +515,17 @@ export function observeMaaScreen(options: ScreenObserverOptions): ScreenObservat
     }
     fs.rmSync(capture.bgrPath, { force: true });
 
+    const finalSample = recognized
+      ? sampled
+      : { ...sampled, outcome: "unknown" as const, stars: undefined, recognized: false };
     const observation: ScreenObservation = {
-      ...sampled,
+      ...finalSample,
       debugScreenshotPath,
       debugSamplesPath,
       maaVersion: capture.maaCoreVersion || connect.maaCoreVersion || undefined,
-      message: sampled.recognized
-        ? `Screen observer sampled settlement stars: ${sampled.stars}.`
-        : "Screen observer captured current MAA screenshot, but settlement stars were not recognized.",
+      message: recognized
+        ? `Screen observer sampled settlement stars: ${finalSample.stars}.`
+        : "Screen observer captured current MAA screenshot, but the settlement result was not recognized.",
       warnings,
     };
     writeDebugSamples(debugSamplesPath, observation);
@@ -523,20 +575,36 @@ export function observeMaaBattle(options: BattleObserverOptions): BattleObservat
   };
   const deadline = now() + Math.max(0, options.maximumWaitMs ?? BATTLE_FRAME_WAIT_MS);
   const interval = Math.max(1, options.intervalMs ?? BATTLE_FRAME_INTERVAL_MS);
+  let lastCapturedAt = -1;
+  const captureFrame = (click?: ScreenClick): { bgr: Buffer; sampled: StarObservation } => {
+    const capturedAt = Math.max(now(), lastCapturedAt + 1);
+    lastCapturedAt = capturedAt;
+    const capture = runMaaCoreScreencap({ ...captureOptions, click });
+    if (!capture.screenshotPath || !fs.existsSync(capture.screenshotPath)) {
+      throw new Error("MaaCore returned no PNG screenshot");
+    }
+    const file = `${capturedAt}.png`;
+    fs.renameSync(capture.screenshotPath, path.join(frameDir, file));
+    frames.push({ file, capturedAt });
+    const bgr = fs.readFileSync(capture.bgrPath);
+    fs.rmSync(capture.bgrPath, { force: true });
+    return { bgr, sampled: sampleSettlementStars(bgr) };
+  };
 
-  for (let capturedAt = now(); capturedAt <= deadline; capturedAt = now()) {
+  while (now() <= deadline) {
     try {
-      const capture = runMaaCoreScreencap(captureOptions);
-      if (!capture.screenshotPath || !fs.existsSync(capture.screenshotPath)) {
-        warnings.push("MaaCore returned no PNG screenshot; retained earlier battle frames.");
-        return finish("capture_failed");
+      let frame = captureFrame();
+      if (isPausedScreen(frame.bgr)) {
+        warnings.push("Paused battle detected; clicked playback and captured a confirmation frame.");
+        frame = captureFrame(PAUSE_RESUME_CLICK);
+        if (isPausedScreen(frame.bgr)) {
+          warnings.push("Battle remained paused after one playback click; retained captured frames.");
+          return finish("paused");
+        }
       }
-      const file = `${capturedAt}.png`;
-      fs.renameSync(capture.screenshotPath, path.join(frameDir, file));
-      frames.push({ file, capturedAt });
-      const sampled = sampleSettlementStars(fs.readFileSync(capture.bgrPath));
-      fs.rmSync(capture.bgrPath, { force: true });
-      if (sampled.recognized) return finish("settled", { outcome: sampled.outcome, stars: sampled.stars });
+      if (isVerifiedSettlement(frame.bgr, frame.sampled)) {
+        return finish("settled", { outcome: frame.sampled.outcome, stars: frame.sampled.stars });
+      }
       writeBattleManifest(manifestPath, { status: "observing", frames, frameDir, manifestPath, warnings });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

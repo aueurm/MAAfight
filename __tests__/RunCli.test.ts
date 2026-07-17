@@ -119,6 +119,14 @@ describe("run command", () => {
         }
       }
     });
+    for (let y = 176; y <= 280; y++) {
+      for (let x = 45; x <= 380; x++) {
+        const offset = (y * width + x) * 3;
+        buffer[offset] = 255;
+        buffer[offset + 1] = 255;
+        buffer[offset + 2] = 255;
+      }
+    }
     return buffer;
   }
 

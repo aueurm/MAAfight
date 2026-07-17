@@ -5,6 +5,8 @@ import * as path from "path";
 import * as probe from "../src/runner/probe";
 import {
   isFailureContinueScreen,
+  isPausedScreen,
+  isSettlementTitleScreen,
   observeMaaBattle,
   pollUntilRecognized,
   sampleSettlementStars,
@@ -28,6 +30,25 @@ function paint(buffer: Buffer, cx: number, cy: number, b: number, g: number, r: 
       buffer[offset + 2] = r;
     }
   }
+}
+
+function paintRectangle(buffer: Buffer, minX: number, maxX: number, minY: number, maxY: number, b: number, g: number, r: number): void {
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      const offset = (y * width + x) * 3;
+      buffer[offset] = b;
+      buffer[offset + 1] = g;
+      buffer[offset + 2] = r;
+    }
+  }
+}
+
+function paintSettlementTitle(buffer: Buffer): void {
+  paintRectangle(buffer, 45, 380, 176, 280, 255, 255, 255);
+}
+
+function paintPauseTitle(buffer: Buffer): void {
+  paintRectangle(buffer, 455, 825, 275, 415, 180, 180, 180);
 }
 
 function diffuseGreyBackground(): Buffer {
@@ -120,6 +141,25 @@ describe("sampleSettlementStars", () => {
 
     expect(isFailureContinueScreen(bgr)).toBe(true);
   });
+
+  it("requires the result title in addition to recognized stars", () => {
+    const bgr = blank();
+    paint(bgr, 102, 322, 240, 210, 50);
+    paint(bgr, 174, 322, 240, 210, 50);
+    paint(bgr, 246, 322, 240, 210, 50);
+
+    expect(sampleSettlementStars(bgr).recognized).toBe(true);
+    expect(isSettlementTitleScreen(bgr)).toBe(false);
+    paintSettlementTitle(bgr);
+    expect(isSettlementTitleScreen(bgr)).toBe(true);
+  });
+
+  it("recognizes the fixed pause overlay", () => {
+    const bgr = blank();
+    paintPauseTitle(bgr);
+
+    expect(isPausedScreen(bgr)).toBe(true);
+  });
 });
 
 describe("pollUntilRecognized", () => {
@@ -201,6 +241,18 @@ describe("observeMaaBattle", () => {
     return bgr;
   }
 
+  function bgrWithSettlement(stars: number): Buffer {
+    const bgr = bgrWithStars(stars);
+    paintSettlementTitle(bgr);
+    return bgr;
+  }
+
+  function bgrWithPause(): Buffer {
+    const bgr = blank();
+    paintPauseTitle(bgr);
+    return bgr;
+  }
+
   it("saves frames until the settlement screen", () => {
     let time = 1000;
     let captures = 0;
@@ -208,7 +260,7 @@ describe("observeMaaBattle", () => {
       const script = String(args?.[args.length - 1]);
       const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
       if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
-      return screenshotResult(captures++ === 0 ? blank() : bgrWithStars(2), frameDir);
+      return screenshotResult(captures++ === 0 ? blank() : bgrWithSettlement(2), frameDir);
     });
 
     const observation = observeMaaBattle({
@@ -230,6 +282,74 @@ describe("observeMaaBattle", () => {
       stars: 2,
       frames: observation.frames,
     });
+  });
+
+  it("does not settle when battle colors only match the star regions", () => {
+    let time = 1000;
+    jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
+      const script = String(args?.[args.length - 1]);
+      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
+      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
+      return screenshotResult(bgrWithStars(3), frameDir);
+    });
+
+    const observation = observeMaaBattle({
+      debugDir,
+      now: () => time,
+      sleep: (milliseconds: number) => { time += milliseconds; },
+      maximumWaitMs: 10_000,
+      intervalMs: 5_000,
+    });
+
+    expect(observation).toMatchObject({ status: "timeout" });
+    expect(observation.frames).toHaveLength(3);
+  });
+
+  it("clicks play once and continues observing after a paused frame", () => {
+    let time = 1000;
+    const captures = [bgrWithPause(), blank(), bgrWithSettlement(2)];
+    const spawn = jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
+      const script = String(args?.[args.length - 1]);
+      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
+      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
+      const bgr = captures.shift();
+      if (!bgr) throw new Error("unexpected MaaCore capture");
+      return screenshotResult(bgr, frameDir);
+    });
+
+    const observation = observeMaaBattle({
+      debugDir,
+      now: () => time,
+      sleep: (milliseconds: number) => { time += milliseconds; },
+      maximumWaitMs: 10_000,
+      intervalMs: 5_000,
+    });
+
+    expect(observation).toMatchObject({ status: "settled", outcome: "partial_clear", stars: 2 });
+    expect(observation.frames).toHaveLength(3);
+    expect(spawn.mock.calls.some(([, args]) => String(args?.[args.length - 1]).includes("$clickX = 1205"))).toBe(true);
+  });
+
+  it("returns paused when the confirmation frame remains paused", () => {
+    let time = 1000;
+    const captures = [bgrWithPause(), bgrWithPause()];
+    jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
+      const script = String(args?.[args.length - 1]);
+      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
+      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
+      const bgr = captures.shift();
+      if (!bgr) throw new Error("unexpected MaaCore capture");
+      return screenshotResult(bgr, frameDir);
+    });
+
+    const observation = observeMaaBattle({
+      debugDir,
+      now: () => time,
+      sleep: (milliseconds: number) => { time += milliseconds; },
+    });
+
+    expect(observation).toMatchObject({ status: "paused" });
+    expect(observation.frames).toHaveLength(2);
   });
 
   it("keeps captured frames when the observation times out", () => {
