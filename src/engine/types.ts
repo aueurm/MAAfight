@@ -78,6 +78,8 @@ export interface ResolvedOperatorProfile {
   damageType: "physical" | "arts" | "heal";
   skill: number;
   skillRank: number;
+  skillDuration: number;
+  respawnTime: number;
   baseRangeId: string | null;
   skillRangeId: string | null;
   range: Array<[number, number]>;

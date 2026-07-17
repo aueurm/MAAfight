@@ -86,6 +86,8 @@ function testPick(name: string, position: "MELEE" | "RANGED", range: Array<[numb
       damageType: "physical",
       skill: 1,
       skillRank: 10,
+      skillDuration: 0,
+      respawnTime: 0,
       baseRangeId: null,
       skillRangeId: null,
       range,
@@ -128,6 +130,14 @@ describe("v2 skill engine", () => {
     });
     expect(profile.skillRank).toBe(10);
     expect(profile.modelCoverageGaps).toContain("assumed_skill_rank_10");
+
+    const yato = getCombatOperatorByName("麒麟R夜刀")!;
+    const yatoProfile = resolveOperatorProfile(yato, 1, {
+      id: yato.id, name: yato.name, rarity: yato.rarity, own: true,
+      elite: 2, level: 90, potential: 3,
+    });
+    expect(yatoProfile.respawnTime).toBe(16);
+    expect(yatoProfile.skillDuration).toBe(20);
   });
 
   it("extracts immutable stage facts and encounter pressure", () => {

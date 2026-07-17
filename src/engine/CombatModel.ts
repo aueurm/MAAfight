@@ -47,6 +47,8 @@ export interface CombatOperatorRecord {
   subProfession: string | null;
   position: "MELEE" | "RANGED";
   rarity: number;
+  respawnTime: number;
+  potentialRespawnTimeModifiers: number[];
   e2: {
     minLevel: number;
     maxLevel: number;
@@ -183,6 +185,9 @@ export function resolveOperatorProfile(
     ...(player ? ["assumed_max_trust"] : []),
   ];
   const sourceMetrics = levelRecord?.metrics || record.baseMetrics;
+  const potentialCount = Math.max(0, Math.min(record.potentialRespawnTimeModifiers.length, player?.potential ?? 0));
+  const respawnTime = Math.max(0, record.respawnTime
+    + record.potentialRespawnTimeModifiers.slice(0, potentialCount).reduce((total, modifier) => total + modifier, 0));
   const resolved: ResolvedOperatorProfile = {
     operatorId: record.id,
     name: record.name,
@@ -192,6 +197,8 @@ export function resolveOperatorProfile(
     damageType: record.damageType,
     skill,
     skillRank,
+    skillDuration: Math.max(0, levelRecord?.duration || 0),
+    respawnTime,
     baseRangeId: record.e2.rangeId,
     skillRangeId: levelRecord?.rangeId || null,
     range: model.ranges[levelRecord?.rangeId || record.e2.rangeId || ""] || [[0, 0]],
