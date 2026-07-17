@@ -18,6 +18,8 @@ const RESULT_CONTINUE_CLICK = { x: 640, y: 650, waitMs: 1000 };
 const SETTLEMENT_POLL_INTERVAL_MS = 5_000;
 // ponytail: fixed window covers Copilot completing before the battle; expose configuration only if a slower client actually needs it.
 const SETTLEMENT_WAIT_MS = 90_000;
+const BATTLE_FRAME_INTERVAL_MS = 5_000;
+const BATTLE_FRAME_WAIT_MS = 600_000;
 
 const STAR_ROIS = [
   { name: "star1", cx: 102, cy: 322, radius: 24 },
@@ -65,6 +67,30 @@ export interface ScreenObserverOptions extends MaaConnectOptions {
   timeoutMs?: number;
 }
 
+export type BattleObservationStatus = "settled" | "timeout" | "connect_failed" | "capture_failed";
+
+export interface BattleFrame {
+  file: string;
+  capturedAt: number;
+}
+
+export interface BattleObservation {
+  status: BattleObservationStatus;
+  frames: BattleFrame[];
+  frameDir: string;
+  manifestPath: string;
+  outcome?: RunOutcome;
+  stars?: number;
+  warnings: string[];
+}
+
+export interface BattleObserverOptions extends ScreenObserverOptions {
+  maximumWaitMs?: number;
+  intervalMs?: number;
+  now?: () => number;
+  sleep?: (milliseconds: number) => void;
+}
+
 export interface SettlementPollOptions {
   maximumWaitMs?: number;
   intervalMs?: number;
@@ -92,6 +118,10 @@ interface ScreenClick {
   y: number;
   waitMs: number;
 }
+
+type BattleManifest = Omit<BattleObservation, "status"> & {
+  status: BattleObservationStatus | "observing";
+};
 
 type MaaCoreScreencapOptions = Required<Pick<ScreenObserverOptions, "debugDir" | "userDir">> & {
   maaInstallDir: string;
@@ -360,6 +390,11 @@ function writeDebugSamples(filePath: string, observation: Omit<ScreenObservation
   fs.writeFileSync(filePath, JSON.stringify(observation, null, 2), "utf8");
 }
 
+function writeBattleManifest(filePath: string, observation: BattleManifest): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(observation, null, 2), "utf8");
+}
+
 function unknownObservation(debugSamplesPath: string, message: string, errorType: string, warnings: string[]): ScreenObservation {
   return {
     width: WIDTH,
@@ -454,4 +489,65 @@ export function observeMaaScreen(options: ScreenObserverOptions): ScreenObservat
     writeDebugSamples(debugSamplesPath, observation);
     return observation;
   }
+}
+
+export function observeMaaBattle(options: BattleObserverOptions): BattleObservation {
+  const debugDir = path.resolve(options.debugDir);
+  const frameDir = path.join(debugDir, "frames");
+  const manifestPath = path.join(debugDir, "manifest.json");
+  const frames: BattleFrame[] = [];
+  const now = options.now || Date.now;
+  const sleep = options.sleep || sleepSynchronously;
+  const warnings: string[] = [];
+  const finish = (status: BattleObservationStatus, extra: Pick<BattleObservation, "outcome" | "stars"> = {}): BattleObservation => {
+    const observation = { status, frames, frameDir, manifestPath, warnings, ...extra };
+    writeBattleManifest(manifestPath, observation);
+    return observation;
+  };
+
+  fs.mkdirSync(frameDir, { recursive: true });
+  const connect = connectMaaEnvironment(options);
+  warnings.push(...connect.warnings);
+  if (!connect.connectSuccess || !connect.asstConnected || !connect.maaInstallDir || !connect.adbPath || !connect.address) {
+    return finish("connect_failed");
+  }
+
+  const captureOptions: MaaCoreScreencapOptions = {
+    debugDir: frameDir,
+    userDir: path.resolve(options.userDir || path.join(process.cwd(), ".maafight", "maa-core")),
+    maaInstallDir: connect.maaInstallDir,
+    adbPath: connect.adbPath,
+    address: connect.address,
+    connectConfig: connect.connectConfig,
+    timeoutMs: options.timeoutMs || 30000,
+  };
+  const deadline = now() + Math.max(0, options.maximumWaitMs ?? BATTLE_FRAME_WAIT_MS);
+  const interval = Math.max(1, options.intervalMs ?? BATTLE_FRAME_INTERVAL_MS);
+
+  for (let capturedAt = now(); capturedAt <= deadline; capturedAt = now()) {
+    try {
+      const capture = runMaaCoreScreencap(captureOptions);
+      if (!capture.screenshotPath || !fs.existsSync(capture.screenshotPath)) {
+        warnings.push("MaaCore returned no PNG screenshot; retained earlier battle frames.");
+        return finish("capture_failed");
+      }
+      const file = `${capturedAt}.png`;
+      fs.renameSync(capture.screenshotPath, path.join(frameDir, file));
+      frames.push({ file, capturedAt });
+      const sampled = sampleSettlementStars(fs.readFileSync(capture.bgrPath));
+      fs.rmSync(capture.bgrPath, { force: true });
+      if (sampled.recognized) return finish("settled", { outcome: sampled.outcome, stars: sampled.stars });
+      writeBattleManifest(manifestPath, { status: "observing", frames, frameDir, manifestPath, warnings });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      warnings.push(`Battle observer capture failed: ${message}`);
+      return finish("capture_failed");
+    }
+
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+    sleep(Math.min(interval, remaining));
+  }
+
+  return finish("timeout");
 }

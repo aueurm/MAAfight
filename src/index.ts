@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import * as path from "path";
 import { validateScript } from "./copilot/ScriptValidator";
 import { validateMAAProtocol } from "./copilot/MAAProtocolValidator";
 import { listStages, searchStages, listByCategory, resolveStage } from "./loader/levelIndex";
@@ -14,6 +15,7 @@ import { isSpawnActionType, normalizeBuildableType } from "./shared/prtsMap";
 import { RunResultStore } from "./runner/RunResultStore";
 import { connectMaaEnvironment, probeMaaEnvironment } from "./runner/probe";
 import { recordCallbackRun, recordDryRun, recordScreenObservedRun } from "./runner/run";
+import { observeMaaBattle } from "./runner/screenObserver";
 import type { BattleScript, PRTSLevelData } from "./types";
 
 const CACHE_DIR = getRuntimePaths().cacheLevelsDir;
@@ -222,7 +224,7 @@ Commands:
   init       Initialize local player operator database
   operators Manage local player operator database
   feedback  Record or summarize real battle kill results
-  run       Probe MAA, import callback results, or record a dry-run RunResult
+  run       Probe MAA, observe screenshots, import callback results, or record a dry-run RunResult
   generate   Generate copilot battle script for a stage
   gui        Start local Web GUI preview
   list       List available stages
@@ -254,8 +256,8 @@ Options:
   --maa <path>          MAA directory or executable for run probe
   --adb <path>          adb executable for run connect
   --address <addr>      adb device serial/address for run connect
-  --connect-config <c>  MAA connection config for run connect / observe-screen
-  --debug-dir <path>    Debug output directory for run observe-screen
+  --connect-config <c>  MAA connection config for run connect / screenshot observers
+  --debug-dir <path>    Debug output directory for screenshot observers
   --help, -h           Show this help
 
 Examples:
@@ -270,6 +272,7 @@ Examples:
   maafight run probe --maa C:\\Tools\\MAA
   maafight run connect --maa C:\\Tools\\MAA --address 127.0.0.1:16384
   maafight run observe-screen --file script.json --maa C:\\Tools\\MAA --address 127.0.0.1:16384
+  maafight run observe-battle --maa C:\\Tools\\MAA --pretty
   maafight run --file script.json --callback-log maa-callback.jsonl
   maafight run summary --stage GT-1
   maafight run --file script.json --mode manual-normal --allow-sanity
@@ -564,6 +567,22 @@ function cmdRun(args: Args): void {
       address: args.address,
       connectConfig: args.connectConfig,
     }), null, args.pretty ? 2 : 0));
+    return;
+  }
+  if (args.subcommand === "observe-battle") {
+    const stateDir = getRuntimePaths().homeDir;
+    const runId = new RunResultStore(stateDir).createRunId();
+    const observation = observeMaaBattle({
+      maaPath: args.maa,
+      adbPath: args.adb,
+      address: args.address,
+      connectConfig: args.connectConfig,
+      debugDir: args.debugDir || path.join(stateDir, ".maafight", "battle-observer", runId),
+      userDir: path.join(stateDir, ".maafight", "maa-core"),
+    });
+    console.error(`Battle observer manifest: ${observation.manifestPath}`);
+    console.log(JSON.stringify(observation, null, args.pretty ? 2 : 0));
+    if (observation.status !== "settled") process.exitCode = 1;
     return;
   }
   if (args.subcommand === "observe-screen") {

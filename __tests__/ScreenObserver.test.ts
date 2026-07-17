@@ -1,4 +1,16 @@
-import { isFailureContinueScreen, pollUntilRecognized, sampleSettlementStars } from "../src/runner/screenObserver";
+import type { SpawnSyncReturns } from "child_process";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import * as probe from "../src/runner/probe";
+import {
+  isFailureContinueScreen,
+  observeMaaBattle,
+  pollUntilRecognized,
+  sampleSettlementStars,
+} from "../src/runner/screenObserver";
+
+const childProcess = require("child_process") as typeof import("child_process");
 
 const width = 1280;
 const height = 720;
@@ -125,5 +137,123 @@ describe("pollUntilRecognized", () => {
       sleep: milliseconds => { now += milliseconds; },
     })).toMatchObject({ recognized: true, stars: 0 });
     expect(capture).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("observeMaaBattle", () => {
+  let debugDir: string;
+
+  beforeEach(() => {
+    debugDir = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-battle-observer-"));
+    jest.spyOn(probe, "connectMaaEnvironment").mockReturnValue({
+      maaFound: true,
+      maaPath: "C:\\MAA\\MAA.exe",
+      maaInstallDir: "C:\\MAA",
+      maaCorePath: "C:\\MAA\\MaaCore.dll",
+      maaCoreVersion: "v6.14.1",
+      adbPath: "C:\\MAA\\adb.exe",
+      address: "127.0.0.1:16384",
+      connectConfig: "MuMuEmulator12",
+      connectAttempted: true,
+      connectCommand: "",
+      connectExitCode: 0,
+      connectSuccess: true,
+      asstConnected: true,
+      setUserDir: true,
+      loadResource: true,
+      warnings: [],
+    });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    fs.rmSync(debugDir, { recursive: true, force: true });
+  });
+
+  function screenshotResult(bgr: Buffer, frameDir: string): SpawnSyncReturns<string> {
+    const bgrPath = path.join(frameDir, "screen.bgr");
+    const screenshotPath = path.join(frameDir, "screenshot.png");
+    fs.mkdirSync(frameDir, { recursive: true });
+    fs.writeFileSync(bgrPath, bgr);
+    fs.writeFileSync(screenshotPath, "png", "utf8");
+    return {
+      stdout: JSON.stringify({
+        maaCoreVersion: "v6.14.1",
+        bgrPath,
+        bgrBytes: bgr.length,
+        screenshotPath,
+        screenshotBytes: 3,
+      }),
+      stderr: "",
+      status: 0,
+      signal: null,
+      output: [null, "", ""],
+      pid: 1,
+    };
+  }
+
+  function bgrWithStars(stars: number): Buffer {
+    const bgr = blank();
+    const centers = [102, 174, 246];
+    for (let index = 0; index < centers.length; index++) {
+      paint(bgr, centers[index], 322, index < stars ? 240 : 150, index < stars ? 210 : 150, index < stars ? 50 : 150);
+    }
+    return bgr;
+  }
+
+  it("saves frames until the settlement screen", () => {
+    let time = 1000;
+    let captures = 0;
+    jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
+      const script = String(args?.[args.length - 1]);
+      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
+      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
+      return screenshotResult(captures++ === 0 ? blank() : bgrWithStars(2), frameDir);
+    });
+
+    const observation = observeMaaBattle({
+      debugDir,
+      now: () => time,
+      sleep: (milliseconds: number) => { time += milliseconds; },
+      maximumWaitMs: 10_000,
+      intervalMs: 5_000,
+    });
+
+    expect(observation).toMatchObject({ status: "settled", outcome: "partial_clear", stars: 2 });
+    expect(observation.frames).toEqual([
+      { file: "1000.png", capturedAt: 1000 },
+      { file: "6000.png", capturedAt: 6000 },
+    ]);
+    expect(JSON.parse(fs.readFileSync(observation.manifestPath, "utf8"))).toMatchObject({
+      status: "settled",
+      outcome: "partial_clear",
+      stars: 2,
+      frames: observation.frames,
+    });
+  });
+
+  it("keeps captured frames when the observation times out", () => {
+    let time = 1000;
+    let captures = 0;
+    jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
+      const script = String(args?.[args.length - 1]);
+      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
+      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
+      captures++;
+      return screenshotResult(blank(), frameDir);
+    });
+
+    const observation = observeMaaBattle({
+      debugDir,
+      now: () => time,
+      sleep: (milliseconds: number) => { time += milliseconds; },
+      maximumWaitMs: 10_000,
+      intervalMs: 5_000,
+    });
+
+    expect(observation).toMatchObject({ status: "timeout" });
+    expect(observation.outcome).toBeUndefined();
+    expect(observation.frames).toHaveLength(3);
+    expect(captures).toBe(3);
   });
 });

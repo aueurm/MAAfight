@@ -1,6 +1,6 @@
 # MAA 执行评估层
 
-> 状态：分阶段落地中。当前 v2 已有 dry-run skeleton、MAA callback import、结算页截图观察、结果 summary、本机 MAA / ADB probe、MaaCore 连接握手和 GUI 演习执行 helper。`run` 本身仍不会启动 MAA 任务或开始作战；GUI `enter-practice` 会导航到关卡详情页、点击演习入口，并在传入生成脚本路径时执行 MAA `Copilot` 作业。
+> 状态：分阶段落地中。当前 v2 已有 dry-run skeleton、MAA callback import、结算页与战斗过程截图观察、结果 summary、本机 MAA / ADB probe、MaaCore 连接握手和 GUI 演习执行 helper。`run` 本身仍不会启动 MAA 任务或开始作战；GUI `enter-practice` 会导航到关卡详情页、点击演习入口，并在传入生成脚本路径时执行 MAA `Copilot` 作业。
 
 ## 目标
 
@@ -32,6 +32,8 @@ MAA 回调中的 `SubTaskExtraInfo.what = "StageDrops"` 包含 `stage`、`drops`
 当前 connect 只用于 MaaCore 与 adb 目标的连接握手：优先读取 MAA GUI 配置中的 `Connect.AdbPath`、`Connect.Address` 和 `Connect.ConnectConfig`，也可通过 CLI 参数覆盖。它只调用 `AsstCreate`、`AsstConnect`、`AsstConnected` 和 `AsstDestroy`，不调用 `AsstAppendTask` 或 `AsstStart`，不会执行 `Fight`、`Copilot` 或 `SingleStep`。connect 成功只代表 MaaCore 已连上 adb 目标，不代表已进入关卡或可以开始评测。
 
 当前 `run observe-screen` 只用于 Copilot 已结束后的结果观察：复用 MaaCore `AsstAsyncScreencap` + `AsstGetImageBgr` / `AsstGetImage` 获取当前截图，不直接调用 `adb shell screencap`。Copilot 的动作队列可能先于战斗结算完成，观察器会在未识别到结算星星时每 5 秒重试、最多等待 90 秒。它只采样 1280x720 结算页固定星星区域颜色，判断 `stars = 0 / 1 / 2 / 3`；到期仍无法识别时保留 `outcome = "unknown"`。每次观察保留最终 debug screenshot 和 `samples.json`，用于后续校准 ROI 与阈值。
+
+当前 `run observe-battle` 只观察已经开始的演习：每 5 秒使用相同 MaaCore 截图通道保存 1280x720 PNG，最多 10 分钟，结算页星星可识别时立即停止。帧和 `manifest.json` 保留在 `.maafight/battle-observer/<runId>/`，用于人工查看漏怪前后的路线和站位。它不点击屏幕、不启动任务、不识别敌人计数、不修改候选评分，也不写入学习反馈；失败和超时仍保留已采样帧并以非零退出码返回。
 
 当前 `scripts/start-mumu.ps1` 复用 MAA GUI 的 `Start.EmulatorPath` 和 `Start.OpenEmulatorAfterLaunch` 配置，可在 `npm run gui` 前启动 MuMu；MAA 路径优先来自 GUI 保存的 `maaPath`、`MAAFIGHT_MAA_PATH` 或脚本参数。`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口：先执行 MAA 日常 `StartUp` 唤醒明日方舟，再通过 MAA `Fight times=0` 复用关卡导航，确认 1280x720 关卡详情页后，若代理指挥开关亮起则先关闭，再点击演习按钮。传入生成脚本路径时，它会继续追加 MAA `Copilot` 任务执行该作业文件，并在结束后复用截图观察器读取结算星级。
 
@@ -163,6 +165,7 @@ interface RunResult {
 
 ### P4：截图观察器
 
+- 每 5 秒保存战斗过程帧，结算后停止，供人工定位漏怪。
 - 识别战斗中敌人计数。
 - 失败时记录最后一次有效 `killed / total`。
 - 将失败样本用于候选排序调整。

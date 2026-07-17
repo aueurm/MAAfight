@@ -365,6 +365,92 @@ describe("run command", () => {
     expect(captureScript).not.toMatch(/adb\s+shell\s+screencap/i);
   });
 
+  it("captures battle frames without writing a RunResult", async () => {
+    const debugDir = path.join(cwd, "battle-debug");
+    const maaDir = path.join(cwd, "maa");
+    const configDir = path.join(maaDir, "config");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(maaDir, "MAA.exe"), "", "utf8");
+    fs.writeFileSync(path.join(maaDir, "MaaCore.dll"), "", "utf8");
+    const adbPath = path.join(cwd, "adb.exe");
+    fs.writeFileSync(adbPath, "", "utf8");
+    fs.writeFileSync(path.join(configDir, "gui.json"), JSON.stringify({
+      Current: "Default",
+      Configurations: {
+        Default: {
+          "Connect.AdbPath": adbPath,
+          "Connect.Address": "127.0.0.1:16384",
+          "Connect.ConnectConfig": "MuMuEmulator12",
+        },
+      },
+    }), "utf8");
+    jest.spyOn(childProcess, "spawnSync").mockImplementation((command, args) => {
+      if (String(command).endsWith("powershell.exe") && Array.isArray(args)) {
+        const helperScript = String(args[args.length - 1]);
+        if (helperScript.includes("AsstAsyncScreencap")) {
+          const frameDir = path.join(debugDir, "frames");
+          const bgrPath = path.join(frameDir, "screen.bgr");
+          const screenshotPath = path.join(frameDir, "screenshot.png");
+          fs.mkdirSync(frameDir, { recursive: true });
+          fs.writeFileSync(bgrPath, bgrWithStars(3));
+          fs.writeFileSync(screenshotPath, "png", "utf8");
+          return {
+            stdout: JSON.stringify({
+              maaCoreVersion: "v6.13.0",
+              bgrPath,
+              bgrBytes: 1280 * 720 * 3,
+              screenshotPath,
+              screenshotBytes: 3,
+            }),
+            stderr: "",
+            status: 0,
+            signal: null,
+            output: [null, "", ""],
+            pid: 1,
+          } as SpawnSyncReturns<string>;
+        }
+        return {
+          stdout: JSON.stringify({
+            maaCoreVersion: "v6.13.0",
+            setUserDir: true,
+            loadResource: true,
+            connectSuccess: true,
+            asstConnected: true,
+          }),
+          stderr: "",
+          status: 0,
+          signal: null,
+          output: [null, "", ""],
+          pid: 1,
+        } as SpawnSyncReturns<string>;
+      }
+      return { stdout: "", stderr: "unexpected", status: 1, signal: null, output: [null, "", "unexpected"], pid: 1 } as SpawnSyncReturns<string>;
+    });
+
+    await runCli(["run", "observe-battle", "--maa", maaDir, "--debug-dir", debugDir]);
+
+    expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({ status: "settled", stars: 3 });
+    expect(fs.existsSync(path.join(debugDir, "frames"))).toBe(true);
+    expect(fs.existsSync(path.join(debugDir, "manifest.json"))).toBe(true);
+    expect(fs.existsSync(path.join(cwd, ".maafight", "run-results.jsonl"))).toBe(false);
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("Battle observer manifest");
+  });
+
+  it("returns a nonzero status when battle observation cannot connect", async () => {
+    const previousExitCode = process.exitCode;
+    try {
+      delete process.exitCode;
+
+      await runCli(["run", "observe-battle", "--maa", path.join(cwd, "missing-maa")]);
+
+      expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({ status: "connect_failed" });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      if (previousExitCode === undefined) delete process.exitCode;
+      else process.exitCode = previousExitCode;
+    }
+  });
+
   it("clicks through a failed result screen before sampling settlement stars", async () => {
     const file = writeScript(script());
     const debugDir = path.join(cwd, "screen-debug");
