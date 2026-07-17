@@ -70,28 +70,42 @@ function playerOperators(count = 24): Map<string, PlayerOperator> {
   }]));
 }
 
-function testPick(name: string, position: "MELEE" | "RANGED", range: Array<[number, number]> = [[0, 0]]): EnginePick {
+interface TestPickOptions {
+  role?: EnginePick["role"];
+  subProfession?: string | null;
+  cost?: number;
+  skillDuration?: number;
+  respawnTime?: number;
+}
+
+function testPick(
+  name: string,
+  position: "MELEE" | "RANGED",
+  range: Array<[number, number]> = [[0, 0]],
+  options: TestPickOptions = {},
+): EnginePick {
+  const role = options.role ?? "guard";
   return {
     operatorId: name,
     name,
-    role: "guard",
+    role,
     skill: 1,
     skillRank: 10,
     profile: {
       operatorId: name,
       name,
-      role: "guard",
-      subProfession: null,
+      role,
+      subProfession: options.subProfession ?? null,
       position,
       damageType: "physical",
       skill: 1,
       skillRank: 10,
-      skillDuration: 0,
-      respawnTime: 0,
+      skillDuration: options.skillDuration ?? 0,
+      respawnTime: options.respawnTime ?? 0,
       baseRangeId: null,
       skillRangeId: null,
       range,
-      attributes: { hp: 1, atk: 1, def: 1, res: 0, cost: 1, block: 1, attackInterval: 1, attackSpeed: 100 },
+      attributes: { hp: 1, atk: 1, def: 1, res: 0, cost: options.cost ?? 1, block: 1, attackInterval: 1, attackSpeed: 100 },
       metrics: { normalDps: 1, burstDps: 1, cycleDps: 1, healingHps: 0, physicalEhp: 1, artsEhp: 1, controlSeconds: 0 },
       maxTargets: 1,
       confidence: "exact",
@@ -115,6 +129,17 @@ function makeBlockCoverageMap(): MapData {
     { row: 1, col: 2, buildableType: "ranged" },
   ];
   return mapData;
+}
+
+function maximumActive(actions: Array<{ type: string }>): number {
+  let active = 0;
+  let maximum = 0;
+  for (const action of actions) {
+    if (action.type === "Deploy") active++;
+    if (action.type === "Retreat") active--;
+    maximum = Math.max(maximum, active);
+  }
+  return maximum;
 }
 
 describe("v2 skill engine", () => {
@@ -242,6 +267,88 @@ describe("v2 skill engine", () => {
     ]);
   });
 
+  it("retires a temporary vanguard only when its reserve can deploy", () => {
+    const mapData = makeMapData();
+    mapData.options.characterLimit = 2;
+    mapData.deploymentPoints = [
+      { row: 2, col: 2, buildableType: "all" },
+      { row: 2, col: 3, buildableType: "all" },
+      { row: 2, col: 4, buildableType: "all" },
+    ];
+    const built = buildCandidate({
+      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData),
+      picks: [
+        testPick("先锋", "MELEE", [[0, 0]], { role: "vanguard", cost: 5 }),
+        testPick("主力", "MELEE", [[0, 0]], { cost: 7 }),
+        testPick("后备主力", "MELEE", [[0, 0]], { cost: 20 }),
+      ],
+      positionVariant: 0, timingVariant: 0, options: {},
+    });
+    const actions = built.script.actions;
+
+    expect(actions.map(action => action.type)).toEqual([
+      "SpeedUp", "Deploy", "Deploy", "Retreat", "Deploy", "SkillDaemon",
+    ]);
+    expect(actions[3]).toMatchObject({ type: "Retreat", name: "先锋", costs: 20 });
+    expect(actions[3]).not.toHaveProperty("kills");
+    expect(actions[4]).toMatchObject({ type: "Deploy", name: "后备主力", costs: 20 });
+    expect(maximumActive(actions)).toBeLessThanOrEqual(mapData.options.characterLimit);
+    expect(validateMAAProtocol(built.script).valid).toBe(true);
+  });
+
+  it("retires and redeploys an executor using its actual timing", () => {
+    const mapData = makeMapData();
+    mapData.options.characterLimit = 1;
+    mapData.deploymentPoints = [{ row: 2, col: 2, buildableType: "all" }];
+    const built = buildCandidate({
+      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData),
+      picks: [testPick("快活", "MELEE", [[0, 0]], {
+        role: "specialist", subProfession: "executor", cost: 6, skillDuration: 20, respawnTime: 16,
+      })],
+      positionVariant: 0, timingVariant: 0, options: {},
+    });
+    const actions = built.script.actions;
+
+    expect(actions.map(action => action.type)).toEqual(["SpeedUp", "Deploy", "Retreat", "Deploy", "SkillDaemon"]);
+    expect(actions[2]).toMatchObject({ type: "Retreat", name: "快活", pre_delay: 20_000 });
+    expect(actions[3]).toMatchObject({ type: "Deploy", name: "快活", pre_delay: 16_000, costs: 6 });
+    expect(maximumActive(actions)).toBeLessThanOrEqual(mapData.options.characterLimit);
+    expect(validateMAAProtocol(built.script).valid).toBe(true);
+  });
+
+  it("does not guess an executor redeploy time", () => {
+    const mapData = makeMapData();
+    mapData.options.characterLimit = 1;
+    mapData.deploymentPoints = [{ row: 2, col: 2, buildableType: "all" }];
+    const built = buildCandidate({
+      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData),
+      picks: [testPick("未知冷却快活", "MELEE", [[0, 0]], {
+        role: "specialist", subProfession: "executor", skillDuration: 20,
+      })],
+      positionVariant: 0, timingVariant: 0, options: {},
+    });
+    const actions = built.script.actions;
+
+    expect(actions.find(action => action.type === "Retreat")).toMatchObject({ name: "未知冷却快活", pre_delay: 20_000 });
+    expect(actions.filter(action => action.type === "Deploy")).toHaveLength(1);
+    expect(validateMAAProtocol(built.script).valid).toBe(true);
+  });
+
+  it("keeps temporary operators off an available goal front", () => {
+    const mapData = makeMapData();
+    mapData.deploymentPoints = [
+      { row: 2, col: 5, buildableType: "melee" },
+      { row: 2, col: 2, buildableType: "melee" },
+    ];
+    const built = buildCandidate({
+      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData),
+      picks: [testPick("先锋", "MELEE", [[0, 0]], { role: "vanguard" })],
+      positionVariant: 0, timingVariant: 0, options: {},
+    });
+
+    expect(built.script.actions.find(action => action.type === "Deploy")?.location).toEqual([2, 2]);
+  });
+
   it("generates a deterministic fixed protocol-safe script", () => {
     const options = { playerOperators: playerOperators(), search: { deadlineMs: 10_000 } };
     const first = generateCopilotScript("V2-1", makeMapData(), options);
@@ -301,8 +408,10 @@ describe("v2 skill engine", () => {
     const built = buildCandidate({
       stageCode: "V2-1", mapData, facts, picks, positionVariant: 0, timingVariant: 0, options,
     });
-    const deployedNames = built.script.actions.filter(action => action.type === "Deploy").map(action => action.name);
-    expect(deployedNames).toEqual(picks.slice(0, deployedNames.length).map(pick => pick.name));
+    const firstRetreat = built.script.actions.findIndex(action => action.type === "Retreat");
+    const initialDeploys = built.script.actions.slice(0, firstRetreat < 0 ? undefined : firstRetreat)
+      .filter(action => action.type === "Deploy").map(action => action.name);
+    expect(initialDeploys).toEqual(picks.slice(0, initialDeploys.length).map(pick => pick.name));
   });
 
   it("returns a fully scored best-so-far candidate at the deadline", () => {

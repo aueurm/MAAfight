@@ -48,12 +48,23 @@ function hardConstraints(script: BattleScript, mapData: MapData): boolean {
   const operatorNames = new Set(script.opers.map(operator => operator.name));
   const deploys = script.actions.filter(action => action.type === "Deploy");
   const occupied = new Set<string>();
-  for (const action of deploys) {
-    if (!action.name || !operatorNames.has(action.name) || !action.location) return false;
-    const key = `${action.location[0]},${action.location[1]}`;
-    if (occupied.has(key)) return false;
-    occupied.add(key);
-    if (!mapData.deploymentPoints.some(point => point.row === action.location![0] && point.col === action.location![1])) return false;
+  const active = new Map<string, string>();
+  for (const action of script.actions) {
+    if (action.type === "Deploy") {
+      if (!action.name || !operatorNames.has(action.name) || !action.location) return false;
+      const key = `${action.location[0]},${action.location[1]}`;
+      if (active.has(action.name) || occupied.has(key)) return false;
+      if (!mapData.deploymentPoints.some(point => point.row === action.location![0] && point.col === action.location![1])) return false;
+      active.set(action.name, key);
+      occupied.add(key);
+      if (active.size > mapData.options.characterLimit) return false;
+    } else if (action.type === "Retreat") {
+      if (!action.name) return false;
+      const key = active.get(action.name);
+      if (!key) return false;
+      active.delete(action.name);
+      occupied.delete(key);
+    }
   }
   return script.groups.length === 0 && script.opers.length <= 12 && deploys.length > 0;
 }

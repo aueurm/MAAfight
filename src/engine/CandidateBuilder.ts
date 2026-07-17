@@ -45,6 +45,11 @@ interface RankedPlacement {
   score: number;
 }
 
+interface ActiveDeployment {
+  pick: EnginePick;
+  placement: RankedPlacement;
+}
+
 const placementCache = new WeakMap<StageFacts, Map<string, RankedPlacement[]>>();
 
 const AREA_SUBPROFESSIONS = new Set(["aoesniper", "bombarder", "splashcaster", "chain", "reaper", "centurion"]);
@@ -442,8 +447,13 @@ function toOper(pick: EnginePick): BattleScriptOper {
   return { name: pick.name, skill: pick.skill, skill_usage: 1 };
 }
 
+function isTemporaryPick(pick: EnginePick): boolean {
+  return pick.role === "vanguard" || pick.profile.subProfession === "executor";
+}
+
 export function buildCandidate(input: CandidateBuildInput): { script: BattleScript; picks: EnginePick[]; warnings: string[] } {
-  const usedPositions = new Set<string>();
+  const occupiedPositions = new Set<string>();
+  const active = new Map<string, ActiveDeployment>();
   const meleeBlocks: DeploymentPoint[] = [];
   const threats = routeThreats(input.mapData);
   const goalFronts = goalFrontByPoint(input.mapData);
@@ -451,20 +461,16 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
   const actions: BattleScript["actions"] = [{ type: "SpeedUp" }];
   const deployLimit = Math.min(9, input.facts.characterLimit || 9, input.facts.deploymentPoints.length);
 
-  for (const pick of input.picks) {
-    if (actions.filter(action => action.type === "Deploy").length >= deployLimit) break;
-    const placements = rankedPlacements(pick, input.facts)
-      .filter(({ point }) => !usedPositions.has(`${point.row},${point.col}`))
-      .map(placement => ({
-        ...placement,
-        score: placement.score + placementPreference(pick, placement, meleeBlocks, input.mapData, threats, goalFronts, securedGoals),
-      }))
-      .sort((left, right) => right.score - left.score
-        || left.point.row - right.point.row || left.point.col - right.point.col
-        || left.direction.localeCompare(right.direction));
-    if (placements.length === 0) continue;
-    const placement = placements[Math.min(input.positionVariant, placements.length - 1)];
-    usedPositions.add(`${placement.point.row},${placement.point.col}`);
+  const removeActive = (deployment: ActiveDeployment): void => {
+    active.delete(deployment.pick.operatorId);
+    occupiedPositions.delete(`${deployment.placement.point.row},${deployment.placement.point.col}`);
+    const blockIndex = meleeBlocks.findIndex(point => point.row === deployment.placement.point.row
+      && point.col === deployment.placement.point.col);
+    if (blockIndex >= 0) meleeBlocks.splice(blockIndex, 1);
+  };
+  const addDeployment = (pick: EnginePick, placement: RankedPlacement, preDelay?: number): void => {
+    occupiedPositions.add(`${placement.point.row},${placement.point.col}`);
+    active.set(pick.operatorId, { pick, placement });
     if (pick.profile.position === "MELEE") {
       meleeBlocks.push(placement.point);
       const goal = goalFronts.get(`${placement.point.row},${placement.point.col}`);
@@ -476,8 +482,47 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       location: [placement.point.row, placement.point.col],
       direction: placement.direction,
       costs: Math.round(pick.profile.attributes.cost),
-      ...(input.timingVariant > 0 ? { pre_delay: input.timingVariant * 250 } : {}),
+      ...(preDelay !== undefined ? { pre_delay: preDelay }
+        : input.timingVariant > 0 ? { pre_delay: input.timingVariant * 250 } : {}),
     });
+  };
+
+  for (const pick of input.picks) {
+    if (active.size >= deployLimit) {
+      const vanguard = !isTemporaryPick(pick)
+        ? [...active.values()].find(deployment => deployment.pick.role === "vanguard"
+          && !goalFronts.has(`${deployment.placement.point.row},${deployment.placement.point.col}`))
+        : undefined;
+      if (!vanguard) continue;
+      actions.push({ type: "Retreat", name: vanguard.pick.name, costs: Math.round(pick.profile.attributes.cost) });
+      removeActive(vanguard);
+    }
+    const ranked = rankedPlacements(pick, input.facts)
+      .filter(({ point }) => !occupiedPositions.has(`${point.row},${point.col}`))
+      .map(placement => ({
+        ...placement,
+        score: placement.score + placementPreference(pick, placement, meleeBlocks, input.mapData, threats, goalFronts, securedGoals),
+      }))
+      .sort((left, right) => right.score - left.score
+        || left.point.row - right.point.row || left.point.col - right.point.col
+        || left.direction.localeCompare(right.direction));
+    const placements = isTemporaryPick(pick)
+      ? ranked.filter(({ point }) => !goalFronts.has(`${point.row},${point.col}`))
+      : ranked;
+    if (placements.length === 0) continue;
+    const placement = placements[Math.min(input.positionVariant, placements.length - 1)];
+    addDeployment(pick, placement);
+  }
+
+  // ponytail: rotate one executor; add threat-window scheduling only after rehearsals prove it changes a result.
+  const executor = [...active.values()].find(deployment => deployment.pick.profile.subProfession === "executor"
+    && deployment.pick.profile.skillDuration > 0);
+  if (executor) {
+    actions.push({ type: "Retreat", name: executor.pick.name, pre_delay: executor.pick.profile.skillDuration * 1000 });
+    removeActive(executor);
+    if (executor.pick.profile.respawnTime > 0) {
+      addDeployment(executor.pick, executor.placement, executor.pick.profile.respawnTime * 1000);
+    }
   }
   actions.push({ type: "SkillDaemon" });
 
