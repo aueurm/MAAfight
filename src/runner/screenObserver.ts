@@ -29,6 +29,8 @@ const STAR_ROIS = [
 ] as const;
 const SETTLEMENT_TITLE_ROI = { minX: 45, maxX: 380, minY: 176, maxY: 280 };
 const SETTLEMENT_TITLE_BRIGHT_RATIO = 0.15;
+const BATTLE_HEADER_ROI = { minX: 450, maxX: 820, minY: 52, maxY: 72 };
+const BATTLE_HEADER_RED_RATIO = 0.15;
 const PAUSE_TITLE_ROI = { minX: 455, maxX: 825, minY: 275, maxY: 415 };
 const PAUSE_TITLE_NEUTRAL_RATIO = 0.1;
 const FAILURE_TITLE_ROI = { minX: 100, maxX: 199, minY: 340, maxY: 379 };
@@ -72,7 +74,7 @@ export interface ScreenObserverOptions extends MaaConnectOptions {
   timeoutMs?: number;
 }
 
-export type BattleObservationStatus = "settled" | "paused" | "timeout" | "connect_failed" | "capture_failed";
+export type BattleObservationStatus = "settled" | "timeout" | "connect_failed" | "capture_failed";
 
 export interface BattleFrame {
   file: string;
@@ -171,6 +173,10 @@ function isLightNeutral(b: number, g: number, r: number): boolean {
   const maximum = Math.max(r, g, b);
   const minimum = Math.min(r, g, b);
   return maximum >= 150 && maximum <= 225 && maximum - minimum <= 20;
+}
+
+function isBattleHeaderRed(b: number, g: number, r: number): boolean {
+  return r >= 100 && g <= 115 && b <= 115 && r - g >= 20 && r - b >= 20;
 }
 
 function outcomeFromStars(stars: number): RunOutcome {
@@ -280,6 +286,22 @@ export function isSettlementTitleScreen(bgr: Buffer, width = WIDTH, height = HEI
   }
   // ponytail: calibrated against real 11-20 result and battle frames; use OCR only if the client result layout changes.
   return brightPixels / pixels >= SETTLEMENT_TITLE_BRIGHT_RATIO;
+}
+
+export function isBattleHudScreen(bgr: Buffer, width = WIDTH, height = HEIGHT): boolean {
+  if (bgr.length < width * height * BYTES_PER_PIXEL) return false;
+
+  let redPixels = 0;
+  let pixels = 0;
+  for (let y = BATTLE_HEADER_ROI.minY; y <= BATTLE_HEADER_ROI.maxY; y++) {
+    for (let x = BATTLE_HEADER_ROI.minX; x <= BATTLE_HEADER_ROI.maxX; x++) {
+      const offset = (y * width + x) * BYTES_PER_PIXEL;
+      if (isBattleHeaderRed(bgr[offset], bgr[offset + 1], bgr[offset + 2])) redPixels++;
+      pixels++;
+    }
+  }
+  // ponytail: gate pause recovery on the red battle HUD; add locale-aware matching only if this header changes.
+  return redPixels / pixels >= BATTLE_HEADER_RED_RATIO;
 }
 
 export function isPausedScreen(bgr: Buffer, width = WIDTH, height = HEIGHT): boolean {
@@ -576,6 +598,7 @@ export function observeMaaBattle(options: BattleObserverOptions): BattleObservat
   const deadline = now() + Math.max(0, options.maximumWaitMs ?? BATTLE_FRAME_WAIT_MS);
   const interval = Math.max(1, options.intervalMs ?? BATTLE_FRAME_INTERVAL_MS);
   let lastCapturedAt = -1;
+  let awaitingPauseRelease = false;
   const captureFrame = (click?: ScreenClick): { bgr: Buffer; sampled: StarObservation } => {
     const capturedAt = Math.max(now(), lastCapturedAt + 1);
     lastCapturedAt = capturedAt;
@@ -594,12 +617,15 @@ export function observeMaaBattle(options: BattleObserverOptions): BattleObservat
   while (now() <= deadline) {
     try {
       let frame = captureFrame();
-      if (isPausedScreen(frame.bgr)) {
+      const paused = isBattleHudScreen(frame.bgr) && isPausedScreen(frame.bgr);
+      if (!paused) {
+        awaitingPauseRelease = false;
+      } else if (!awaitingPauseRelease) {
         warnings.push("Paused battle detected; clicked playback and captured a confirmation frame.");
         frame = captureFrame(PAUSE_RESUME_CLICK);
-        if (isPausedScreen(frame.bgr)) {
-          warnings.push("Battle remained paused after one playback click; retained captured frames.");
-          return finish("paused");
+        awaitingPauseRelease = isBattleHudScreen(frame.bgr) && isPausedScreen(frame.bgr);
+        if (awaitingPauseRelease) {
+          warnings.push("Battle remained paused after one playback click; continuing observation without further clicks until it resumes.");
         }
       }
       if (isVerifiedSettlement(frame.bgr, frame.sampled)) {

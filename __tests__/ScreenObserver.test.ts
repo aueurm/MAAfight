@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import * as probe from "../src/runner/probe";
 import {
+  isBattleHudScreen,
   isFailureContinueScreen,
   isPausedScreen,
   isSettlementTitleScreen,
@@ -49,6 +50,10 @@ function paintSettlementTitle(buffer: Buffer): void {
 
 function paintPauseTitle(buffer: Buffer): void {
   paintRectangle(buffer, 455, 825, 275, 415, 180, 180, 180);
+}
+
+function paintBattleHeader(buffer: Buffer): void {
+  paintRectangle(buffer, 450, 820, 52, 72, 90, 90, 140);
 }
 
 function diffuseGreyBackground(): Buffer {
@@ -154,11 +159,14 @@ describe("sampleSettlementStars", () => {
     expect(isSettlementTitleScreen(bgr)).toBe(true);
   });
 
-  it("recognizes the fixed pause overlay", () => {
+  it("requires the battle HUD before treating the pause overlay as recoverable", () => {
     const bgr = blank();
     paintPauseTitle(bgr);
 
     expect(isPausedScreen(bgr)).toBe(true);
+    expect(isBattleHudScreen(bgr)).toBe(false);
+    paintBattleHeader(bgr);
+    expect(isBattleHudScreen(bgr)).toBe(true);
   });
 });
 
@@ -250,6 +258,13 @@ describe("observeMaaBattle", () => {
   function bgrWithPause(): Buffer {
     const bgr = blank();
     paintPauseTitle(bgr);
+    paintBattleHeader(bgr);
+    return bgr;
+  }
+
+  function bgrWithSelectionPause(): Buffer {
+    const bgr = blank();
+    paintPauseTitle(bgr);
     return bgr;
   }
 
@@ -330,9 +345,30 @@ describe("observeMaaBattle", () => {
     expect(spawn.mock.calls.some(([, args]) => String(args?.[args.length - 1]).includes("$clickX = 1205"))).toBe(true);
   });
 
-  it("returns paused when the confirmation frame remains paused", () => {
+  it("does not click a selection screen that resembles the pause overlay", () => {
     let time = 1000;
-    const captures = [bgrWithPause(), bgrWithPause()];
+    const spawn = jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
+      const script = String(args?.[args.length - 1]);
+      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
+      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
+      return screenshotResult(bgrWithSelectionPause(), frameDir);
+    });
+
+    const observation = observeMaaBattle({
+      debugDir,
+      now: () => time,
+      sleep: (milliseconds: number) => { time += milliseconds; },
+      maximumWaitMs: 0,
+    });
+
+    expect(observation).toMatchObject({ status: "timeout" });
+    expect(observation.frames).toHaveLength(1);
+    expect(spawn.mock.calls.some(([, args]) => String(args?.[args.length - 1]).includes("$clickX = 1205"))).toBe(false);
+  });
+
+  it("keeps observing when the confirmation frame remains paused", () => {
+    let time = 1000;
+    const captures = [bgrWithPause(), bgrWithPause(), bgrWithSettlement(2)];
     jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
       const script = String(args?.[args.length - 1]);
       const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
@@ -346,10 +382,13 @@ describe("observeMaaBattle", () => {
       debugDir,
       now: () => time,
       sleep: (milliseconds: number) => { time += milliseconds; },
+      maximumWaitMs: 10_000,
+      intervalMs: 5_000,
     });
 
-    expect(observation).toMatchObject({ status: "paused" });
-    expect(observation.frames).toHaveLength(2);
+    expect(observation).toMatchObject({ status: "settled", outcome: "partial_clear", stars: 2 });
+    expect(observation.frames).toHaveLength(3);
+    expect(observation.warnings).toContain("Battle remained paused after one playback click; continuing observation without further clicks until it resumes.");
   });
 
   it("keeps captured frames when the observation times out", () => {
