@@ -1,7 +1,7 @@
 import * as childProcess from "child_process";
 import * as fs from "fs";
 import * as path from "path";
-import { connectMaaEnvironment, type MaaConnectOptions } from "./probe";
+import { connectMaaEnvironment, resolveMaaAdbCaptureEnvironment, type MaaConnectOptions } from "./probe";
 import type { RunOutcome } from "./types";
 
 const WIDTH = 1280;
@@ -15,7 +15,6 @@ const NEUTRAL_DOMINANT_RATIO_MAX = 0.5;
 const SCREEN_BYTES = WIDTH * HEIGHT * BYTES_PER_PIXEL;
 const IMAGE_BUFFER_BYTES = 16 * 1024 * 1024;
 const RESULT_CONTINUE_CLICK = { x: 640, y: 650, waitMs: 1000 };
-const PAUSE_RESUME_CLICK = { x: 1205, y: 54, waitMs: 1000 };
 const SETTLEMENT_POLL_INTERVAL_MS = 5_000;
 // ponytail: fixed window covers Copilot completing before the battle; expose configuration only if a slower client actually needs it.
 const SETTLEMENT_WAIT_MS = 90_000;
@@ -29,10 +28,6 @@ const STAR_ROIS = [
 ] as const;
 const SETTLEMENT_TITLE_ROI = { minX: 45, maxX: 380, minY: 176, maxY: 280 };
 const SETTLEMENT_TITLE_BRIGHT_RATIO = 0.15;
-const BATTLE_HEADER_ROI = { minX: 450, maxX: 820, minY: 52, maxY: 72 };
-const BATTLE_HEADER_RED_RATIO = 0.15;
-const PAUSE_TITLE_ROI = { minX: 455, maxX: 825, minY: 275, maxY: 415 };
-const PAUSE_TITLE_NEUTRAL_RATIO = 0.1;
 const FAILURE_TITLE_ROI = { minX: 100, maxX: 199, minY: 340, maxY: 379 };
 const FAILURE_TITLE_BRIGHT_RATIO = 0.15;
 
@@ -169,16 +164,6 @@ function isBrightWhite(b: number, g: number, r: number): boolean {
   return b >= 220 && g >= 220 && r >= 220;
 }
 
-function isLightNeutral(b: number, g: number, r: number): boolean {
-  const maximum = Math.max(r, g, b);
-  const minimum = Math.min(r, g, b);
-  return maximum >= 150 && maximum <= 225 && maximum - minimum <= 20;
-}
-
-function isBattleHeaderRed(b: number, g: number, r: number): boolean {
-  return r >= 100 && g <= 115 && b <= 115 && r - g >= 20 && r - b >= 20;
-}
-
 function outcomeFromStars(stars: number): RunOutcome {
   if (stars === 3) return "clear";
   if (stars === 0) return "failed";
@@ -286,38 +271,6 @@ export function isSettlementTitleScreen(bgr: Buffer, width = WIDTH, height = HEI
   }
   // ponytail: calibrated against real 11-20 result and battle frames; use OCR only if the client result layout changes.
   return brightPixels / pixels >= SETTLEMENT_TITLE_BRIGHT_RATIO;
-}
-
-export function isBattleHudScreen(bgr: Buffer, width = WIDTH, height = HEIGHT): boolean {
-  if (bgr.length < width * height * BYTES_PER_PIXEL) return false;
-
-  let redPixels = 0;
-  let pixels = 0;
-  for (let y = BATTLE_HEADER_ROI.minY; y <= BATTLE_HEADER_ROI.maxY; y++) {
-    for (let x = BATTLE_HEADER_ROI.minX; x <= BATTLE_HEADER_ROI.maxX; x++) {
-      const offset = (y * width + x) * BYTES_PER_PIXEL;
-      if (isBattleHeaderRed(bgr[offset], bgr[offset + 1], bgr[offset + 2])) redPixels++;
-      pixels++;
-    }
-  }
-  // ponytail: gate pause recovery on the red battle HUD; add locale-aware matching only if this header changes.
-  return redPixels / pixels >= BATTLE_HEADER_RED_RATIO;
-}
-
-export function isPausedScreen(bgr: Buffer, width = WIDTH, height = HEIGHT): boolean {
-  if (bgr.length < width * height * BYTES_PER_PIXEL) return false;
-
-  let neutralPixels = 0;
-  let pixels = 0;
-  for (let y = PAUSE_TITLE_ROI.minY; y <= PAUSE_TITLE_ROI.maxY; y++) {
-    for (let x = PAUSE_TITLE_ROI.minX; x <= PAUSE_TITLE_ROI.maxX; x++) {
-      const offset = (y * width + x) * BYTES_PER_PIXEL;
-      if (isLightNeutral(bgr[offset], bgr[offset + 1], bgr[offset + 2])) neutralPixels++;
-      pixels++;
-    }
-  }
-  // ponytail: fixed pause overlay ROI; use image matching only if this recovery begins missing real pauses.
-  return neutralPixels / pixels >= PAUSE_TITLE_NEUTRAL_RATIO;
 }
 
 function isVerifiedSettlement(bgr: Buffer, sampled: StarObservation): boolean {
@@ -459,6 +412,40 @@ function writeDebugSamples(filePath: string, observation: Omit<ScreenObservation
   fs.writeFileSync(filePath, JSON.stringify(observation, null, 2), "utf8");
 }
 
+function decodeAdbScreencap(raw: Buffer): Buffer {
+  if (raw.length < 12) throw new Error("adb screencap returned no header");
+  const width = raw.readUInt32LE(0);
+  const height = raw.readUInt32LE(4);
+  const format = raw.readUInt32LE(8);
+  const expectedBytes = 12 + width * height * 4;
+  if (width !== WIDTH || height !== HEIGHT || format !== 1 || raw.length !== expectedBytes) {
+    throw new Error(`unsupported adb screencap: ${width}x${height}, format ${format}, ${raw.length} bytes`);
+  }
+  const bgr = Buffer.alloc(SCREEN_BYTES);
+  for (let pixel = 0; pixel < width * height; pixel++) {
+    const source = 12 + pixel * 4;
+    const target = pixel * BYTES_PER_PIXEL;
+    bgr[target] = raw[source + 2];
+    bgr[target + 1] = raw[source + 1];
+    bgr[target + 2] = raw[source];
+  }
+  return bgr;
+}
+
+function captureAdbBgr(adbPath: string, address: string, timeoutMs: number): Buffer {
+  const result = childProcess.spawnSync(adbPath, ["-s", address, "exec-out", "screencap"], {
+    encoding: "buffer",
+    maxBuffer: IMAGE_BUFFER_BYTES,
+    timeout: timeoutMs,
+    windowsHide: true,
+  });
+  if (result.status !== 0 || !Buffer.isBuffer(result.stdout)) {
+    const detail = Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8").trim() : "";
+    throw new Error(`adb screencap failed${detail ? `: ${detail}` : ""}`);
+  }
+  return decodeAdbScreencap(result.stdout);
+}
+
 function writeBattleManifest(filePath: string, observation: BattleManifest): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(observation, null, 2), "utf8");
@@ -580,54 +567,27 @@ export function observeMaaBattle(options: BattleObserverOptions): BattleObservat
   };
 
   fs.mkdirSync(frameDir, { recursive: true });
-  const connect = connectMaaEnvironment(options);
-  warnings.push(...connect.warnings);
-  if (!connect.connectSuccess || !connect.asstConnected || !connect.maaInstallDir || !connect.adbPath || !connect.address) {
+  const captureEnvironment = resolveMaaAdbCaptureEnvironment(options);
+  warnings.push(...captureEnvironment.warnings);
+  if (!captureEnvironment.adbPath || !captureEnvironment.address) {
     return finish("connect_failed");
   }
-
-  const captureOptions: MaaCoreScreencapOptions = {
-    debugDir: frameDir,
-    userDir: path.resolve(options.userDir || path.join(process.cwd(), ".maafight", "maa-core")),
-    maaInstallDir: connect.maaInstallDir,
-    adbPath: connect.adbPath,
-    address: connect.address,
-    connectConfig: connect.connectConfig,
-    timeoutMs: options.timeoutMs || 30000,
-  };
   const deadline = now() + Math.max(0, options.maximumWaitMs ?? BATTLE_FRAME_WAIT_MS);
   const interval = Math.max(1, options.intervalMs ?? BATTLE_FRAME_INTERVAL_MS);
   let lastCapturedAt = -1;
-  let awaitingPauseRelease = false;
-  const captureFrame = (click?: ScreenClick): { bgr: Buffer; sampled: StarObservation } => {
+  const captureFrame = (): { bgr: Buffer; sampled: StarObservation } => {
     const capturedAt = Math.max(now(), lastCapturedAt + 1);
     lastCapturedAt = capturedAt;
-    const capture = runMaaCoreScreencap({ ...captureOptions, click });
-    if (!capture.screenshotPath || !fs.existsSync(capture.screenshotPath)) {
-      throw new Error("MaaCore returned no PNG screenshot");
-    }
-    const file = `${capturedAt}.png`;
-    fs.renameSync(capture.screenshotPath, path.join(frameDir, file));
+    const bgr = captureAdbBgr(captureEnvironment.adbPath!, captureEnvironment.address!, options.timeoutMs || 30000);
+    const file = `${capturedAt}.bmp`;
+    writeBmpFromBgr(bgr, path.join(frameDir, file));
     frames.push({ file, capturedAt });
-    const bgr = fs.readFileSync(capture.bgrPath);
-    fs.rmSync(capture.bgrPath, { force: true });
     return { bgr, sampled: sampleSettlementStars(bgr) };
   };
 
   while (now() <= deadline) {
     try {
-      let frame = captureFrame();
-      const paused = isBattleHudScreen(frame.bgr) && isPausedScreen(frame.bgr);
-      if (!paused) {
-        awaitingPauseRelease = false;
-      } else if (!awaitingPauseRelease) {
-        warnings.push("Paused battle detected; clicked playback and captured a confirmation frame.");
-        frame = captureFrame(PAUSE_RESUME_CLICK);
-        awaitingPauseRelease = isBattleHudScreen(frame.bgr) && isPausedScreen(frame.bgr);
-        if (awaitingPauseRelease) {
-          warnings.push("Battle remained paused after one playback click; continuing observation without further clicks until it resumes.");
-        }
-      }
+      const frame = captureFrame();
       if (isVerifiedSettlement(frame.bgr, frame.sampled)) {
         return finish("settled", { outcome: frame.sampled.outcome, stars: frame.sampled.stars });
       }

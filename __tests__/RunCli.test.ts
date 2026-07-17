@@ -130,6 +130,22 @@ describe("run command", () => {
     return buffer;
   }
 
+  function adbScreencapResult(bgr: Buffer): SpawnSyncReturns<Buffer> {
+    const raw = Buffer.alloc(12 + (bgr.length / 3) * 4);
+    raw.writeUInt32LE(1280, 0);
+    raw.writeUInt32LE(720, 4);
+    raw.writeUInt32LE(1, 8);
+    for (let pixel = 0; pixel < bgr.length / 3; pixel++) {
+      const source = pixel * 3;
+      const target = 12 + pixel * 4;
+      raw[target] = bgr[source + 2];
+      raw[target + 1] = bgr[source + 1];
+      raw[target + 2] = bgr[source];
+      raw[target + 3] = 255;
+    }
+    return { stdout: raw, stderr: Buffer.alloc(0), status: 0, signal: null, output: [null, raw, Buffer.alloc(0)], pid: 1 } as SpawnSyncReturns<Buffer>;
+  }
+
   it("records a manual-practice dry run", async () => {
     const file = writeScript(script());
 
@@ -392,45 +408,10 @@ describe("run command", () => {
         },
       },
     }), "utf8");
-    jest.spyOn(childProcess, "spawnSync").mockImplementation((command, args) => {
-      if (String(command).endsWith("powershell.exe") && Array.isArray(args)) {
-        const helperScript = String(args[args.length - 1]);
-        if (helperScript.includes("AsstAsyncScreencap")) {
-          const frameDir = path.join(debugDir, "frames");
-          const bgrPath = path.join(frameDir, "screen.bgr");
-          const screenshotPath = path.join(frameDir, "screenshot.png");
-          fs.mkdirSync(frameDir, { recursive: true });
-          fs.writeFileSync(bgrPath, bgrWithStars(3));
-          fs.writeFileSync(screenshotPath, "png", "utf8");
-          return {
-            stdout: JSON.stringify({
-              maaCoreVersion: "v6.13.0",
-              bgrPath,
-              bgrBytes: 1280 * 720 * 3,
-              screenshotPath,
-              screenshotBytes: 3,
-            }),
-            stderr: "",
-            status: 0,
-            signal: null,
-            output: [null, "", ""],
-            pid: 1,
-          } as SpawnSyncReturns<string>;
-        }
-        return {
-          stdout: JSON.stringify({
-            maaCoreVersion: "v6.13.0",
-            setUserDir: true,
-            loadResource: true,
-            connectSuccess: true,
-            asstConnected: true,
-          }),
-          stderr: "",
-          status: 0,
-          signal: null,
-          output: [null, "", ""],
-          pid: 1,
-        } as SpawnSyncReturns<string>;
+    const spawn = jest.spyOn(childProcess, "spawnSync").mockImplementation((command, args) => {
+      if (command === adbPath && Array.isArray(args)) {
+        expect(args).toEqual(["-s", "127.0.0.1:16384", "exec-out", "screencap"]);
+        return adbScreencapResult(bgrWithStars(3)) as never;
       }
       return { stdout: "", stderr: "unexpected", status: 1, signal: null, output: [null, "", "unexpected"], pid: 1 } as SpawnSyncReturns<string>;
     });
@@ -442,6 +423,7 @@ describe("run command", () => {
     expect(fs.existsSync(path.join(debugDir, "manifest.json"))).toBe(true);
     expect(fs.existsSync(path.join(cwd, ".maafight", "run-results.jsonl"))).toBe(false);
     expect(errorSpy.mock.calls.flat().join("\n")).toContain("Battle observer manifest");
+    expect(spawn.mock.calls.flat().join("\n")).not.toMatch(/Asst|click|powershell/i);
   });
 
   it("returns a nonzero status when battle observation cannot connect", async () => {

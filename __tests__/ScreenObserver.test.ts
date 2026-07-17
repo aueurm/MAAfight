@@ -1,12 +1,9 @@
-import type { SpawnSyncReturns } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as probe from "../src/runner/probe";
 import {
-  isBattleHudScreen,
   isFailureContinueScreen,
-  isPausedScreen,
   isSettlementTitleScreen,
   observeMaaBattle,
   pollUntilRecognized,
@@ -50,10 +47,6 @@ function paintSettlementTitle(buffer: Buffer): void {
 
 function paintPauseTitle(buffer: Buffer): void {
   paintRectangle(buffer, 455, 825, 275, 415, 180, 180, 180);
-}
-
-function paintBattleHeader(buffer: Buffer): void {
-  paintRectangle(buffer, 450, 820, 52, 72, 90, 90, 140);
 }
 
 function diffuseGreyBackground(): Buffer {
@@ -159,15 +152,6 @@ describe("sampleSettlementStars", () => {
     expect(isSettlementTitleScreen(bgr)).toBe(true);
   });
 
-  it("requires the battle HUD before treating the pause overlay as recoverable", () => {
-    const bgr = blank();
-    paintPauseTitle(bgr);
-
-    expect(isPausedScreen(bgr)).toBe(true);
-    expect(isBattleHudScreen(bgr)).toBe(false);
-    paintBattleHeader(bgr);
-    expect(isBattleHudScreen(bgr)).toBe(true);
-  });
 });
 
 describe("pollUntilRecognized", () => {
@@ -193,22 +177,13 @@ describe("observeMaaBattle", () => {
 
   beforeEach(() => {
     debugDir = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-battle-observer-"));
-    jest.spyOn(probe, "connectMaaEnvironment").mockReturnValue({
+    jest.spyOn(probe, "resolveMaaAdbCaptureEnvironment").mockReturnValue({
       maaFound: true,
       maaPath: "C:\\MAA\\MAA.exe",
       maaInstallDir: "C:\\MAA",
-      maaCorePath: "C:\\MAA\\MaaCore.dll",
-      maaCoreVersion: "v6.14.1",
       adbPath: "C:\\MAA\\adb.exe",
       address: "127.0.0.1:16384",
       connectConfig: "MuMuEmulator12",
-      connectAttempted: true,
-      connectCommand: "",
-      connectExitCode: 0,
-      connectSuccess: true,
-      asstConnected: true,
-      setUserDir: true,
-      loadResource: true,
       warnings: [],
     });
   });
@@ -218,26 +193,31 @@ describe("observeMaaBattle", () => {
     fs.rmSync(debugDir, { recursive: true, force: true });
   });
 
-  function screenshotResult(bgr: Buffer, frameDir: string): SpawnSyncReturns<string> {
-    const bgrPath = path.join(frameDir, "screen.bgr");
-    const screenshotPath = path.join(frameDir, "screenshot.png");
-    fs.mkdirSync(frameDir, { recursive: true });
-    fs.writeFileSync(bgrPath, bgr);
-    fs.writeFileSync(screenshotPath, "png", "utf8");
-    return {
-      stdout: JSON.stringify({
-        maaCoreVersion: "v6.14.1",
-        bgrPath,
-        bgrBytes: bgr.length,
-        screenshotPath,
-        screenshotBytes: 3,
-      }),
-      stderr: "",
-      status: 0,
-      signal: null,
-      output: [null, "", ""],
-      pid: 1,
-    };
+  function adbResult(bgr: Buffer) {
+    const pixels = bgr.length / 3;
+    const raw = Buffer.alloc(12 + pixels * 4);
+    raw.writeUInt32LE(1280, 0);
+    raw.writeUInt32LE(720, 4);
+    raw.writeUInt32LE(1, 8);
+    for (let pixel = 0; pixel < pixels; pixel++) {
+      const source = pixel * 3;
+      const target = 12 + pixel * 4;
+      raw[target] = bgr[source + 2];
+      raw[target + 1] = bgr[source + 1];
+      raw[target + 2] = bgr[source];
+      raw[target + 3] = 255;
+    }
+    return { stdout: raw, stderr: Buffer.alloc(0), status: 0, signal: null, output: [null, raw, Buffer.alloc(0)], pid: 1 } as never;
+  }
+
+  function mockBattleFrames(frames: Buffer[]) {
+    return jest.spyOn(childProcess, "spawnSync").mockImplementation((command, args) => {
+      const bgr = frames.shift();
+      if (!bgr) throw new Error("unexpected battle capture");
+      if (command !== "C:\\MAA\\adb.exe") throw new Error(`unexpected capture command: ${command}`);
+      expect(args).toEqual(["-s", "127.0.0.1:16384", "exec-out", "screencap"]);
+      return adbResult(bgr);
+    });
   }
 
   function bgrWithStars(stars: number): Buffer {
@@ -258,25 +238,12 @@ describe("observeMaaBattle", () => {
   function bgrWithPause(): Buffer {
     const bgr = blank();
     paintPauseTitle(bgr);
-    paintBattleHeader(bgr);
-    return bgr;
-  }
-
-  function bgrWithSelectionPause(): Buffer {
-    const bgr = blank();
-    paintPauseTitle(bgr);
     return bgr;
   }
 
   it("saves frames until the settlement screen", () => {
     let time = 1000;
-    let captures = 0;
-    jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
-      const script = String(args?.[args.length - 1]);
-      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
-      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
-      return screenshotResult(captures++ === 0 ? blank() : bgrWithSettlement(2), frameDir);
-    });
+    const spawn = mockBattleFrames([blank(), bgrWithSettlement(2)]);
 
     const observation = observeMaaBattle({
       debugDir,
@@ -288,9 +255,12 @@ describe("observeMaaBattle", () => {
 
     expect(observation).toMatchObject({ status: "settled", outcome: "partial_clear", stars: 2 });
     expect(observation.frames).toEqual([
-      { file: "1000.png", capturedAt: 1000 },
-      { file: "6000.png", capturedAt: 6000 },
+      { file: "1000.bmp", capturedAt: 1000 },
+      { file: "6000.bmp", capturedAt: 6000 },
     ]);
+    expect(spawn.mock.calls[0][0]).toBe("C:\\MAA\\adb.exe");
+    expect(spawn.mock.calls[0][1]).toEqual(["-s", "127.0.0.1:16384", "exec-out", "screencap"]);
+    expect(spawn.mock.calls.flat().join("\n")).not.toMatch(/Asst|click|powershell/i);
     expect(JSON.parse(fs.readFileSync(observation.manifestPath, "utf8"))).toMatchObject({
       status: "settled",
       outcome: "partial_clear",
@@ -301,12 +271,7 @@ describe("observeMaaBattle", () => {
 
   it("does not settle when battle colors only match the star regions", () => {
     let time = 1000;
-    jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
-      const script = String(args?.[args.length - 1]);
-      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
-      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
-      return screenshotResult(bgrWithStars(3), frameDir);
-    });
+    mockBattleFrames([bgrWithStars(3), bgrWithStars(3), bgrWithStars(3)]);
 
     const observation = observeMaaBattle({
       debugDir,
@@ -320,39 +285,9 @@ describe("observeMaaBattle", () => {
     expect(observation.frames).toHaveLength(3);
   });
 
-  it("clicks play once and continues observing after a paused frame", () => {
+  it("records a paused battle without controlling it", () => {
     let time = 1000;
-    const captures = [bgrWithPause(), blank(), bgrWithSettlement(2)];
-    const spawn = jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
-      const script = String(args?.[args.length - 1]);
-      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
-      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
-      const bgr = captures.shift();
-      if (!bgr) throw new Error("unexpected MaaCore capture");
-      return screenshotResult(bgr, frameDir);
-    });
-
-    const observation = observeMaaBattle({
-      debugDir,
-      now: () => time,
-      sleep: (milliseconds: number) => { time += milliseconds; },
-      maximumWaitMs: 10_000,
-      intervalMs: 5_000,
-    });
-
-    expect(observation).toMatchObject({ status: "settled", outcome: "partial_clear", stars: 2 });
-    expect(observation.frames).toHaveLength(3);
-    expect(spawn.mock.calls.some(([, args]) => String(args?.[args.length - 1]).includes("$clickX = 1205"))).toBe(true);
-  });
-
-  it("does not click a selection screen that resembles the pause overlay", () => {
-    let time = 1000;
-    const spawn = jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
-      const script = String(args?.[args.length - 1]);
-      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
-      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
-      return screenshotResult(bgrWithSelectionPause(), frameDir);
-    });
+    const spawn = mockBattleFrames([bgrWithPause()]);
 
     const observation = observeMaaBattle({
       debugDir,
@@ -363,44 +298,12 @@ describe("observeMaaBattle", () => {
 
     expect(observation).toMatchObject({ status: "timeout" });
     expect(observation.frames).toHaveLength(1);
-    expect(spawn.mock.calls.some(([, args]) => String(args?.[args.length - 1]).includes("$clickX = 1205"))).toBe(false);
-  });
-
-  it("keeps observing when the confirmation frame remains paused", () => {
-    let time = 1000;
-    const captures = [bgrWithPause(), bgrWithPause(), bgrWithSettlement(2)];
-    jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
-      const script = String(args?.[args.length - 1]);
-      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
-      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
-      const bgr = captures.shift();
-      if (!bgr) throw new Error("unexpected MaaCore capture");
-      return screenshotResult(bgr, frameDir);
-    });
-
-    const observation = observeMaaBattle({
-      debugDir,
-      now: () => time,
-      sleep: (milliseconds: number) => { time += milliseconds; },
-      maximumWaitMs: 10_000,
-      intervalMs: 5_000,
-    });
-
-    expect(observation).toMatchObject({ status: "settled", outcome: "partial_clear", stars: 2 });
-    expect(observation.frames).toHaveLength(3);
-    expect(observation.warnings).toContain("Battle remained paused after one playback click; continuing observation without further clicks until it resumes.");
+    expect(spawn.mock.calls.flat().join("\n")).not.toMatch(/Asst|click|powershell/i);
   });
 
   it("keeps captured frames when the observation times out", () => {
     let time = 1000;
-    let captures = 0;
-    jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
-      const script = String(args?.[args.length - 1]);
-      const frameDir = script.match(/\$bgrPath = '(.+)\\screen\.bgr'/)?.[1];
-      if (!frameDir) throw new Error("frame directory was not passed to MaaCore helper");
-      captures++;
-      return screenshotResult(blank(), frameDir);
-    });
+    const spawn = mockBattleFrames([blank(), blank(), blank()]);
 
     const observation = observeMaaBattle({
       debugDir,
@@ -413,6 +316,6 @@ describe("observeMaaBattle", () => {
     expect(observation).toMatchObject({ status: "timeout" });
     expect(observation.outcome).toBeUndefined();
     expect(observation.frames).toHaveLength(3);
-    expect(captures).toBe(3);
+    expect(spawn).toHaveBeenCalledTimes(3);
   });
 });
