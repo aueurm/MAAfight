@@ -283,6 +283,12 @@ export function buildSquadBeam(
   const openingHealers = encounter.demand.deployment >= 0.5 && facts.groundRouteCount > 0
     ? available.filter(pick => pick.profile.position === "RANGED" && isSustainedHealer(pick))
     : [];
+  // ponytail: cap at two healer slots; revisit only if rehearsals prove three separated goals need more.
+  const openingHealerSlots = Math.min(
+    2,
+    facts.goalCells.length,
+    new Set(openingHealers.map(pick => pick.operatorId)).size
+  );
   const uniqueOperators = new Set(available.map(pick => pick.operatorId)).size;
   const targetSize = Math.min(12, uniqueOperators);
   const deploymentCoreSize = Math.min(9, facts.characterLimit || 9, facts.deploymentPoints.length, targetSize);
@@ -299,7 +305,7 @@ export function buildSquadBeam(
     for (const state of beam) {
       const used = new Set(state.picks.map(pick => pick.operatorId));
       const slotOptions = slot === 0 && openingVanguards.length ? openingVanguards
-        : slot === 1 && openingHealers.length ? openingHealers : available;
+        : slot > 0 && slot <= openingHealerSlots ? openingHealers : available;
       for (const pick of slotOptions) {
         if (used.has(pick.operatorId)) continue;
         const addition = capabilityCache.get(`${pick.operatorId}:${pick.skill}`)!;
@@ -444,8 +450,14 @@ function goalFrontByPoint(mapData: MapData): Map<string, string> {
       point.buildableType !== "ranged" && distance(point, goal) === 1
     );
     const roadAdjacent = adjacent.filter(point => mapData.tiles[point.row]?.[point.col]?.key === "road");
-    // ponytail: only exact goal-adjacent melee tiles are modeled; trace route fronts only if a map has no such tile.
-    for (const point of roadAdjacent.length ? roadAdjacent : adjacent) fronts.set(`${point.row},${point.col}`, goalKey);
+    const roadMelee = mapData.deploymentPoints.filter(point =>
+      point.buildableType !== "ranged" && mapData.tiles[point.row]?.[point.col]?.key === "road"
+    );
+    const nearestRoadDistance = roadMelee.length ? Math.min(...roadMelee.map(point => distance(point, goal))) : Infinity;
+    // ponytail: recessed goals use only their nearest road tile; trace full routes only if rehearsals prove it necessary.
+    const candidates = roadAdjacent.length ? roadAdjacent : adjacent.length ? adjacent
+      : roadMelee.filter(point => distance(point, goal) === nearestRoadDistance);
+    for (const point of candidates) fronts.set(`${point.row},${point.col}`, goalKey);
   }
   return fronts;
 }
@@ -583,7 +595,10 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       ? ranked.filter(({ point }) => !goalFronts.has(`${point.row},${point.col}`))
       : ranked;
     if (pick.profile.position === "RANGED" && isSustainedHealer(pick) && meleeBlocks.length && placements.length) {
-      const covered = (placement: RankedPlacement): number => meleeBlocks
+      const activeHealers = [...active.values()].filter(deployment => isSustainedHealer(deployment.pick));
+      const uncoveredBlocks = meleeBlocks.filter(block => !activeHealers.some(healer => coversPoint(healer, block)));
+      const coverageTargets = uncoveredBlocks.length ? uncoveredBlocks : meleeBlocks;
+      const covered = (placement: RankedPlacement): number => coverageTargets
         .filter(block => coversPoint({ pick, placement }, block)).length;
       const maximumCovered = Math.max(...placements.map(covered));
       if (maximumCovered > 0) placements = placements.filter(placement => covered(placement) === maximumCovered);

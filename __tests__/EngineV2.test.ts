@@ -252,6 +252,25 @@ describe("v2 skill engine", () => {
     expect(lowPicks[0].role).not.toBe("vanguard");
   });
 
+  it("reserves a sustained ranged healer for each pressured goal", () => {
+    const records = [
+      "德克萨斯", "Mon3tr", "末药", "维什戴尔", "逻各斯", "玛恩纳", "佩佩",
+    ].map(name => getCombatOperatorByName(name)!);
+    const players = new Map(records.map(record => [record.id, {
+      id: record.id, name: record.name, rarity: record.rarity, own: true,
+      elite: 2, level: 60, potential: 1,
+    }] as [string, PlayerOperator]));
+    const mapData = makeMapData();
+    mapData.routes = [
+      { id: 0, motionMode: "walk", startPosition: { row: 2, col: 0 }, checkpoints: [], endPosition: { row: 0, col: 6 } },
+      { id: 1, motionMode: "walk", startPosition: { row: 2, col: 0 }, checkpoints: [], endPosition: { row: 4, col: 6 } },
+    ];
+    const facts = extractStageFacts(mapData);
+    const picks = buildSquadBeam(facts, buildEncounterContext(mapData, facts), { playerOperators: players }).squads[0];
+
+    expect(picks.slice(0, 3).map(pick => pick.role)).toEqual(["vanguard", "medic", "medic"]);
+  });
+
   it("excludes self-disabling skills while retaining the other skill choices", () => {
     const exclusions = new Map<string, { blocked: number[]; choices: number }>([
       ["阿米娅", { blocked: [2, 3], choices: 1 }],
@@ -346,6 +365,51 @@ describe("v2 skill engine", () => {
       [0, 5],
       [4, 5],
     ]);
+  });
+
+  it("infers recessed goal fronts and spreads sustained healers across them", () => {
+    const mapData = makeMapData();
+    mapData.routes = [
+      { id: 0, motionMode: "walk", startPosition: { row: 4, col: 3 }, checkpoints: [], endPosition: { row: 2, col: 0 } },
+      { id: 1, motionMode: "walk", startPosition: { row: 4, col: 3 }, checkpoints: [], endPosition: { row: 2, col: 6 } },
+    ];
+    mapData.deploymentPoints = [
+      { row: 2, col: 2, buildableType: "melee" },
+      { row: 2, col: 3, buildableType: "melee" },
+      { row: 2, col: 4, buildableType: "melee" },
+      { row: 1, col: 2, buildableType: "ranged" },
+      { row: 1, col: 4, buildableType: "ranged" },
+    ];
+    mapData.tiles[2][2].key = "road";
+    mapData.tiles[2][4].key = "road";
+    const healingRange: Array<[number, number]> = [[0, 1]];
+    const built = buildCandidate({
+      stageCode: "V2-1",
+      mapData,
+      facts: extractStageFacts(mapData),
+      openingPressure: true,
+      picks: [
+        testPick("先锋", "MELEE", [[0, 0]], { role: "vanguard" }),
+        testPick("左路主坦", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
+        testPick("右路主坦", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
+        testPick("医疗甲", "RANGED", healingRange, { role: "medic" }),
+        testPick("医疗乙", "RANGED", healingRange, { role: "medic" }),
+      ],
+      positionVariant: 0,
+      timingVariant: 0,
+      options: {},
+    });
+    const deploys = built.script.actions.filter(action => action.type === "Deploy");
+
+    expect(deploys.map(action => action.name)).toEqual(["先锋", "左路主坦", "右路主坦", "医疗甲", "医疗乙"]);
+    expect(deploys.slice(1, 3).map(action => action.location)).toEqual(expect.arrayContaining([[2, 2], [2, 4]]));
+    for (const frontline of deploys.slice(1, 3)) {
+      expect(deploys.slice(3).some(healer => healingRange.some(offset => {
+        const [row, col] = rotateDirection(offset, healer.direction!);
+        return healer.location![0] + row === frontline.location![0]
+          && healer.location![1] + col === frontline.location![1];
+      }))).toBe(true);
+    }
   });
 
   it("builds a pressured opening in the nearest defensive zone before ranged support", () => {
