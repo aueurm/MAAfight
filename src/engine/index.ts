@@ -128,6 +128,7 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
           stageCode,
           mapData,
           facts,
+          openingPressure: encounter.demand.deployment >= 0.5,
           picks,
           positionVariant,
           timingVariant,

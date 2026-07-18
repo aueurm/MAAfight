@@ -150,6 +150,7 @@ export interface CandidateBuildInput {
   stageCode: string;
   mapData: MapData;
   facts: StageFacts;
+  openingPressure: boolean;
   picks: EnginePick[];
   positionVariant: number;
   timingVariant: number;

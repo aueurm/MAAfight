@@ -22,7 +22,7 @@ const PREFERRED_SKILLS: Readonly<Record<string, readonly number[]>> = {
   "维什戴尔": [3], "圣聆初雪": [2], "澄闪": [2, 3], "荒芜拉普兰德": [3],
   "逻各斯": [1], "艾雅法拉": [2], "凯尔希·思衡托": [2], "Mon3tr": [2, 3],
   "纯烬艾雅法拉": [1], "遥": [2], "塑心": [1], "新约能天使": [2, 3],
-  "阿斯卡纶": [1], "歌蕾蒂娅": [1],
+  "阿斯卡纶": [1], "歌蕾蒂娅": [1], "提丰": [2, 3],
 };
 // ponytail: static list until the combat model exposes self-disable effects; replace it with that explicit field when available.
 const SELF_DISABLE_SKILLS: Readonly<Record<string, readonly number[]>> = {
@@ -473,6 +473,27 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
   const securedGoals = new Set<string>();
   const actions: BattleScript["actions"] = [{ type: "SpeedUp" }];
   const deployLimit = Math.min(9, input.facts.characterLimit || 9, input.facts.deploymentPoints.length);
+  const openingVanguard = input.openingPressure && input.picks[0]?.role === "vanguard"
+    ? input.picks[0]
+    : undefined;
+  const permanentMelee = input.picks.filter(pick => pick.profile.position === "MELEE" && !isTemporaryPick(pick));
+  const frontlineCount = new Set(goalFronts.values()).size;
+  const frontlinePicks = input.openingPressure
+    ? [
+      ...permanentMelee.filter(pick => LANE_HOLD_SUBPROFESSIONS.has(pick.profile.subProfession || "")),
+      ...permanentMelee.filter(pick => !LANE_HOLD_SUBPROFESSIONS.has(pick.profile.subProfession || "")),
+    ].slice(0, frontlineCount)
+    : [];
+  const prioritizedIds = new Set([openingVanguard, ...frontlinePicks]
+    .filter((pick): pick is EnginePick => Boolean(pick))
+    .map(pick => pick.operatorId));
+  const deploymentPicks = input.openingPressure
+    ? [
+      ...(openingVanguard ? [openingVanguard] : []),
+      ...frontlinePicks,
+      ...input.picks.filter(pick => !prioritizedIds.has(pick.operatorId)),
+    ]
+    : input.picks;
 
   const removeActive = (deployment: ActiveDeployment): void => {
     active.delete(deployment.pick.operatorId);
@@ -500,7 +521,7 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
     });
   };
 
-  for (const pick of input.picks) {
+  for (const pick of deploymentPicks) {
     if (active.size >= deployLimit) {
       const vanguard = !isTemporaryPick(pick)
         ? [...active.values()].find(deployment => deployment.pick.role === "vanguard"
@@ -519,9 +540,18 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       .sort((left, right) => right.score - left.score
         || left.point.row - right.point.row || left.point.col - right.point.col
         || left.direction.localeCompare(right.direction));
-    const placements = isTemporaryPick(pick)
+    let placements = isTemporaryPick(pick)
       ? ranked.filter(({ point }) => !goalFronts.has(`${point.row},${point.col}`))
       : ranked;
+    if (input.openingPressure && pick.profile.subProfession !== "executor"
+      && placements.length && input.facts.goalCells.length) {
+      const goalDistance = (placement: RankedPlacement): number => Math.min(
+        ...input.facts.goalCells.map(goal => distance(placement.point, goal))
+      );
+      const nearestDefensiveDistance = Math.min(...placements.map(goalDistance));
+      // ponytail: one-tile slack keeps variants while bounding the pressured formation to the deepest legal band.
+      placements = placements.filter(placement => goalDistance(placement) <= nearestDefensiveDistance + 1);
+    }
     if (placements.length === 0) continue;
     const placement = placements[Math.min(input.positionVariant, placements.length - 1)];
     addDeployment(pick, placement);

@@ -192,7 +192,8 @@ describe("v2 skill engine", () => {
   it("applies preferred skills after filtering the player roster", () => {
     const eyjafjalla = getCombatOperatorByName("艾雅法拉")!;
     const saria = getCombatOperatorByName("塞雷娅")!;
-    const players = new Map([eyjafjalla, saria].map(record => [record.id, {
+    const typhon = getCombatOperatorByName("提丰")!;
+    const players = new Map([eyjafjalla, saria, typhon].map(record => [record.id, {
       id: record.id, name: record.name, rarity: record.rarity, own: true,
       elite: 2, level: 60, potential: 1,
     }] as [string, PlayerOperator]));
@@ -200,9 +201,10 @@ describe("v2 skill engine", () => {
     const facts = extractStageFacts(mapData);
     const picks = buildSquadBeam(facts, buildEncounterContext(mapData, facts), { playerOperators: players }).squads[0];
 
-    expect(picks).toHaveLength(2);
+    expect(picks).toHaveLength(3);
     expect(picks.find(pick => pick.name === "艾雅法拉")?.skill).toBe(2);
     expect(picks.find(pick => pick.name === "塞雷娅")?.skill).toBeGreaterThanOrEqual(1);
+    expect([2, 3]).toContain(picks.find(pick => pick.name === "提丰")?.skill);
   });
 
   it("opens high deployment demand with a vanguard without changing low-demand scoring", () => {
@@ -286,6 +288,7 @@ describe("v2 skill engine", () => {
       stageCode: "V2-1",
       mapData,
       facts: extractStageFacts(mapData),
+      openingPressure: false,
       picks: [testPick("melee", "MELEE", [[0, 1], [0, 2]])],
       positionVariant: 0,
       timingVariant: 0,
@@ -301,6 +304,7 @@ describe("v2 skill engine", () => {
       stageCode: "V2-1",
       mapData,
       facts: extractStageFacts(mapData),
+      openingPressure: false,
       picks: [
         testPick("melee-a", "MELEE"),
         testPick("melee-b", "MELEE"),
@@ -329,6 +333,7 @@ describe("v2 skill engine", () => {
       stageCode: "V2-1",
       mapData,
       facts: extractStageFacts(mapData),
+      openingPressure: false,
       picks: [testPick("melee-a", "MELEE"), testPick("melee-b", "MELEE")],
       positionVariant: 0,
       timingVariant: 0,
@@ -341,6 +346,44 @@ describe("v2 skill engine", () => {
     ]);
   });
 
+  it("builds a pressured opening in the nearest defensive zone before ranged support", () => {
+    const mapData = makeMapData();
+    mapData.routes = [
+      { id: 0, motionMode: "walk", startPosition: { row: 2, col: 0 }, checkpoints: [{ row: 2, col: 2 }], endPosition: { row: 0, col: 6 } },
+      { id: 1, motionMode: "walk", startPosition: { row: 2, col: 0 }, checkpoints: [{ row: 2, col: 2 }], endPosition: { row: 4, col: 6 } },
+    ];
+    mapData.deploymentPoints = [
+      { row: 2, col: 2, buildableType: "melee" },
+      { row: 1, col: 5, buildableType: "melee" },
+      { row: 2, col: 5, buildableType: "melee" },
+      { row: 0, col: 5, buildableType: "melee" },
+      { row: 4, col: 5, buildableType: "melee" },
+      { row: 2, col: 4, buildableType: "ranged" },
+    ];
+    const built = buildCandidate({
+      stageCode: "V2-1",
+      mapData,
+      facts: extractStageFacts(mapData),
+      openingPressure: true,
+      picks: [
+        testPick("先锋", "MELEE", [[0, 0]], { role: "vanguard" }),
+        testPick("高台", "RANGED", [[0, 1], [-2, 1], [2, 1]]),
+        testPick("上路主坦", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
+        testPick("下路主坦", "MELEE", [[0, 0]], { role: "tank", subProfession: "guardian" }),
+        testPick("近卫", "MELEE"),
+      ],
+      positionVariant: 0,
+      timingVariant: 0,
+      options: {},
+    });
+    const deploys = built.script.actions.filter(action => action.type === "Deploy");
+
+    expect(deploys.map(action => action.name)).toEqual(["先锋", "上路主坦", "下路主坦", "高台", "近卫"]);
+    expect(deploys[0].location).not.toEqual([2, 2]);
+    expect(deploys.slice(1, 3).map(action => action.location)).toEqual(expect.arrayContaining([[0, 5], [4, 5]]));
+    expect(deploys[4].location).not.toEqual([2, 2]);
+  });
+
   it("retires a temporary vanguard only when its reserve can deploy", () => {
     const mapData = makeMapData();
     mapData.options.characterLimit = 2;
@@ -350,7 +393,7 @@ describe("v2 skill engine", () => {
       { row: 2, col: 4, buildableType: "all" },
     ];
     const built = buildCandidate({
-      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData),
+      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData), openingPressure: false,
       picks: [
         testPick("先锋", "MELEE", [[0, 0]], { role: "vanguard", cost: 5 }),
         testPick("主力", "MELEE", [[0, 0]], { cost: 7 }),
@@ -375,7 +418,7 @@ describe("v2 skill engine", () => {
     mapData.options.characterLimit = 1;
     mapData.deploymentPoints = [{ row: 2, col: 2, buildableType: "all" }];
     const built = buildCandidate({
-      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData),
+      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData), openingPressure: false,
       picks: [testPick("快活", "MELEE", [[0, 0]], {
         role: "specialist", subProfession: "executor", cost: 6, skillDuration: 20, respawnTime: 16,
       })],
@@ -395,7 +438,7 @@ describe("v2 skill engine", () => {
     mapData.options.characterLimit = 1;
     mapData.deploymentPoints = [{ row: 2, col: 2, buildableType: "all" }];
     const built = buildCandidate({
-      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData),
+      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData), openingPressure: false,
       picks: [testPick("未知冷却快活", "MELEE", [[0, 0]], {
         role: "specialist", subProfession: "executor", skillDuration: 20,
       })],
@@ -415,7 +458,7 @@ describe("v2 skill engine", () => {
       { row: 2, col: 2, buildableType: "melee" },
     ];
     const built = buildCandidate({
-      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData),
+      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData), openingPressure: false,
       picks: [testPick("先锋", "MELEE", [[0, 0]], { role: "vanguard" })],
       positionVariant: 0, timingVariant: 0, options: {},
     });
@@ -480,7 +523,8 @@ describe("v2 skill engine", () => {
     const options = { playerOperators: playerOperators() };
     const picks = buildSquadBeam(facts, buildEncounterContext(mapData, facts), options).squads[0];
     const built = buildCandidate({
-      stageCode: "V2-1", mapData, facts, picks, positionVariant: 0, timingVariant: 0, options,
+      stageCode: "V2-1", mapData, facts, openingPressure: false,
+      picks, positionVariant: 0, timingVariant: 0, options,
     });
     const firstRetreat = built.script.actions.findIndex(action => action.type === "Retreat");
     const initialDeploys = built.script.actions.slice(0, firstRetreat < 0 ? undefined : firstRetreat)
