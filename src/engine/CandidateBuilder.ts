@@ -527,9 +527,20 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
         ? [...active.values()].find(deployment => deployment.pick.role === "vanguard"
           && !goalFronts.has(`${deployment.placement.point.row},${deployment.placement.point.col}`))
         : undefined;
-      if (!vanguard) continue;
-      actions.push({ type: "Retreat", name: vanguard.pick.name, costs: Math.round(pick.profile.attributes.cost) });
-      removeActive(vanguard);
+      const ordinary = !isTemporaryPick(pick) && !vanguard
+        ? [...active.values()].find(deployment => !isTemporaryPick(deployment.pick)
+          && deployment.pick.role !== "medic"
+          && preferenceBonus(deployment.pick) === 0
+          && !goalFronts.has(`${deployment.placement.point.row},${deployment.placement.point.col}`))
+          || [...active.values()].find(deployment => !isTemporaryPick(deployment.pick)
+            && deployment.pick.role !== "medic"
+            && !goalFronts.has(`${deployment.placement.point.row},${deployment.placement.point.col}`))
+        : undefined;
+      const outgoing = vanguard || ordinary;
+      if (!outgoing) continue;
+      // ponytail: role/preference rotation only; compare capability loss if rehearsals show harmful swaps.
+      actions.push({ type: "Retreat", name: outgoing.pick.name, costs: Math.round(pick.profile.attributes.cost) });
+      removeActive(outgoing);
     }
     const ranked = rankedPlacements(pick, input.facts)
       .filter(({ point }) => !occupiedPositions.has(`${point.row},${point.col}`))

@@ -415,6 +415,32 @@ describe("v2 skill engine", () => {
     expect(validateMAAProtocol(built.script).valid).toBe(true);
   });
 
+  it("rotates a non-frontline operator when a reserve arrives after the vanguard", () => {
+    const mapData = makeMapData();
+    mapData.options.characterLimit = 2;
+    mapData.deploymentPoints = [
+      { row: 2, col: 5, buildableType: "melee" },
+      { row: 1, col: 3, buildableType: "ranged" },
+      { row: 2, col: 3, buildableType: "melee" },
+    ];
+    const built = buildCandidate({
+      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData), openingPressure: false,
+      picks: [
+        testPick("前线", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
+        testPick("非前线", "RANGED"),
+        testPick("后备", "MELEE", [[0, 0]], { cost: 20 }),
+      ],
+      positionVariant: 0, timingVariant: 0, options: {},
+    });
+
+    expect(built.script.actions.map(action => [action.type, action.name])).toEqual([
+      ["SpeedUp", undefined], ["Deploy", "前线"], ["Deploy", "非前线"],
+      ["Retreat", "非前线"], ["Deploy", "后备"], ["SkillDaemon", undefined],
+    ]);
+    expect(built.script.actions[3]).toMatchObject({ costs: 20 });
+    expect(maximumActive(built.script.actions)).toBeLessThanOrEqual(mapData.options.characterLimit);
+  });
+
   it("retires and redeploys an executor using its actual timing", () => {
     const mapData = makeMapData();
     mapData.options.characterLimit = 1;
