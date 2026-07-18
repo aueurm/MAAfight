@@ -204,7 +204,7 @@ active.delete(vanguard.pick.operatorId);
 occupiedPositions.delete(String(vanguard.placement.point.row) + "," + String(vanguard.placement.point.col));
 ~~~
 
-下一条动作必须是已有的 Deploy(nextPick)。候选不含适格先锋时维持既有上场上限，不退其他主力以凑人数。
+下一条动作必须是已有的 Deploy(nextPick)。适格先锋不存在时，后续 Task 5 的普通非前线轮换负责接替。
 
 - [ ] **Step 5: 实现一名快速复活的驻场与二次部署**
 
@@ -274,3 +274,64 @@ Expected: 静态协议有效，候选仅保留在 output/.candidates/。
 - [ ] **Step 4: 只根据本次观察修正一个根因**
 
 若演习发现错误，先保存运行反馈到既有反馈路径，再只修改触发该错误的共享规则，重跑 Task 4 的静态验证与演习。未获真实三星结果的候选不得移动到 output/。
+
+### Task 5: 满员后的普通后备轮换
+
+**Files:**
+- Modify: `src/engine/CandidateBuilder.ts:525-533`
+- Test: `__tests__/EngineV2.test.ts:389-416`
+
+- [ ] **Step 1: 写入失败回归测试**
+
+~~~ts
+it("rotates a non-frontline operator when a reserve arrives after the vanguard", () => {
+  const mapData = makeMapData();
+  mapData.options.characterLimit = 2;
+  mapData.deploymentPoints = [
+    { row: 2, col: 5, buildableType: "melee" },
+    { row: 1, col: 3, buildableType: "ranged" },
+    { row: 2, col: 3, buildableType: "melee" },
+  ];
+  const built = buildCandidate({
+    stageCode: "V2-1", mapData, facts: extractStageFacts(mapData), openingPressure: false,
+    picks: [
+      testPick("前线", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
+      testPick("非前线", "RANGED"),
+      testPick("后备", "MELEE", [[0, 0]], { cost: 20 }),
+    ],
+    positionVariant: 0, timingVariant: 0, options: {},
+  });
+
+  expect(built.script.actions.map(action => [action.type, action.name])).toEqual([
+    ["SpeedUp", undefined], ["Deploy", "前线"], ["Deploy", "非前线"],
+    ["Retreat", "非前线"], ["Deploy", "后备"], ["SkillDaemon", undefined],
+  ]);
+  expect(built.script.actions[3]).toMatchObject({ costs: 20 });
+});
+~~~
+
+- [ ] **Step 2: 运行测试确认旧实现跳过后备**
+
+Run: `npx jest __tests__/EngineV2.test.ts --runInBand`
+
+Expected: FAIL，动作中没有 `Retreat 非前线` 与 `Deploy 后备`。
+
+- [ ] **Step 3: 扩展既有接替选择**
+
+将满员分支中的先锋变量改为同一 `replacement`：先找非蓝门先锋；找不到时依次寻找非蓝门、非医疗、非快活的非偏好单位，再寻找同条件的任意单位。`Retreat.costs` 继续使用下一名后备的实际费用，下一动作仍由现有 `addDeployment` 生成。
+
+- [ ] **Step 4: 运行定向测试、构建和全量测试**
+
+Run: `npx jest __tests__/EngineV2.test.ts --runInBand`
+
+Run: `npm run build:node`
+
+Run: `npm test`
+
+Expected: 全部成功，协议活动人数始终不超过关卡上限。
+
+- [ ] **Step 5: 生成 11-20 v5 并实机演习**
+
+Run: `node dist/index.js generate --stage 11-20 --output output/.candidates/practice-11-20-reserves-v5.json --pretty --new-candidate`
+
+Expected: Mon3tr、斩业星熊、赤刃明霄陈均出现于 Deploy 动作；静态校验通过后在 MuMu 演习观察后期替换。
