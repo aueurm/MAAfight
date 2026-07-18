@@ -597,6 +597,9 @@ export function observeMaaBattle(options: BattleObserverOptions): BattleObservat
       if (isVerifiedSettlement(frame.bgr, frame.sampled)) {
         return finish("settled", { outcome: frame.sampled.outcome, stars: frame.sampled.stars });
       }
+      if (isFailureContinueScreen(frame.bgr)) {
+        return finish("settled", { outcome: "failed", stars: 0 });
+      }
       writeBattleManifest(manifestPath, { status: "observing", frames, frameDir, manifestPath, warnings });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

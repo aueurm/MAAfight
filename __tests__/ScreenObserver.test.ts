@@ -238,6 +238,12 @@ describe("observeMaaBattle", () => {
     return bgr;
   }
 
+  function bgrWithMissionFailure(): Buffer {
+    const bgr = blank();
+    paint(bgr, 150, 360, 255, 255, 255);
+    return bgr;
+  }
+
   function bgrWithPause(): Buffer {
     const bgr = blank();
     paintPauseTitle(bgr);
@@ -270,6 +276,22 @@ describe("observeMaaBattle", () => {
       stars: 2,
       frames: observation.frames,
     });
+  });
+
+  it("records a mission failure terminally without controlling it", () => {
+    let time = 1000;
+    const spawn = mockBattleFrames([bgrWithMissionFailure()]);
+
+    const observation = observeMaaBattle({
+      debugDir,
+      now: () => time,
+      sleep: (milliseconds: number) => { time += milliseconds; },
+      maximumWaitMs: 0,
+    });
+
+    expect(observation).toMatchObject({ status: "settled", outcome: "failed", stars: 0 });
+    expect(observation.frames).toHaveLength(1);
+    expect(spawn.mock.calls.flat().join("\n")).not.toMatch(/Asst|click|powershell/i);
   });
 
   it("does not settle when battle colors only match the star regions", () => {
