@@ -358,7 +358,8 @@ describe("v2 skill engine", () => {
       { row: 2, col: 5, buildableType: "melee" },
       { row: 0, col: 5, buildableType: "melee" },
       { row: 4, col: 5, buildableType: "melee" },
-      { row: 2, col: 4, buildableType: "ranged" },
+      { row: 2, col: 3, buildableType: "ranged" },
+      { row: 1, col: 4, buildableType: "ranged" },
     ];
     const built = buildCandidate({
       stageCode: "V2-1",
@@ -367,7 +368,7 @@ describe("v2 skill engine", () => {
       openingPressure: true,
       picks: [
         testPick("先锋", "MELEE", [[0, 0]], { role: "vanguard" }),
-        testPick("高台", "RANGED", [[0, 1], [-2, 1], [2, 1]]),
+        testPick("高台", "RANGED", [[-2, 2], [-1, 2], [2, 2]]),
         testPick("上路主坦", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
         testPick("下路主坦", "MELEE", [[0, 0]], { role: "tank", subProfession: "guardian" }),
         testPick("近卫", "MELEE"),
@@ -381,6 +382,7 @@ describe("v2 skill engine", () => {
     expect(deploys.map(action => action.name)).toEqual(["先锋", "上路主坦", "下路主坦", "高台", "近卫"]);
     expect(deploys[0].location).not.toEqual([2, 2]);
     expect(deploys.slice(1, 3).map(action => action.location)).toEqual(expect.arrayContaining([[0, 5], [4, 5]]));
+    expect(deploys[3].location).toEqual([2, 3]);
     expect(deploys[4].location).not.toEqual([2, 2]);
   });
 

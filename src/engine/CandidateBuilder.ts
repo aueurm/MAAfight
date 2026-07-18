@@ -543,13 +543,13 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
     let placements = isTemporaryPick(pick)
       ? ranked.filter(({ point }) => !goalFronts.has(`${point.row},${point.col}`))
       : ranked;
-    if (input.openingPressure && pick.profile.subProfession !== "executor"
+    if (input.openingPressure && pick.profile.position === "MELEE" && pick.profile.subProfession !== "executor"
       && placements.length && input.facts.goalCells.length) {
       const goalDistance = (placement: RankedPlacement): number => Math.min(
         ...input.facts.goalCells.map(goal => distance(placement.point, goal))
       );
       const nearestDefensiveDistance = Math.min(...placements.map(goalDistance));
-      // ponytail: one-tile slack keeps variants while bounding the pressured formation to the deepest legal band.
+      // ponytail: one-tile slack keeps variants while bounding pressured melee to the deepest legal band.
       placements = placements.filter(placement => goalDistance(placement) <= nearestDefensiveDistance + 1);
     }
     if (placements.length === 0) continue;
