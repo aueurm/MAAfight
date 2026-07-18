@@ -205,6 +205,49 @@ describe("v2 skill engine", () => {
     expect(picks.find(pick => pick.name === "塞雷娅")?.skill).toBeGreaterThanOrEqual(1);
   });
 
+  it("opens high deployment demand with a vanguard without changing low-demand scoring", () => {
+    const records = ["德克萨斯", "佩佩", "塞雷娅"].map(name => getCombatOperatorByName(name)!);
+    const players = new Map(records.map(record => [record.id, {
+      id: record.id, name: record.name, rarity: record.rarity, own: true,
+      elite: 2, level: 60, potential: 1,
+    }] as [string, PlayerOperator]));
+    const highMap = makeMapData();
+    highMap.deploymentPoints = [
+      { row: 2, col: 2, buildableType: "all" },
+      { row: 2, col: 3, buildableType: "all" },
+    ];
+    const highFacts = extractStageFacts(highMap);
+    const highEncounter = buildEncounterContext(highMap, highFacts);
+    const highPicks = buildSquadBeam(highFacts, highEncounter, { playerOperators: players }).squads[0];
+
+    expect(highEncounter.demand.deployment).toBeGreaterThanOrEqual(0.5);
+    expect(highPicks[0].role).toBe("vanguard");
+
+    const lowMap = makeMapData();
+    lowMap.options.initialCost = 30;
+    lowMap.deploymentPoints = [
+      { row: 2, col: 1, buildableType: "all" },
+      { row: 2, col: 2, buildableType: "all" },
+    ];
+    lowMap.routes = [{
+      id: 0,
+      motionMode: "walk",
+      startPosition: { row: 2, col: 0 },
+      checkpoints: [{ row: 2, col: 1 }],
+      endPosition: { row: 2, col: 2 },
+    }];
+    lowMap.spawnTimeline = [
+      { time: 0, enemyId: "enemy", count: 1, routeIndex: 0 },
+      { time: 15, enemyId: "enemy", count: 9, routeIndex: 0 },
+    ];
+    const lowFacts = extractStageFacts(lowMap);
+    const lowEncounter = buildEncounterContext(lowMap, lowFacts);
+    const lowPicks = buildSquadBeam(lowFacts, lowEncounter, { playerOperators: players }).squads[0];
+
+    expect(lowEncounter.demand.deployment).toBeLessThan(0.5);
+    expect(lowPicks[0].role).not.toBe("vanguard");
+  });
+
   it("excludes self-disabling skills while retaining the other skill choices", () => {
     const exclusions = new Map<string, { blocked: number[]; choices: number }>([
       ["阿米娅", { blocked: [2, 3], choices: 1 }],

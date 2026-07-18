@@ -261,6 +261,10 @@ export function buildSquadBeam(
   options: EngineOptions
 ): SquadBeamResult {
   const available = pickOptions(options);
+  // ponytail: one threshold gates early vanguard starts; calibrate per-stage only if rehearsals show false positives.
+  const openingVanguards = encounter.demand.deployment >= 0.5
+    ? available.filter(pick => pick.role === "vanguard")
+    : [];
   const uniqueOperators = new Set(available.map(pick => pick.operatorId)).size;
   const targetSize = Math.min(12, uniqueOperators);
   const deploymentCoreSize = Math.min(9, facts.characterLimit || 9, facts.deploymentPoints.length, targetSize);
@@ -276,7 +280,8 @@ export function buildSquadBeam(
     const expanded: SquadState[] = [];
     for (const state of beam) {
       const used = new Set(state.picks.map(pick => pick.operatorId));
-      for (const pick of available) {
+      const slotOptions = slot === 0 && openingVanguards.length ? openingVanguards : available;
+      for (const pick of slotOptions) {
         if (used.has(pick.operatorId)) continue;
         const addition = capabilityCache.get(`${pick.operatorId}:${pick.skill}`)!;
         const picks = [...state.picks, pick];
