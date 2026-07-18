@@ -24,6 +24,12 @@ const PREFERRED_SKILLS: Readonly<Record<string, readonly number[]>> = {
   "纯烬艾雅法拉": [1], "遥": [2], "塑心": [1], "新约能天使": [2, 3],
   "阿斯卡纶": [1], "歌蕾蒂娅": [1],
 };
+// ponytail: static list until the combat model exposes self-disable effects; replace it with that explicit field when available.
+const SELF_DISABLE_SKILLS: Readonly<Record<string, readonly number[]>> = {
+  "阿米娅": [2, 3], "幽灵鲨": [2], "雷蛇": [2], "远山": [2],
+  "布洛卡": [2], "断罪者": [2], "森蚺": [3], "蚀清": [1],
+  "极光": [2], "洛洛": [2], "苍苔": [2],
+};
 const PREFERRED_OPERATORS = new Set([...Object.keys(PREFERRED_SKILLS), "斩业星熊", "塞雷娅", "酒神"]);
 // ponytail: fixed preference bonus; add feedback-calibrated weights only after rehearsal data proves it necessary.
 const PREFERENCE_BONUS = 8.5;
@@ -222,7 +228,9 @@ function pickOptions(options: EngineOptions): EnginePick[] {
   return eligibleOperators(options).flatMap(({ record, player }) => {
     const skillCount = Math.max(1, record.skills.filter(skill => skill.unlockPhase <= 2).length);
     const preferredSkills = PREFERRED_SKILLS[record.name];
+    const excludedSkills = SELF_DISABLE_SKILLS[record.name];
     return Array.from({ length: skillCount }, (_, index) => index + 1)
+      .filter(skill => !excludedSkills || !excludedSkills.includes(skill))
       .filter(skill => !preferredSkills || preferredSkills.includes(skill))
       .map(skill => ({
         operatorId: record.id,

@@ -205,6 +205,37 @@ describe("v2 skill engine", () => {
     expect(picks.find(pick => pick.name === "塞雷娅")?.skill).toBeGreaterThanOrEqual(1);
   });
 
+  it("excludes self-disabling skills while retaining the other skill choices", () => {
+    const exclusions = new Map<string, { blocked: number[]; choices: number }>([
+      ["阿米娅", { blocked: [2, 3], choices: 1 }],
+      ["幽灵鲨", { blocked: [2], choices: 1 }],
+      ["雷蛇", { blocked: [2], choices: 1 }],
+      ["远山", { blocked: [2], choices: 1 }],
+      ["布洛卡", { blocked: [2], choices: 1 }],
+      ["断罪者", { blocked: [2], choices: 1 }],
+      ["森蚺", { blocked: [3], choices: 2 }],
+      ["蚀清", { blocked: [1], choices: 1 }],
+      ["极光", { blocked: [2], choices: 1 }],
+      ["洛洛", { blocked: [2], choices: 1 }],
+      ["苍苔", { blocked: [2], choices: 1 }],
+    ]);
+    const mapData = makeMapData();
+    const facts = extractStageFacts(mapData);
+    const encounter = buildEncounterContext(mapData, facts);
+
+    for (const [name, { blocked, choices }] of exclusions) {
+      const record = getCombatOperatorByName(name)!;
+      const players = new Map([[record.id, {
+        id: record.id, name: record.name, rarity: record.rarity, own: true,
+        elite: 2, level: 60, potential: 1,
+      }] as [string, PlayerOperator]]);
+      const beam = buildSquadBeam(facts, encounter, { playerOperators: players });
+
+      expect(beam.expandedStates).toBe(choices);
+      expect(blocked).not.toContain(beam.squads[0][0]?.skill);
+    }
+  });
+
   it("faces a melee blocker toward the highest-threat incoming route", () => {
     const mapData = makeMapData();
     mapData.deploymentPoints = [{ row: 2, col: 2, buildableType: "melee" }];
