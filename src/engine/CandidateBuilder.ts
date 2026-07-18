@@ -30,6 +30,9 @@ const SELF_DISABLE_SKILLS: Readonly<Record<string, readonly number[]>> = {
   "布洛卡": [2], "断罪者": [2], "森蚺": [3], "蚀清": [1],
   "极光": [2], "洛洛": [2], "苍苔": [2],
 };
+// ponytail: explicit until the combat model distinguishes ally healing from self healing and permanent skill effects.
+const SUSTAINED_HEAL_SKILLS: Readonly<Record<string, readonly number[]>> = { "遥": [2] };
+const UNHEALABLE_SUBPROFESSIONS = new Set(["musha", "juggernaut", "reaper"]);
 const PREFERRED_OPERATORS = new Set([...Object.keys(PREFERRED_SKILLS), "斩业星熊", "塞雷娅", "酒神"]);
 // ponytail: fixed preference bonus; add feedback-calibrated weights only after rehearsal data proves it necessary.
 const PREFERENCE_BONUS = 8.5;
@@ -178,6 +181,18 @@ function preferenceBonus(pick: EnginePick): number {
   return PREFERRED_OPERATORS.has(pick.name) ? PREFERENCE_BONUS : 0;
 }
 
+function isSustainedHealer(pick: EnginePick): boolean {
+  return pick.role === "medic" || pick.profile.subProfession === "bard"
+    || pick.profile.subProfession === "guardian"
+      && pick.profile.metrics.healingHps > 0 && pick.profile.skillDuration === 0
+    || Boolean(SUSTAINED_HEAL_SKILLS[pick.name]?.includes(pick.skill));
+}
+
+function needsSustainedHealing(pick: EnginePick): boolean {
+  return pick.profile.position === "MELEE" && !isSustainedHealer(pick)
+    && !UNHEALABLE_SUBPROFESSIONS.has(pick.profile.subProfession || "");
+}
+
 function marginalScore(
   previous: CapabilityDemand,
   addition: CapabilityDemand,
@@ -265,6 +280,9 @@ export function buildSquadBeam(
   const openingVanguards = encounter.demand.deployment >= 0.5
     ? available.filter(pick => pick.role === "vanguard")
     : [];
+  const openingHealers = encounter.demand.deployment >= 0.5 && facts.groundRouteCount > 0
+    ? available.filter(pick => pick.profile.position === "RANGED" && isSustainedHealer(pick))
+    : [];
   const uniqueOperators = new Set(available.map(pick => pick.operatorId)).size;
   const targetSize = Math.min(12, uniqueOperators);
   const deploymentCoreSize = Math.min(9, facts.characterLimit || 9, facts.deploymentPoints.length, targetSize);
@@ -280,7 +298,8 @@ export function buildSquadBeam(
     const expanded: SquadState[] = [];
     for (const state of beam) {
       const used = new Set(state.picks.map(pick => pick.operatorId));
-      const slotOptions = slot === 0 && openingVanguards.length ? openingVanguards : available;
+      const slotOptions = slot === 0 && openingVanguards.length ? openingVanguards
+        : slot === 1 && openingHealers.length ? openingHealers : available;
       for (const pick of slotOptions) {
         if (used.has(pick.operatorId)) continue;
         const addition = capabilityCache.get(`${pick.operatorId}:${pick.skill}`)!;
@@ -431,6 +450,14 @@ function goalFrontByPoint(mapData: MapData): Map<string, string> {
   return fronts;
 }
 
+function coversPoint(deployment: ActiveDeployment, point: DeploymentPoint): boolean {
+  return deployment.pick.profile.range.some(offset => {
+    const [row, col] = rotateDirection(offset, deployment.placement.direction);
+    return deployment.placement.point.row + row === point.row
+      && deployment.placement.point.col + col === point.col;
+  });
+}
+
 function placementPreference(
   pick: EnginePick,
   placement: RankedPlacement,
@@ -446,10 +473,7 @@ function placementPreference(
       + Number(placement.direction === preferredIncomingDirection(placement.point, mapData, threats)) * MELEE_INCOMING_BONUS;
   }
   if (meleeBlocks.length === 0) return 0;
-  const coveredBlocks = meleeBlocks.filter(block => pick.profile.range.some(offset => {
-    const [row, col] = rotateDirection(offset, placement.direction);
-    return placement.point.row + row === block.row && placement.point.col + col === block.col;
-  })).length;
+  const coveredBlocks = meleeBlocks.filter(block => coversPoint({ pick, placement }, block)).length;
   if (coveredBlocks === 0) return 0;
   // ponytail: earlier melee cells stand in for blocked enemies; add timed occupancy only if rehearsals show this static proxy is insufficient.
   return coveredBlocks * RANGED_BLOCK_COVERAGE_BONUS
@@ -484,13 +508,17 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       ...permanentMelee.filter(pick => !LANE_HOLD_SUBPROFESSIONS.has(pick.profile.subProfession || "")),
     ].slice(0, frontlineCount)
     : [];
-  const prioritizedIds = new Set([openingVanguard, ...frontlinePicks]
+  const openingHealers = input.openingPressure
+    ? input.picks.filter(pick => pick.profile.position === "RANGED" && isSustainedHealer(pick))
+    : [];
+  const prioritizedIds = new Set([openingVanguard, ...frontlinePicks, ...openingHealers]
     .filter((pick): pick is EnginePick => Boolean(pick))
     .map(pick => pick.operatorId));
   const deploymentPicks = input.openingPressure
     ? [
       ...(openingVanguard ? [openingVanguard] : []),
       ...frontlinePicks,
+      ...openingHealers,
       ...input.picks.filter(pick => !prioritizedIds.has(pick.operatorId)),
     ]
     : input.picks;
@@ -529,11 +557,11 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
         : undefined;
       const ordinary = !isTemporaryPick(pick) && !vanguard
         ? [...active.values()].find(deployment => !isTemporaryPick(deployment.pick)
-          && deployment.pick.role !== "medic"
+          && !isSustainedHealer(deployment.pick)
           && preferenceBonus(deployment.pick) === 0
           && !goalFronts.has(`${deployment.placement.point.row},${deployment.placement.point.col}`))
           || [...active.values()].find(deployment => !isTemporaryPick(deployment.pick)
-            && deployment.pick.role !== "medic"
+            && !isSustainedHealer(deployment.pick)
             && !goalFronts.has(`${deployment.placement.point.row},${deployment.placement.point.col}`))
         : undefined;
       const outgoing = vanguard || ordinary;
@@ -554,6 +582,12 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
     let placements = isTemporaryPick(pick)
       ? ranked.filter(({ point }) => !goalFronts.has(`${point.row},${point.col}`))
       : ranked;
+    if (pick.profile.position === "RANGED" && isSustainedHealer(pick) && meleeBlocks.length && placements.length) {
+      const covered = (placement: RankedPlacement): number => meleeBlocks
+        .filter(block => coversPoint({ pick, placement }, block)).length;
+      const maximumCovered = Math.max(...placements.map(covered));
+      if (maximumCovered > 0) placements = placements.filter(placement => covered(placement) === maximumCovered);
+    }
     if (input.openingPressure && pick.profile.position === "MELEE" && pick.profile.subProfession !== "executor"
       && placements.length && input.facts.goalCells.length) {
       const goalDistance = (placement: RankedPlacement): number => Math.min(
@@ -562,6 +596,12 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       const nearestDefensiveDistance = Math.min(...placements.map(goalDistance));
       // ponytail: one-tile slack keeps variants while bounding pressured melee to the deepest legal band.
       placements = placements.filter(placement => goalDistance(placement) <= nearestDefensiveDistance + 1);
+    }
+    const healers = [...active.values()].filter(deployment => isSustainedHealer(deployment.pick));
+    if (input.openingPressure && needsSustainedHealing(pick) && healers.length && placements.length) {
+      const covered = placements.filter(placement => healers.some(healer => coversPoint(healer, placement.point)));
+      // ponytail: keep a legal uncovered fallback when the roster or map has no covered tile.
+      if (covered.length) placements = covered;
     }
     if (placements.length === 0) continue;
     const placement = placements[Math.min(input.positionVariant, placements.length - 1)];

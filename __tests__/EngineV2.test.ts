@@ -4,6 +4,7 @@ import { extractStageFacts, generateCopilotScript } from "../src/engine";
 import { buildCandidate, buildSquadBeam } from "../src/engine/CandidateBuilder";
 import { getCombatOperatorByName, getCombatModelInfo, listCombatOperators, resolveOperatorProfile } from "../src/engine/CombatModel";
 import { buildEncounterContext } from "../src/engine/EncounterContext";
+import { rotateDirection } from "../src/engine/helpers";
 import { validateMAAProtocol } from "../src/copilot/MAAProtocolValidator";
 import type { MapData, PlayerOperator } from "../src/types";
 import type { EnginePick } from "../src/engine/types";
@@ -73,6 +74,7 @@ function playerOperators(count = 24): Map<string, PlayerOperator> {
 interface TestPickOptions {
   role?: EnginePick["role"];
   subProfession?: string | null;
+  skill?: number;
   cost?: number;
   skillDuration?: number;
   respawnTime?: number;
@@ -89,7 +91,7 @@ function testPick(
     operatorId: name,
     name,
     role,
-    skill: 1,
+    skill: options.skill ?? 1,
     skillRank: 10,
     profile: {
       operatorId: name,
@@ -98,7 +100,7 @@ function testPick(
       subProfession: options.subProfession ?? null,
       position,
       damageType: "physical",
-      skill: 1,
+      skill: options.skill ?? 1,
       skillRank: 10,
       skillDuration: options.skillDuration ?? 0,
       respawnTime: options.respawnTime ?? 0,
@@ -358,9 +360,11 @@ describe("v2 skill engine", () => {
       { row: 2, col: 5, buildableType: "melee" },
       { row: 0, col: 5, buildableType: "melee" },
       { row: 4, col: 5, buildableType: "melee" },
+      { row: 2, col: 5, buildableType: "melee" },
       { row: 2, col: 3, buildableType: "ranged" },
       { row: 1, col: 4, buildableType: "ranged" },
     ];
+    const sustainedRange: Array<[number, number]> = [[-2, 2], [-1, 2], [0, 2], [2, 2]];
     const built = buildCandidate({
       stageCode: "V2-1",
       mapData,
@@ -372,6 +376,7 @@ describe("v2 skill engine", () => {
         testPick("上路主坦", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
         testPick("下路主坦", "MELEE", [[0, 0]], { role: "tank", subProfession: "guardian" }),
         testPick("近卫", "MELEE"),
+        testPick("遥", "RANGED", sustainedRange, { role: "support", skill: 2 }),
       ],
       positionVariant: 0,
       timingVariant: 0,
@@ -379,11 +384,18 @@ describe("v2 skill engine", () => {
     });
     const deploys = built.script.actions.filter(action => action.type === "Deploy");
 
-    expect(deploys.map(action => action.name)).toEqual(["先锋", "上路主坦", "下路主坦", "高台", "近卫"]);
+    expect(deploys.map(action => action.name)).toEqual(["先锋", "上路主坦", "下路主坦", "遥", "高台", "近卫"]);
     expect(deploys[0].location).not.toEqual([2, 2]);
     expect(deploys.slice(1, 3).map(action => action.location)).toEqual(expect.arrayContaining([[0, 5], [4, 5]]));
     expect(deploys[3].location).toEqual([2, 3]);
-    expect(deploys[4].location).not.toEqual([2, 2]);
+    expect(deploys[5].location).not.toEqual([2, 2]);
+    for (const action of [...deploys.slice(1, 3), deploys[5]]) {
+      expect(sustainedRange.some(offset => {
+        const [row, col] = rotateDirection(offset, deploys[3].direction!);
+        return deploys[3].location![0] + row === action.location![0]
+          && deploys[3].location![1] + col === action.location![1];
+      })).toBe(true);
+    }
   });
 
   it("retires a temporary vanguard only when its reserve can deploy", () => {
