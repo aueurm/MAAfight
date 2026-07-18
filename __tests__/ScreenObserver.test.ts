@@ -193,30 +193,33 @@ describe("observeMaaBattle", () => {
     fs.rmSync(debugDir, { recursive: true, force: true });
   });
 
-  function adbResult(bgr: Buffer) {
-    const pixels = bgr.length / 3;
-    const raw = Buffer.alloc(12 + pixels * 4);
-    raw.writeUInt32LE(1280, 0);
-    raw.writeUInt32LE(720, 4);
+  function adbResult(bgr: Buffer, sourceWidth = width, sourceHeight = height, headerBytes = 12) {
+    const raw = Buffer.alloc(headerBytes + sourceWidth * sourceHeight * 4);
+    raw.writeUInt32LE(sourceWidth, 0);
+    raw.writeUInt32LE(sourceHeight, 4);
     raw.writeUInt32LE(1, 8);
-    for (let pixel = 0; pixel < pixels; pixel++) {
-      const source = pixel * 3;
-      const target = 12 + pixel * 4;
-      raw[target] = bgr[source + 2];
-      raw[target + 1] = bgr[source + 1];
-      raw[target + 2] = bgr[source];
-      raw[target + 3] = 255;
+    for (let y = 0; y < sourceHeight; y++) {
+      const bgrY = Math.floor(y * height / sourceHeight);
+      for (let x = 0; x < sourceWidth; x++) {
+        const bgrX = Math.floor(x * width / sourceWidth);
+        const source = (bgrY * width + bgrX) * 3;
+        const target = 12 + (y * sourceWidth + x) * 4;
+        raw[target] = bgr[source + 2];
+        raw[target + 1] = bgr[source + 1];
+        raw[target + 2] = bgr[source];
+        raw[target + 3] = 255;
+      }
     }
     return { stdout: raw, stderr: Buffer.alloc(0), status: 0, signal: null, output: [null, raw, Buffer.alloc(0)], pid: 1 } as never;
   }
 
-  function mockBattleFrames(frames: Buffer[]) {
+  function mockBattleFrames(frames: Buffer[], sourceWidth = width, sourceHeight = height, headerBytes = 12) {
     return jest.spyOn(childProcess, "spawnSync").mockImplementation((command, args) => {
       const bgr = frames.shift();
       if (!bgr) throw new Error("unexpected battle capture");
       if (command !== "C:\\MAA\\adb.exe") throw new Error(`unexpected capture command: ${command}`);
       expect(args).toEqual(["-s", "127.0.0.1:16384", "exec-out", "screencap"]);
-      return adbResult(bgr);
+      return adbResult(bgr, sourceWidth, sourceHeight, headerBytes);
     });
   }
 
@@ -241,9 +244,9 @@ describe("observeMaaBattle", () => {
     return bgr;
   }
 
-  it("saves frames until the settlement screen", () => {
+  it("normalizes a 1600x900 capture and saves frames until the settlement screen", () => {
     let time = 1000;
-    const spawn = mockBattleFrames([blank(), bgrWithSettlement(2)]);
+    const spawn = mockBattleFrames([blank(), bgrWithSettlement(2)], 1600, 900, 16);
 
     const observation = observeMaaBattle({
       debugDir,

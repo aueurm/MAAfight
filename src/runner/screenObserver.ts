@@ -417,17 +417,23 @@ function decodeAdbScreencap(raw: Buffer): Buffer {
   const width = raw.readUInt32LE(0);
   const height = raw.readUInt32LE(4);
   const format = raw.readUInt32LE(8);
-  const expectedBytes = 12 + width * height * 4;
-  if (width !== WIDTH || height !== HEIGHT || format !== 1 || raw.length !== expectedBytes) {
+  const imageBytes = width * height * 4;
+  const headerBytes = raw.length - imageBytes;
+  // ponytail: normalize Android's 12/16-byte RGBA headers and 16:9 frames for the fixed-coordinate recognizer.
+  if (width * HEIGHT !== height * WIDTH || format !== 1 || (headerBytes !== 12 && headerBytes !== 16)) {
     throw new Error(`unsupported adb screencap: ${width}x${height}, format ${format}, ${raw.length} bytes`);
   }
   const bgr = Buffer.alloc(SCREEN_BYTES);
-  for (let pixel = 0; pixel < width * height; pixel++) {
-    const source = 12 + pixel * 4;
-    const target = pixel * BYTES_PER_PIXEL;
-    bgr[target] = raw[source + 2];
-    bgr[target + 1] = raw[source + 1];
-    bgr[target + 2] = raw[source];
+  for (let y = 0; y < HEIGHT; y++) {
+    const sourceY = Math.floor(y * height / HEIGHT);
+    for (let x = 0; x < WIDTH; x++) {
+      const sourceX = Math.floor(x * width / WIDTH);
+      const source = headerBytes + (sourceY * width + sourceX) * 4;
+      const target = (y * WIDTH + x) * BYTES_PER_PIXEL;
+      bgr[target] = raw[source + 2];
+      bgr[target + 1] = raw[source + 1];
+      bgr[target + 2] = raw[source];
+    }
   }
   return bgr;
 }
