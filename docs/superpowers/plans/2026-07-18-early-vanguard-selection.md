@@ -13,6 +13,8 @@
 ## File structure
 
 - Modify: `src/engine/CandidateBuilder.ts` — 为高部署需求 Beam 首槽限定现有先锋候选。
+- Modify: `src/engine/types.ts` — 将已计算的高开局压力判断传给候选构造。
+- Modify: `src/engine/index.ts` — 复用同一 `deployment` demand，不创建第二套压力阈值。
 - Modify: `__tests__/EngineV2.test.ts` — 覆盖高需求强制先锋和低需求不改变评分两个分支。
 
 ### Task 1: 先锋首槽约束
@@ -107,3 +109,31 @@ Expected: 输出合法脚本，第一名 `opers` 与第一条 `Deploy` 均为先
 git add src/engine/CandidateBuilder.ts __tests__/EngineV2.test.ts
 git commit -m "fix(engine): require vanguard for early pressure"
 ```
+
+### Task 2: 高压力开局防线纵深
+
+**Files:**
+- Modify: `__tests__/EngineV2.test.ts`
+- Modify: `src/engine/types.ts`
+- Modify: `src/engine/index.ts`
+- Modify: `src/engine/CandidateBuilder.ts`
+
+- [ ] **Step 1: 写入失败回归测试**
+
+构造双蓝门高压力地图，输入顺序为“先锋、高台、两名长期站场近战”，断言输出部署顺序为“先锋、两名前线、高台”，先锋选择非最终前线中距蓝门最近的一圈，而不是敌方入口公共交叉点。同时断言提丰只保留 S2/S3。
+
+- [ ] **Step 2: 复用统一压力判断**
+
+由 `generateCopilotScript` 把 `encounter.demand.deployment >= 0.5` 作为 `openingPressure` 传入 `buildCandidate`，避免部署阶段另造阈值。
+
+- [ ] **Step 3: 建立防线后再部署高台**
+
+高压力时将部署迭代顺序调整为首发先锋、每个地面蓝门的一名非临时近战、其余原顺序。长期站场近战优先 `LANE_HOLD_SUBPROFESSIONS`。
+
+- [ ] **Step 4: 限制首发先锋的防御纵深**
+
+在排除最终蓝门前格后，计算所有剩余合法点到最近蓝门的最小距离，只保留 `最小距离 + 1` 圈内点位，再沿用原评分与位置变体排序。
+
+- [ ] **Step 5: 验证并提交**
+
+运行定向测试、TypeScript 构建、全量 Jest；重新生成并实机演习 11-20。
