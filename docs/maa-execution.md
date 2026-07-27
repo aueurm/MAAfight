@@ -33,7 +33,7 @@ MAA 回调中的 `SubTaskExtraInfo.what = "StageDrops"` 包含 `stage`、`drops`
 
 当前 `run observe-screen` 只用于 Copilot 已结束后的结果观察：复用 MaaCore `AsstAsyncScreencap` + `AsstGetImageBgr` / `AsstGetImage` 获取当前截图，不直接调用 `adb shell screencap`。Copilot 的动作队列可能先于战斗结算完成，观察器会在未识别到结果页时每 5 秒重试、最多等待 90 秒。它同时校验 1280x720 结算页固定标题区域和星星区域颜色，判断 `stars = 0 / 1 / 2 / 3`；到期仍无法识别时保留 `outcome = "unknown"`。每次观察保留最终 debug screenshot 和 `samples.json`，用于后续校准 ROI 与阈值。
 
-当前 `run observe-battle` 观察已经开始的演习：每 5 秒通过 ADB 原始 `exec-out screencap` 保存 1280x720 BMP，最多 10 分钟，只有同时命中结果标题和星星才停止。帧和 `manifest.json` 保留在 `.maafight/battle-observer/<runId>/`，用于人工查看漏怪前后的路线和站位。它只读取画面，不创建 MaaCore 连接、不发送点击、不启动任务、不识别敌人计数、不修改候选评分，也不写入学习反馈；失败和超时仍保留已采样帧并以非零退出码返回。
+当前 `run observe-battle` 只观察已经进入战斗画面的演习：每 5 秒通过 ADB 原始 `exec-out screencap` 保存 1280x720 BMP，最多 10 分钟；结果标题与星星同时命中时记录结算，也识别战斗失败提示页。帧和 `manifest.json` 保留在 `.maafight/battle-observer/<runId>/`，用于人工查看漏怪前后的路线和站位。它只读取画面，不创建 MaaCore 连接、不发送点击、不启动任务、不识别敌人计数、不修改候选评分，也不写入学习反馈。不要在关卡导航或编队阶段提前启动：这些画面不属于识别契约，产生的 manifest 不能作为战斗结果；失败和超时仍保留已采样帧并以非零退出码返回。
 
 当前 `scripts/start-mumu.ps1` 复用 MAA GUI 的 `Start.EmulatorPath` 和 `Start.OpenEmulatorAfterLaunch` 配置，可在 `npm run gui` 前启动 MuMu；MAA 路径优先来自 GUI 保存的 `maaPath`、`MAAFIGHT_MAA_PATH` 或脚本参数。`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口：先执行 MAA 日常 `StartUp` 唤醒明日方舟，再通过 MAA `Fight times=0` 复用关卡导航，确认 1280x720 关卡详情页后，若代理指挥开关亮起则先关闭，再点击演习按钮。传入生成脚本路径时，它会继续追加 MAA `Copilot` 任务执行该作业文件，并在结束后复用截图观察器读取结算星级。
 

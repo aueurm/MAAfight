@@ -5,6 +5,7 @@ import * as probe from "../src/runner/probe";
 import {
   isFailureContinueScreen,
   isSettlementTitleScreen,
+  observeMaaScreen,
   observeMaaBattle,
   pollUntilRecognized,
   sampleSettlementStars,
@@ -133,7 +134,7 @@ describe("sampleSettlementStars", () => {
     });
   });
 
-  it("recognizes the mission-failed title before allowing a result-screen click", () => {
+  it("recognizes the mission-failed title as a terminal result", () => {
     const bgr = blank();
     paint(bgr, 150, 360, 255, 255, 255);
 
@@ -169,6 +170,61 @@ describe("pollUntilRecognized", () => {
       sleep: milliseconds => { now += milliseconds; },
     })).toMatchObject({ recognized: true, stars: 0 });
     expect(capture).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("observeMaaScreen", () => {
+  let debugDir: string;
+
+  beforeEach(() => {
+    debugDir = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-screen-observer-"));
+    jest.spyOn(probe, "connectMaaEnvironment").mockReturnValue({
+      maaFound: true,
+      maaPath: "C:\\MAA\\MAA.exe",
+      maaInstallDir: "C:\\MAA",
+      maaCorePath: "C:\\MAA\\MaaCore.dll",
+      maaCoreVersion: "test",
+      adbPath: "C:\\MAA\\adb.exe",
+      address: "127.0.0.1:16384",
+      connectConfig: "MuMuEmulator12",
+      connectAttempted: true,
+      connectCommand: null,
+      connectExitCode: 0,
+      connectSuccess: true,
+      asstConnected: true,
+      setUserDir: true,
+      loadResource: true,
+      warnings: [],
+    });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    fs.rmSync(debugDir, { recursive: true, force: true });
+  });
+
+  it("captures a settlement screen without issuing an input command", () => {
+    const bgr = blank();
+    paint(bgr, 102, 322, 240, 210, 50);
+    paint(bgr, 174, 322, 240, 210, 50);
+    paint(bgr, 246, 322, 240, 210, 50);
+    paintSettlementTitle(bgr);
+    const spawn = jest.spyOn(childProcess, "spawnSync").mockImplementation((_command, args) => {
+      const script = String(args?.[args.length - 1] || "");
+      const bgrPath = script.match(/\$bgrPath = '([^']+)'/)?.[1];
+      if (!bgrPath) throw new Error("screen observer did not declare a BGR output path");
+      fs.mkdirSync(path.dirname(bgrPath), { recursive: true });
+      fs.writeFileSync(bgrPath, bgr);
+      const stdout = JSON.stringify({ maaCoreVersion: "test", bgrPath, bgrBytes: bgr.length, screenshotBytes: 0 });
+      return { stdout, stderr: "", status: 0, signal: null, output: [null, stdout, ""], pid: 1 } as never;
+    });
+
+    expect(observeMaaScreen({ debugDir, userDir: path.join(debugDir, "maa-core") })).toMatchObject({
+      recognized: true,
+      outcome: "clear",
+      stars: 3,
+    });
+    expect(spawn.mock.calls.flat().join("\n")).not.toContain("AsstAsyncClick");
   });
 });
 

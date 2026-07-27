@@ -441,7 +441,7 @@ describe("run command", () => {
     }
   });
 
-  it("clicks through a failed result screen before sampling settlement stars", async () => {
+  it("records a failed result screen without changing it", async () => {
     const file = writeScript(script());
     const debugDir = path.join(cwd, "screen-debug");
     const maaDir = path.join(cwd, "maa");
@@ -470,7 +470,7 @@ describe("run command", () => {
           const bgrPath = path.join(debugDir, "screen.bgr");
           const screenshotPath = path.join(debugDir, "screenshot.png");
           fs.mkdirSync(debugDir, { recursive: true });
-          fs.writeFileSync(bgrPath, captureScripts.length === 1 ? failedResultBgr() : bgrWithStars(0));
+          fs.writeFileSync(bgrPath, failedResultBgr());
           fs.writeFileSync(screenshotPath, "png", "utf8");
           return {
             stdout: JSON.stringify({
@@ -515,10 +515,8 @@ describe("run command", () => {
       stars: 0,
       source: "screen_observer",
     });
-    expect(captureScripts).toHaveLength(2);
-    expect(captureScripts[0]).toContain("$clickX = -1");
-    expect(captureScripts[1]).toContain("$clickX = 640");
-    expect(captureScripts[1]).toContain("$clickY = 650");
+    expect(captureScripts).toHaveLength(1);
+    expect(captureScripts[0]).not.toContain("AsstAsyncClick");
     expect(JSON.parse(fs.readFileSync(path.join(debugDir, "samples.json"), "utf8"))).toMatchObject({
       outcome: "failed",
       stars: 0,
