@@ -133,11 +133,11 @@ function makeBlockCoverageMap(): MapData {
   return mapData;
 }
 
-function maximumActive(actions: Array<{ type: string }>): number {
+function maximumActive(actions: Array<{ type: string; cooling?: number }>): number {
   let active = 0;
   let maximum = 0;
   for (const action of actions) {
-    if (action.type === "Deploy") active++;
+    if (action.type === "Deploy" && !action.cooling) active++;
     if (action.type === "Retreat") active--;
     maximum = Math.max(maximum, active);
   }
@@ -412,6 +412,52 @@ describe("v2 skill engine", () => {
     }
   });
 
+  it("assigns an unhealable lane holder to the non-boss lane and heals the boss blocker", () => {
+    const mapData = makeMapData();
+    mapData.routes = [
+      { id: 0, motionMode: "walk", startPosition: { row: 0, col: 0 }, checkpoints: [], endPosition: { row: 0, col: 6 } },
+      { id: 1, motionMode: "walk", startPosition: { row: 4, col: 0 }, checkpoints: [], endPosition: { row: 4, col: 6 } },
+    ];
+    mapData.enemyDetails.push({ ...mapData.enemyDetails[0], id: "boss", name: "Boss", isBoss: true });
+    mapData.spawnTimeline = [
+      { time: 0, enemyId: "boss", count: 1, routeIndex: 0 },
+      { time: 0, enemyId: "enemy", count: 8, routeIndex: 1 },
+    ];
+    mapData.deploymentPoints = [
+      { row: 0, col: 5, buildableType: "melee" },
+      { row: 4, col: 5, buildableType: "melee" },
+      { row: 1, col: 5, buildableType: "ranged" },
+      { row: 3, col: 5, buildableType: "ranged" },
+    ];
+    const healingRange: Array<[number, number]> = [[0, 1]];
+    const built = buildCandidate({
+      stageCode: "V2-1",
+      mapData,
+      facts: extractStageFacts(mapData),
+      openingPressure: false,
+      picks: [
+        testPick("solo-lane", "MELEE", [[0, 0]], { subProfession: "unyield" }),
+        testPick("boss-tank", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
+        testPick("medic", "RANGED", healingRange, { role: "medic" }),
+      ],
+      positionVariant: 0,
+      timingVariant: 0,
+      options: {},
+    });
+    const deploys = built.script.actions.filter(action => action.type === "Deploy");
+    const byName = new Map(deploys.map(action => [action.name, action]));
+
+    expect(byName.get("boss-tank")?.location).toEqual([0, 5]);
+    expect(byName.get("solo-lane")?.location).toEqual([4, 5]);
+    const medic = byName.get("medic")!;
+    const covers = (target: [number, number]): boolean => healingRange.some(offset => {
+      const [row, col] = rotateDirection(offset, medic.direction!);
+      return medic.location![0] + row === target[0] && medic.location![1] + col === target[1];
+    });
+    expect(covers([0, 5])).toBe(true);
+    expect(covers([4, 5])).toBe(false);
+  });
+
   it("builds a pressured opening in the nearest defensive zone before ranged support", () => {
     const mapData = makeMapData();
     mapData.routes = [
@@ -473,7 +519,7 @@ describe("v2 skill engine", () => {
     const built = buildCandidate({
       stageCode: "V2-1", mapData, facts: extractStageFacts(mapData), openingPressure: false,
       picks: [
-        testPick("先锋", "MELEE", [[0, 0]], { role: "vanguard", cost: 5 }),
+        testPick("先锋", "MELEE", [[0, 0]], { role: "vanguard", cost: 5, respawnTime: 70 }),
         testPick("主力", "MELEE", [[0, 0]], { cost: 7 }),
         testPick("后备主力", "MELEE", [[0, 0]], { cost: 20 }),
       ],
@@ -482,11 +528,12 @@ describe("v2 skill engine", () => {
     const actions = built.script.actions;
 
     expect(actions.map(action => action.type)).toEqual([
-      "SpeedUp", "Deploy", "Deploy", "Retreat", "Deploy", "SkillDaemon",
+      "SpeedUp", "Deploy", "Deploy", "ResetStopwatch", "Retreat", "Deploy", "Deploy", "SkillDaemon",
     ]);
-    expect(actions[3]).toMatchObject({ type: "Retreat", name: "先锋", costs: 20 });
-    expect(actions[3]).not.toHaveProperty("kills");
-    expect(actions[4]).toMatchObject({ type: "Deploy", name: "后备主力", costs: 20 });
+    expect(actions[4]).toMatchObject({ type: "Retreat", name: "先锋", costs: 20 });
+    expect(actions[4]).not.toHaveProperty("kills");
+    expect(actions[5]).toMatchObject({ type: "Deploy", name: "后备主力", costs: 20 });
+    expect(actions[6]).toMatchObject({ type: "Deploy", name: "先锋", cooling: 1, time_elapsed: 70_000 });
     expect(maximumActive(actions)).toBeLessThanOrEqual(mapData.options.characterLimit);
     expect(validateMAAProtocol(built.script).valid).toBe(true);
   });
@@ -503,7 +550,7 @@ describe("v2 skill engine", () => {
       stageCode: "V2-1", mapData, facts: extractStageFacts(mapData), openingPressure: false,
       picks: [
         testPick("前线", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
-        testPick("非前线", "RANGED"),
+        testPick("非前线", "RANGED", [[0, 0]], { respawnTime: 70 }),
         testPick("后备", "MELEE", [[0, 0]], { cost: 20 }),
       ],
       positionVariant: 0, timingVariant: 0, options: {},
@@ -511,10 +558,69 @@ describe("v2 skill engine", () => {
 
     expect(built.script.actions.map(action => [action.type, action.name])).toEqual([
       ["SpeedUp", undefined], ["Deploy", "前线"], ["Deploy", "非前线"],
-      ["Retreat", "非前线"], ["Deploy", "后备"], ["SkillDaemon", undefined],
+      ["ResetStopwatch", undefined], ["Retreat", "非前线"], ["Deploy", "后备"],
+      ["Deploy", "非前线"], ["SkillDaemon", undefined],
     ]);
-    expect(built.script.actions[3]).toMatchObject({ costs: 20 });
+    expect(built.script.actions[4]).toMatchObject({ costs: 20 });
+    expect(built.script.actions[6]).toMatchObject({ cooling: 1, time_elapsed: 70_000 });
     expect(maximumActive(built.script.actions)).toBeLessThanOrEqual(mapData.options.characterLimit);
+  });
+
+  it("deploys an unused reserve after a field operator enters cooldown", () => {
+    const mapData = makeMapData();
+    mapData.options.characterLimit = 2;
+    mapData.deploymentPoints = [
+      { row: 2, col: 5, buildableType: "melee" },
+      { row: 1, col: 4, buildableType: "ranged" },
+      { row: 2, col: 3, buildableType: "melee" },
+    ];
+    const built = buildCandidate({
+      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData), openingPressure: false,
+      picks: [
+        testPick("前线", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
+        testPick("医疗", "RANGED", [[0, 1]], { role: "medic" }),
+        testPick("救场主力", "MELEE", [[0, 0]], { cost: 20 }),
+      ],
+      positionVariant: 0, timingVariant: 0, options: {},
+    });
+
+    expect(built.script.actions.map(action => [action.type, action.name])).toEqual([
+      ["SpeedUp", undefined], ["Deploy", "前线"], ["Deploy", "医疗"],
+      ["Deploy", "救场主力"], ["SkillDaemon", undefined],
+    ]);
+    expect(built.script.actions[3]).toMatchObject({
+      location: [2, 3], cooling: 1, costs: 20,
+    });
+    expect(validateMAAProtocol(built.script).valid).toBe(true);
+  });
+
+  it("filters planned retirements out of cooldown-triggered rescue", () => {
+    const mapData = makeMapData();
+    mapData.options.characterLimit = 2;
+    mapData.deploymentPoints = [
+      { row: 2, col: 2, buildableType: "melee" },
+      { row: 2, col: 3, buildableType: "melee" },
+      { row: 2, col: 5, buildableType: "melee" },
+      { row: 1, col: 4, buildableType: "ranged" },
+    ];
+    const built = buildCandidate({
+      stageCode: "V2-1", mapData, facts: extractStageFacts(mapData), openingPressure: false,
+      picks: [
+        testPick("先锋", "MELEE", [[0, 0]], { role: "vanguard", respawnTime: 70 }),
+        testPick("前线", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
+        testPick("医疗", "RANGED", [[0, 1]], { role: "medic" }),
+        testPick("救场主力", "MELEE", [[0, 0]], { cost: 20 }),
+      ],
+      positionVariant: 0, timingVariant: 0, options: {},
+    });
+
+    expect(built.script.actions.map(action => action.type)).toEqual([
+      "SpeedUp", "Deploy", "Deploy", "ResetStopwatch", "Retreat", "Deploy", "Deploy", "Deploy", "SkillDaemon",
+    ]);
+    expect(built.script.actions[6]).toMatchObject({
+      type: "Deploy", name: "救场主力", cooling: 1, time_elapsed: 70_000,
+    });
+    expect(validateMAAProtocol(built.script).valid).toBe(true);
   });
 
   it("retires and redeploys an executor using its actual timing", () => {

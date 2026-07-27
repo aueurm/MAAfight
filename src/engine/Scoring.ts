@@ -72,7 +72,7 @@ function stageDps(pick: EnginePick, defense: number, resistance: number, modeled
 function deployedPairs(script: BattleScript, picks: EnginePick[]): Array<{ action: BattleScriptAction; pick: EnginePick }> {
   const byName = new Map(picks.map(pick => [pick.name, pick]));
   return script.actions
-    .filter(action => action.type === "Deploy" && action.name)
+    .filter(action => action.type === "Deploy" && action.name && !(action.cooling && action.cooling > 0))
     .map(action => ({ action, pick: byName.get(action.name!) }))
     .filter((pair): pair is { action: BattleScriptAction; pick: EnginePick } => Boolean(pair.pick));
 }
@@ -142,7 +142,7 @@ function positionScore(script: BattleScript, picks: EnginePick[], facts: StageFa
 function timingScore(script: BattleScript, facts: StageFacts): number {
   let available = facts.initialCost;
   let wait = 0;
-  for (const action of script.actions.filter(action => action.type === "Deploy")) {
+  for (const action of script.actions.filter(action => action.type === "Deploy" && !(action.cooling && action.cooling > 0))) {
     const cost = action.costs || 0;
     if (cost > available) wait += cost - available;
     available = Math.max(0, available - cost) + 10;

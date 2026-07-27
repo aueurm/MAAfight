@@ -32,10 +32,12 @@ const SELF_DISABLE_SKILLS: Readonly<Record<string, readonly number[]>> = {
 };
 // ponytail: explicit until the combat model distinguishes ally healing from self healing and permanent skill effects.
 const SUSTAINED_HEAL_SKILLS: Readonly<Record<string, readonly number[]>> = { "遥": [2] };
-const UNHEALABLE_SUBPROFESSIONS = new Set(["musha", "juggernaut", "reaper"]);
+const UNHEALABLE_SUBPROFESSIONS = new Set(["musha", "juggernaut", "reaper", "unyield"]);
 const PREFERRED_OPERATORS = new Set([...Object.keys(PREFERRED_SKILLS), "斩业星熊", "塞雷娅", "酒神"]);
 // ponytail: fixed preference bonus; add feedback-calibrated weights only after rehearsal data proves it necessary.
 const PREFERENCE_BONUS = 8.5;
+// ponytail: favor healable frontliners until rehearsals show a stage that specifically needs an unhealable solo lane.
+const UNHEALABLE_SELECTION_PENALTY = 3;
 const MELEE_INCOMING_BONUS = 45;
 const MELEE_GOAL_FRONT_BONUS = 120;
 const RANGED_BLOCK_COVERAGE_BONUS = 100;
@@ -60,6 +62,10 @@ interface ActiveDeployment {
 }
 
 const placementCache = new WeakMap<StageFacts, Map<string, RankedPlacement[]>>();
+const incomingDirectionCache = new WeakMap<MapData, Map<string, typeof DIRECTIONS[number] | undefined>>();
+const routeThreatCache = new WeakMap<MapData, Map<number, number>>();
+const goalFrontCache = new WeakMap<MapData, Map<string, string>>();
+const bossGoalCache = new WeakMap<MapData, Set<string>>();
 
 const AREA_SUBPROFESSIONS = new Set(["aoesniper", "bombarder", "splashcaster", "chain", "reaper", "centurion"]);
 const SINGLE_TARGET_SUBPROFESSIONS = new Set(["closerange", "siegesniper", "mystic", "artsfghter", "fighter", "crusher", "hammer", "librator"]);
@@ -181,6 +187,10 @@ function preferenceBonus(pick: EnginePick): number {
   return PREFERRED_OPERATORS.has(pick.name) ? PREFERENCE_BONUS : 0;
 }
 
+function squadSelectionAdjustment(pick: EnginePick): number {
+  return preferenceBonus(pick) - Number(cannotReceiveAllyHealing(pick)) * UNHEALABLE_SELECTION_PENALTY;
+}
+
 function isSustainedHealer(pick: EnginePick): boolean {
   return pick.role === "medic" || pick.profile.subProfession === "bard"
     || pick.profile.subProfession === "guardian"
@@ -188,9 +198,13 @@ function isSustainedHealer(pick: EnginePick): boolean {
     || Boolean(SUSTAINED_HEAL_SKILLS[pick.name]?.includes(pick.skill));
 }
 
+function cannotReceiveAllyHealing(pick: EnginePick): boolean {
+  return UNHEALABLE_SUBPROFESSIONS.has(pick.profile.subProfession || "");
+}
+
 function needsSustainedHealing(pick: EnginePick): boolean {
   return pick.profile.position === "MELEE" && !isSustainedHealer(pick)
-    && !UNHEALABLE_SUBPROFESSIONS.has(pick.profile.subProfession || "");
+    && !cannotReceiveAllyHealing(pick);
 }
 
 function marginalScore(
@@ -212,7 +226,7 @@ function marginalScore(
     const replacementFit = reserveGapWeight(focus) * demand[focus]
       * (saturated(previous[focus] + addition[focus], demand[focus]) - saturated(previous[focus], demand[focus]))
       * 100;
-    return replacementFit - pick.profile.attributes.cost * 0.04 + preferenceBonus(pick);
+    return replacementFit - pick.profile.attributes.cost * 0.04 + squadSelectionAdjustment(pick);
   }
   let gain = 0;
   for (const key of Object.keys(demand) as Array<keyof CapabilityDemand>) {
@@ -221,7 +235,7 @@ function marginalScore(
       * 100;
   }
   const earlyCostPenalty = pick.profile.attributes.cost * (slot < 3 ? 0.35 : 0.06);
-  return gain - earlyCostPenalty + preferenceBonus(pick);
+  return gain - earlyCostPenalty + squadSelectionAdjustment(pick);
 }
 
 function eligibleOperators(options: EngineOptions): Array<{ record: CombatOperatorRecord; player?: PlayerOperator }> {
@@ -393,6 +407,8 @@ function rankedPlacements(pick: EnginePick, facts: StageFacts): RankedPlacement[
 }
 
 function routeThreats(mapData: MapData): Map<number, number> {
+  const cached = routeThreatCache.get(mapData);
+  if (cached) return cached;
   const enemies = new Map(mapData.enemyDetails.map(enemy => [enemy.id, enemy]));
   const threats = new Map<number, number>();
   for (const spawn of mapData.spawnTimeline) {
@@ -401,6 +417,7 @@ function routeThreats(mapData: MapData): Map<number, number> {
     const threat = Math.max(1, spawn.count) * (Math.max(1, enemy?.maxHp || 1) + Math.max(0, enemy?.atk || 0) * 10) * multiplier;
     threats.set(spawn.routeIndex, (threats.get(spawn.routeIndex) || 0) + threat);
   }
+  routeThreatCache.set(mapData, threats);
   return threats;
 }
 
@@ -429,6 +446,13 @@ function preferredIncomingDirection(
   mapData: MapData,
   threats: Map<number, number>
 ): typeof DIRECTIONS[number] | undefined {
+  let byPoint = incomingDirectionCache.get(mapData);
+  if (!byPoint) {
+    byPoint = new Map();
+    incomingDirectionCache.set(mapData, byPoint);
+  }
+  const key = `${point.row},${point.col}`;
+  if (byPoint.has(key)) return byPoint.get(key);
   const directionThreats = new Map<typeof DIRECTIONS[number], number>();
   for (const route of mapData.routes) {
     if (route.motionMode !== "walk") continue;
@@ -436,11 +460,15 @@ function preferredIncomingDirection(
     if (!direction) continue;
     directionThreats.set(direction, (directionThreats.get(direction) || 0) + (threats.get(route.id) || 0));
   }
-  return [...directionThreats.entries()]
+  const direction = [...directionThreats.entries()]
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0];
+  byPoint.set(key, direction);
+  return direction;
 }
 
 function goalFrontByPoint(mapData: MapData): Map<string, string> {
+  const cached = goalFrontCache.get(mapData);
+  if (cached) return cached;
   const fronts = new Map<string, string>();
   const goals = new Map(mapData.routes
     .filter(route => route.motionMode === "walk")
@@ -459,7 +487,22 @@ function goalFrontByPoint(mapData: MapData): Map<string, string> {
       : roadMelee.filter(point => distance(point, goal) === nearestRoadDistance);
     for (const point of candidates) fronts.set(`${point.row},${point.col}`, goalKey);
   }
+  goalFrontCache.set(mapData, fronts);
   return fronts;
+}
+
+function bossGoalKeys(mapData: MapData): Set<string> {
+  const cached = bossGoalCache.get(mapData);
+  if (cached) return cached;
+  const bossIds = new Set(mapData.enemyDetails.filter(enemy => enemy.isBoss).map(enemy => enemy.id));
+  const bossRouteIds = new Set(mapData.spawnTimeline
+    .filter(spawn => bossIds.has(spawn.enemyId))
+    .map(spawn => spawn.routeIndex));
+  const goals = new Set(mapData.routes
+    .filter(route => route.motionMode === "walk" && bossRouteIds.has(route.id))
+    .map(route => `${route.endPosition.row},${route.endPosition.col}`));
+  bossGoalCache.set(mapData, goals);
+  return goals;
 }
 
 function coversPoint(deployment: ActiveDeployment, point: DeploymentPoint): boolean {
@@ -502,31 +545,48 @@ function isTemporaryPick(pick: EnginePick): boolean {
 
 export function buildCandidate(input: CandidateBuildInput): { script: BattleScript; picks: EnginePick[]; warnings: string[] } {
   const occupiedPositions = new Set<string>();
+  const deployedOperators = new Set<string>();
+  const plannedRetirements: Array<{ actionIndex: number; respawnTime: number }> = [];
   const active = new Map<string, ActiveDeployment>();
   const meleeBlocks: DeploymentPoint[] = [];
   const threats = routeThreats(input.mapData);
   const goalFronts = goalFrontByPoint(input.mapData);
+  const bossGoals = bossGoalKeys(input.mapData);
   const securedGoals = new Set<string>();
   const actions: BattleScript["actions"] = [{ type: "SpeedUp" }];
   const deployLimit = Math.min(9, input.facts.characterLimit || 9, input.facts.deploymentPoints.length);
   const openingVanguard = input.openingPressure && input.picks[0]?.role === "vanguard"
     ? input.picks[0]
     : undefined;
+  const plansDefensiveFrontline = input.openingPressure || bossGoals.size > 0;
   const permanentMelee = input.picks.filter(pick => pick.profile.position === "MELEE" && !isTemporaryPick(pick));
   const frontlineCount = new Set(goalFronts.values()).size;
-  const frontlinePicks = input.openingPressure
+  const orderedFrontliners = [
+    ...permanentMelee.filter(pick => LANE_HOLD_SUBPROFESSIONS.has(pick.profile.subProfession || "")),
+    ...permanentMelee.filter(pick => !LANE_HOLD_SUBPROFESSIONS.has(pick.profile.subProfession || "")),
+  ];
+  const bossFrontliners = orderedFrontliners
+    .filter(pick => !cannotReceiveAllyHealing(pick))
+    .slice(0, Math.min(bossGoals.size, frontlineCount));
+  const bossFrontlinerIds = new Set(bossFrontliners.map(pick => pick.operatorId));
+  const remainingFrontliners = bossGoals.size
     ? [
-      ...permanentMelee.filter(pick => LANE_HOLD_SUBPROFESSIONS.has(pick.profile.subProfession || "")),
-      ...permanentMelee.filter(pick => !LANE_HOLD_SUBPROFESSIONS.has(pick.profile.subProfession || "")),
-    ].slice(0, frontlineCount)
+      ...orderedFrontliners.filter(pick => cannotReceiveAllyHealing(pick)),
+      ...orderedFrontliners.filter(pick => !cannotReceiveAllyHealing(pick)),
+    ].filter(pick => !bossFrontlinerIds.has(pick.operatorId))
+    : orderedFrontliners;
+  // ponytail: boss lanes reserve healable blockers; unhealable lane holders take the remaining ordinary fronts.
+  const frontlinePicks = plansDefensiveFrontline
+    ? [...bossFrontliners, ...remainingFrontliners].slice(0, frontlineCount)
     : [];
-  const openingHealers = input.openingPressure
+  const frontlineIds = new Set(frontlinePicks.map(pick => pick.operatorId));
+  const openingHealers = plansDefensiveFrontline
     ? input.picks.filter(pick => pick.profile.position === "RANGED" && isSustainedHealer(pick))
     : [];
   const prioritizedIds = new Set([openingVanguard, ...frontlinePicks, ...openingHealers]
     .filter((pick): pick is EnginePick => Boolean(pick))
     .map(pick => pick.operatorId));
-  const deploymentPicks = input.openingPressure
+  const deploymentPicks = plansDefensiveFrontline
     ? [
       ...(openingVanguard ? [openingVanguard] : []),
       ...frontlinePicks,
@@ -543,6 +603,7 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
     if (blockIndex >= 0) meleeBlocks.splice(blockIndex, 1);
   };
   const addDeployment = (pick: EnginePick, placement: RankedPlacement, preDelay?: number): void => {
+    deployedOperators.add(pick.operatorId);
     occupiedPositions.add(`${placement.point.row},${placement.point.col}`);
     active.set(pick.operatorId, { pick, placement });
     if (pick.profile.position === "MELEE") {
@@ -580,6 +641,7 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       if (!outgoing) continue;
       // ponytail: role/preference rotation only; compare capability loss if rehearsals show harmful swaps.
       actions.push({ type: "Retreat", name: outgoing.pick.name, costs: Math.round(pick.profile.attributes.cost) });
+      plannedRetirements.push({ actionIndex: actions.length - 1, respawnTime: outgoing.pick.profile.respawnTime });
       removeActive(outgoing);
     }
     const ranked = rankedPlacements(pick, input.facts)
@@ -594,14 +656,32 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
     let placements = isTemporaryPick(pick)
       ? ranked.filter(({ point }) => !goalFronts.has(`${point.row},${point.col}`))
       : ranked;
-    if (pick.profile.position === "RANGED" && isSustainedHealer(pick) && meleeBlocks.length && placements.length) {
+    if (frontlineIds.has(pick.operatorId) && placements.length) {
+      const roleFronts = placements.filter(({ point }) => {
+        const goal = goalFronts.get(`${point.row},${point.col}`);
+        if (!goal || securedGoals.has(goal)) return false;
+        return cannotReceiveAllyHealing(pick) ? !bossGoals.has(goal) : bossGoals.has(goal);
+      });
+      if (roleFronts.length) placements = roleFronts;
+    }
+    if (pick.profile.position === "RANGED" && isSustainedHealer(pick) && placements.length) {
       const activeHealers = [...active.values()].filter(deployment => isSustainedHealer(deployment.pick));
-      const uncoveredBlocks = meleeBlocks.filter(block => !activeHealers.some(healer => coversPoint(healer, block)));
-      const coverageTargets = uncoveredBlocks.length ? uncoveredBlocks : meleeBlocks;
+      const healingTargets = [...active.values()]
+        .filter(deployment => deployment.pick.profile.position === "MELEE"
+          && !cannotReceiveAllyHealing(deployment.pick)
+          && (needsSustainedHealing(deployment.pick)
+            || bossGoals.has(goalFronts.get(`${deployment.placement.point.row},${deployment.placement.point.col}`) || "")))
+        .map(deployment => deployment.placement.point);
+      const uncoveredBlocks = healingTargets.filter(block => !activeHealers.some(healer => coversPoint(healer, block)));
+      const uncoveredBossBlocks = uncoveredBlocks.filter(block => bossGoals.has(goalFronts.get(`${block.row},${block.col}`) || ""));
+      const coverageTargets = uncoveredBossBlocks.length ? uncoveredBossBlocks
+        : uncoveredBlocks.length ? uncoveredBlocks : healingTargets;
       const covered = (placement: RankedPlacement): number => coverageTargets
         .filter(block => coversPoint({ pick, placement }, block)).length;
-      const maximumCovered = Math.max(...placements.map(covered));
-      if (maximumCovered > 0) placements = placements.filter(placement => covered(placement) === maximumCovered);
+      if (coverageTargets.length) {
+        const maximumCovered = Math.max(...placements.map(covered));
+        if (maximumCovered > 0) placements = placements.filter(placement => covered(placement) === maximumCovered);
+      }
     }
     if (input.openingPressure && pick.profile.position === "MELEE" && pick.profile.subProfession !== "executor"
       && placements.length && input.facts.goalCells.length) {
@@ -632,6 +712,54 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
     if (executor.pick.profile.respawnTime > 0) {
       addDeployment(executor.pick, executor.placement, executor.pick.profile.respawnTime * 1000);
     }
+  }
+  const emergencyPositions = new Set(occupiedPositions);
+  const activeHealers = [...active.values()].filter(deployment => isSustainedHealer(deployment.pick));
+  const inactivePicks = input.picks.filter(candidate => !active.has(candidate.operatorId));
+  const eligibleEmergencyReserves = [
+    ...inactivePicks.filter(candidate => !deployedOperators.has(candidate.operatorId)),
+    ...inactivePicks.filter(candidate => deployedOperators.has(candidate.operatorId)
+      && candidate.profile.respawnTime > 0),
+  ];
+  const emergencyReserves = plannedRetirements.some(retirement => retirement.respawnTime <= 0)
+    ? [] : eligibleEmergencyReserves;
+  const plannedCooldownMs = Math.max(0, ...plannedRetirements.map(retirement => retirement.respawnTime * 1000));
+  if (emergencyReserves.length && plannedCooldownMs > 0 && plannedRetirements.length) {
+    actions.splice(plannedRetirements[plannedRetirements.length - 1].actionIndex, 0, { type: "ResetStopwatch" });
+  }
+  for (const pick of emergencyReserves) {
+    let placements = rankedPlacements(pick, input.facts)
+      .filter(({ point }) => !emergencyPositions.has(`${point.row},${point.col}`))
+      .map(placement => ({
+        ...placement,
+        score: placement.score + placementPreference(
+          pick, placement, meleeBlocks, input.mapData, threats, goalFronts, securedGoals
+        ),
+      }))
+      .sort((left, right) => right.score - left.score
+        || left.point.row - right.point.row || left.point.col - right.point.col
+        || left.direction.localeCompare(right.direction));
+    if (isTemporaryPick(pick)) {
+      placements = placements.filter(({ point }) => !goalFronts.has(`${point.row},${point.col}`));
+    }
+    if (input.openingPressure && needsSustainedHealing(pick) && activeHealers.length) {
+      const covered = placements.filter(placement => activeHealers.some(healer => coversPoint(healer, placement.point)));
+      if (covered.length) placements = covered;
+    }
+    const placement = placements[0];
+    if (!placement) continue;
+    emergencyPositions.add(`${placement.point.row},${placement.point.col}`);
+    // ponytail: one cooldown condition reacts to any field loss without guessing a kill count or death time.
+    actions.push({
+      type: "Deploy",
+      name: pick.name,
+      location: [placement.point.row, placement.point.col],
+      direction: placement.direction,
+      cooling: 1,
+      costs: Math.round(pick.profile.attributes.cost),
+      pre_delay: 750,
+      ...(plannedCooldownMs > 0 ? { time_elapsed: plannedCooldownMs } : {}),
+    });
   }
   actions.push({ type: "SkillDaemon" });
 

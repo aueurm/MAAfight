@@ -21,7 +21,7 @@ export type { EngineOptions, EngineResult, ScoreBreakdown, SearchStats, StageFac
 
 const DEFAULT_SEARCH: SearchConfig = {
   squadBeamWidth: 32,
-  completeCandidateLimit: 512,
+  completeCandidateLimit: 256,
   minimumFullCandidates: 64,
   defaultFullCandidates: 192,
   maximumFullCandidates: 384,
@@ -55,6 +55,8 @@ function hardConstraints(script: BattleScript, mapData: MapData): boolean {
       const key = `${action.location[0]},${action.location[1]}`;
       if (active.has(action.name) || occupied.has(key)) return false;
       if (!mapData.deploymentPoints.some(point => point.row === action.location![0] && point.col === action.location![1])) return false;
+      // ponytail: cooling-gated deploys model a future field loss, so they do not increase the static active set.
+      if ((action.cooling || 0) > 0) continue;
       active.set(action.name, key);
       occupied.add(key);
       if (active.size > mapData.options.characterLimit) return false;
@@ -121,9 +123,11 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
   const cheapCandidates: CheapCandidate[] = [];
   let rejectedCandidates = 0;
 
+  candidateBuild:
   for (const picks of squadBeam.squads) {
     for (let positionVariant = 0; positionVariant < 4; positionVariant++) {
       for (let timingVariant = 0; timingVariant < 4; timingVariant++) {
+        if (cheapCandidates.length >= config.completeCandidateLimit) break candidateBuild;
         const built = buildCandidate({
           stageCode,
           mapData,

@@ -2,7 +2,7 @@
 
 1. [总体架构](architecture.md)：v2 模块边界、依赖方向和生成流程。
 2. [算法边界](algorithm-boundary.md)：评分能力与不能声称的结论。
-3. [语料驱动引擎](corpus-generator.md)：模型构建、候选搜索和反馈闭环。
+3. [传统模式与语料先验](corpus-generator.md)：选人、部署、治疗、周转、候选搜索和反馈闭环。
 4. [MAA Copilot 导出契约](maa-copilot-export-contract.md)：协议字段与必要测试。
 5. [MAA 执行评估层](maa-execution.md)：规划中的 MAA 调用、演习保护和真实结果观测。
 6. [数据格式](data-format.md)：`MapData`、`StageFacts`、`EngineResult` 和 `BattleScript`。

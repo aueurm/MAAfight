@@ -60,9 +60,9 @@ src/
 - `StageFacts.ts`：从 `MapData` 提取敌人数、HP、路线、15 秒压力窗口和部署资源。
 - `CombatModel.ts`：严格加载 `operatorCombat.v2.json`，解析默认或玩家 E2 档案，并提供进程内缓存。
 - `EncounterContext.ts`：保留 15 秒窗口内的敌人、路线、防御、法抗和移动模式，构造能力需求。
-- `CandidateBuilder.ts`：从完整模型目录按队伍边际收益搜索 `(operator, skill)`，再构造点位、朝向和动作。
+- `CandidateBuilder.ts`：从完整模型目录按队伍边际收益搜索 `(operator, skill)`，再统一构造前线职责、医疗覆盖、点位、朝向、撤退、冷却救场和动作顺序。
 - `Scoring.ts`：计算基础交战与技能交战，以及点位、费用、语料、功能覆盖和自动化评分。
-- `index.ts`：使用宽度 32 的 squad Beam 和最多 512 个廉价完整候选；昂贵层按 64 / 192 / 384 自适应预算评分。
+- `index.ts`：使用宽度 32 的 squad Beam 和最多 256 个廉价完整候选；昂贵层按候选上限自适应预算评分。
 
 引擎输出固定编队。任何候选若违反占位、声明干员、部署格或协议约束会被拒绝；所有候选均失败时抛出错误。
 
