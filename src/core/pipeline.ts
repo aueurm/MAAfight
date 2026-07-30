@@ -7,7 +7,8 @@ import { validateScript } from "../copilot/ScriptValidator";
 import { validateMAAProtocol } from "../copilot/MAAProtocolValidator";
 import { exportToCopilotFormat } from "../copilot/ScriptExporter";
 import { computeScriptHash, extractStageFacts, generateCopilotScript, type StageFacts } from "../engine";
-import { getCombatModelInfo, getCombatOperatorByName } from "../engine/CombatModel";
+import { getCombatModelInfo, getCombatOperatorByName, resolveOperatorProfile } from "../engine/CombatModel";
+import { getOperatorKnowledge } from "../engine/OperatorKnowledge";
 import { computeStageContentHash } from "../engine/EncounterContext";
 import { DEEPSEEK_MODEL, requestDeepSeekCandidate } from "../deepseek-core/DeepSeekCore";
 import { generateDeepSeekScript } from "../deepseek-core/DeepSeekCompiler";
@@ -298,6 +299,10 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
       facts,
       players: parsedOperators.playerOperators,
       getCombatOperatorByName,
+      getOperatorKnowledge: (name, skill, player) => {
+        const operator = getCombatOperatorByName(name);
+        return operator ? getOperatorKnowledge(operator, resolveOperatorProfile(operator, skill, player)) : undefined;
+      },
       requestCandidate: input => requestDeepSeekCandidate(input),
     });
     if (!generated.valid || !generated.script) throw new Error(`DeepSeek candidate failed validation: ${generated.errors.join("; ")}`);

@@ -4,6 +4,7 @@ import {
   resolveOperatorProfile,
   type CombatOperatorRecord,
 } from "./CombatModel";
+import { getOperatorKnowledge } from "./OperatorKnowledge";
 import { rotateDirection, squadSignature } from "./helpers";
 import type { BattleScript, BattleScriptOper, DeploymentPoint, MapData, PlayerOperator } from "../types";
 import type {
@@ -16,26 +17,7 @@ import type {
 } from "./types";
 
 const DIRECTIONS = ["Right", "Down", "Left", "Up"] as const;
-const PREFERRED_SKILLS: Readonly<Record<string, readonly number[]>> = {
-  "凛御银灰": [2], "忍冬": [3], "怒潮凛冬": [2], "赤刃明霄陈": [2, 3],
-  "司霆惊蛰": [2, 3], "玛恩纳": [3], "乌尔比安": [2], "黍": [1],
-  "维什戴尔": [3], "圣聆初雪": [2], "澄闪": [2, 3], "荒芜拉普兰德": [3],
-  "逻各斯": [1], "艾雅法拉": [2], "凯尔希·思衡托": [2], "Mon3tr": [2, 3],
-  "纯烬艾雅法拉": [1], "遥": [2], "塑心": [1], "新约能天使": [2, 3],
-  "阿斯卡纶": [1], "歌蕾蒂娅": [1], "提丰": [2, 3],
-};
-// ponytail: static list until the combat model exposes self-disable effects; replace it with that explicit field when available.
-const SELF_DISABLE_SKILLS: Readonly<Record<string, readonly number[]>> = {
-  "阿米娅": [2, 3], "幽灵鲨": [2], "雷蛇": [2], "远山": [2],
-  "布洛卡": [2], "断罪者": [2], "森蚺": [3], "蚀清": [1],
-  "极光": [2], "洛洛": [2], "苍苔": [2],
-};
-// ponytail: explicit until the combat model distinguishes ally healing from self healing and permanent skill effects.
-const SUSTAINED_HEAL_SKILLS: Readonly<Record<string, readonly number[]>> = { "遥": [2] };
 const UNHEALABLE_SUBPROFESSIONS = new Set(["musha", "juggernaut", "reaper", "unyield"]);
-const PREFERRED_OPERATORS = new Set([...Object.keys(PREFERRED_SKILLS), "斩业星熊", "塞雷娅", "酒神"]);
-// ponytail: fixed preference bonus; add feedback-calibrated weights only after rehearsal data proves it necessary.
-const PREFERENCE_BONUS = 8.5;
 // ponytail: favor healable frontliners until rehearsals show a stage that specifically needs an unhealable solo lane.
 const UNHEALABLE_SELECTION_PENALTY = 3;
 const MELEE_INCOMING_BONUS = 45;
@@ -118,6 +100,17 @@ function adjustedDps(pick: EnginePick, encounter: EncounterContext, value: numbe
   return 0;
 }
 
+function knowledgeForPick(pick: EnginePick) {
+  return getOperatorKnowledge({
+    id: pick.operatorId,
+    name: pick.name,
+    role: pick.role,
+    subProfession: pick.profile.subProfession,
+    position: pick.profile.position,
+    damageType: pick.profile.damageType,
+  }, pick.profile);
+}
+
 function maximumRouteCoverage(pick: EnginePick, facts: StageFacts): number {
   if (facts.routeCells.length === 0) return 0;
   const routeKeys = new Set(facts.routeCells.map(cell => `${cell.row},${cell.col}`));
@@ -134,7 +127,7 @@ function maximumRouteCoverage(pick: EnginePick, facts: StageFacts): number {
       maximum = Math.max(maximum, covered.size / facts.routeCells.length);
     }
   }
-  return maximum;
+  return maximum * knowledgeForPick(pick).spatial.routeCoverageWeight;
 }
 
 function capabilitiesForPick(pick: EnginePick, encounter: EncounterContext, facts: StageFacts): CapabilityDemand {
@@ -147,7 +140,7 @@ function capabilitiesForPick(pick: EnginePick, encounter: EncounterContext, fact
   const cycle = adjustedDps(pick, encounter, profile.metrics.cycleDps ?? profile.metrics.normalDps) * effectiveCoverage * confidenceFactor;
   const rangedAir = profile.position === "RANGED" && profile.range.some(([, col]) => col >= 2);
   const subclass = profile.subProfession || "";
-  return {
+  const capabilities: CapabilityDemand = {
     physical: profile.damageType === "physical" ? normal / 1800 : 0,
     arts: profile.damageType === "arts" ? normal / 1800 : 0,
     burst: Math.max(0, burst - normal) / 2400,
@@ -173,6 +166,10 @@ function capabilitiesForPick(pick: EnginePick, encounter: EncounterContext, fact
       + Number(SUPPORT_SUBPROFESSIONS.has(subclass)) * 0.7,
     deployment: Math.max(0, (30 - profile.attributes.cost) / 20),
   };
+  for (const [key, weight] of Object.entries(knowledgeForPick(pick).capabilityWeights)) {
+    if (key in capabilities) capabilities[key as keyof CapabilityDemand] += weight;
+  }
+  return capabilities;
 }
 
 function saturated(value: number, demand: number): number {
@@ -184,7 +181,7 @@ function reserveGapWeight(key: keyof CapabilityDemand): number {
 }
 
 function preferenceBonus(pick: EnginePick): number {
-  return PREFERRED_OPERATORS.has(pick.name) ? PREFERENCE_BONUS : 0;
+  return knowledgeForPick(pick).deployment.selectionBias;
 }
 
 function squadSelectionAdjustment(pick: EnginePick): number {
@@ -195,11 +192,12 @@ function isSustainedHealer(pick: EnginePick): boolean {
   return pick.role === "medic" || pick.profile.subProfession === "bard"
     || pick.profile.subProfession === "guardian"
       && pick.profile.metrics.healingHps > 0 && pick.profile.skillDuration === 0
-    || Boolean(SUSTAINED_HEAL_SKILLS[pick.name]?.includes(pick.skill));
+    || knowledgeForPick(pick).sustainedHealingSkills.includes(pick.skill);
 }
 
 function cannotReceiveAllyHealing(pick: EnginePick): boolean {
-  return UNHEALABLE_SUBPROFESSIONS.has(pick.profile.subProfession || "");
+  return !knowledgeForPick(pick).deployment.canReceiveAllyHealing
+    || UNHEALABLE_SUBPROFESSIONS.has(pick.profile.subProfession || "");
 }
 
 function needsSustainedHealing(pick: EnginePick): boolean {
@@ -256,11 +254,12 @@ function eligibleOperators(options: EngineOptions): Array<{ record: CombatOperat
 function pickOptions(options: EngineOptions): EnginePick[] {
   return eligibleOperators(options).flatMap(({ record, player }) => {
     const skillCount = Math.max(1, record.skills.filter(skill => skill.unlockPhase <= 2).length);
-    const preferredSkills = PREFERRED_SKILLS[record.name];
-    const excludedSkills = SELF_DISABLE_SKILLS[record.name];
+    const knowledge = getOperatorKnowledge(record);
+    const preferredSkills = knowledge.preferredSkills;
+    const excludedSkills = knowledge.avoidedSkills;
     return Array.from({ length: skillCount }, (_, index) => index + 1)
-      .filter(skill => !excludedSkills || !excludedSkills.includes(skill))
-      .filter(skill => !preferredSkills || preferredSkills.includes(skill))
+      .filter(skill => !excludedSkills.includes(skill))
+      .filter(skill => preferredSkills.length === 0 || preferredSkills.includes(skill))
       .map(skill => ({
         operatorId: record.id,
         name: record.name,
@@ -376,6 +375,7 @@ function placementScore(
   direction: typeof DIRECTIONS[number],
   facts: StageFacts
 ): number {
+  const spatial = knowledgeForPick(pick).spatial;
   const routeKeys = new Set(facts.routeCells.map(cell => `${cell.row},${cell.col}`));
   const covered = pick.profile.range.reduce((count, offset) => {
     const [row, col] = rotateDirection(offset, direction);
@@ -384,7 +384,9 @@ function placementScore(
   const nearestRoute = facts.routeCells.length ? Math.min(...facts.routeCells.map(cell => distance(point, cell))) : 0;
   const nearestGoal = facts.goalCells.length ? Math.min(...facts.goalCells.map(cell => distance(point, cell))) : 0;
   const melee = pick.profile.position === "MELEE";
-  return covered * 30 - nearestRoute * (melee ? 22 : 8) - nearestGoal * (melee ? 1 : 0.5);
+  return covered * 30 * spatial.routeCoverageWeight
+    - nearestRoute * (melee ? 22 : 8) * spatial.routeDistanceWeight
+    - nearestGoal * (melee ? 1 : 0.5) * spatial.routeDistanceWeight;
 }
 
 function rankedPlacements(pick: EnginePick, facts: StageFacts): RankedPlacement[] {
@@ -393,7 +395,8 @@ function rankedPlacements(pick: EnginePick, facts: StageFacts): RankedPlacement[
     byPick = new Map();
     placementCache.set(facts, byPick);
   }
-  const key = `${pick.operatorId}:${pick.skill}:${pick.profile.position}:${JSON.stringify(pick.profile.range)}`;
+  const spatial = knowledgeForPick(pick).spatial;
+  const key = `${pick.operatorId}:${pick.skill}:${pick.profile.position}:${JSON.stringify(pick.profile.range)}:${spatial.routeCoverageWeight}:${spatial.routeDistanceWeight}`;
   const cached = byPick.get(key);
   if (cached) return cached;
   const ranked = facts.deploymentPoints.flatMap(point => compatible(pick, point)
@@ -540,7 +543,7 @@ function toOper(pick: EnginePick): BattleScriptOper {
 }
 
 function isTemporaryPick(pick: EnginePick): boolean {
-  return pick.role === "vanguard" || pick.profile.subProfession === "executor";
+  return knowledgeForPick(pick).deployment.temporary || pick.role === "vanguard" || pick.profile.subProfession === "executor";
 }
 
 export function buildCandidate(input: CandidateBuildInput): { script: BattleScript; picks: EnginePick[]; warnings: string[] } {
@@ -561,9 +564,11 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
   const plansDefensiveFrontline = input.openingPressure || bossGoals.size > 0;
   const permanentMelee = input.picks.filter(pick => pick.profile.position === "MELEE" && !isTemporaryPick(pick));
   const frontlineCount = new Set(goalFronts.values()).size;
+  const laneHolder = (pick: EnginePick): boolean => LANE_HOLD_SUBPROFESSIONS.has(pick.profile.subProfession || "")
+    || knowledgeForPick(pick).capabilities.includes("lane-hold");
   const orderedFrontliners = [
-    ...permanentMelee.filter(pick => LANE_HOLD_SUBPROFESSIONS.has(pick.profile.subProfession || "")),
-    ...permanentMelee.filter(pick => !LANE_HOLD_SUBPROFESSIONS.has(pick.profile.subProfession || "")),
+    ...permanentMelee.filter(laneHolder),
+    ...permanentMelee.filter(pick => !laneHolder(pick)),
   ];
   const bossFrontliners = orderedFrontliners
     .filter(pick => !cannotReceiveAllyHealing(pick))

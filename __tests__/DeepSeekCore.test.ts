@@ -9,8 +9,10 @@ import {
   buildDeepSeekContext,
   compileDeepSeekCandidate,
   generateDeepSeekScript,
+  type DeepSeekGenerationInput,
 } from "../src/deepseek-core/DeepSeekCompiler";
 import type { BattleAction } from "../src/deepseek-core/BattleDsl";
+import { getOperatorKnowledge as resolveKnowledge } from "../src/engine/OperatorKnowledge";
 import type { StageFacts } from "../src/engine/types";
 import type { MapData, PlayerOperator } from "../src/types";
 
@@ -90,6 +92,23 @@ function environment(selectedSkillType = "MANUAL") {
   };
 }
 
+function generationEnvironment(selectedSkillType = "MANUAL") {
+  const input = environment(selectedSkillType);
+  return {
+    ...input,
+    getOperatorKnowledge: (name: string, _skill: number, player: PlayerOperator) => {
+      const combat = input.getCombatOperatorByName(name);
+      return resolveKnowledge({
+        id: player.id,
+        name,
+        role: combat?.role,
+        subProfession: combat?.subProfession,
+        position: combat?.position,
+      });
+    },
+  };
+}
+
 describe("DeepSeek core", () => {
   it("sends an OpenAI-compatible JSON request without exposing the key", async () => {
     let request: { url: string; init: { method: string; headers: Record<string, string>; body: string } } | undefined;
@@ -111,7 +130,10 @@ describe("DeepSeek core", () => {
       response_format: { type: "json_object" },
       thinking: { type: "disabled" },
     });
-    expect(JSON.parse(request!.init.body).messages[0].content).toContain("battleDsl");
+    const systemPrompt = JSON.parse(request!.init.body).messages[0].content;
+    expect(systemPrompt).toContain("battleDsl");
+    expect(systemPrompt).toContain("positionEffect");
+    expect(systemPrompt).toContain("通关保证");
   });
 
   it("rejects missing keys and HTTP failures without including credentials", async () => {
@@ -137,13 +159,62 @@ describe("DeepSeek core", () => {
       } : undefined,
     }) as { roster: Array<{ name: string; skills: Array<{ index: number }> }> };
 
-    expect(context.roster.find(operator => operator.name === "干员1")?.skills).toEqual([{ index: 1, unlockPhase: 0, skillType: "MANUAL" }]);
+    expect(context.roster.find(operator => operator.name === "干员1")?.skills).toMatchObject([{ index: 1, unlockPhase: 0, skillType: "MANUAL" }]);
   });
 
   it("exposes role data without restricting the roster", () => {
     const context = buildDeepSeekContext(environment()) as { roster: Array<{ name: string; role?: string; subProfession?: string }> };
 
     expect(context.roster.find(operator => operator.name === "干员1")).toMatchObject({ role: "guard", subProfession: "fighter" });
+  });
+
+  it("exposes operator knowledge vectors and skill spatial behavior", () => {
+    const context = buildDeepSeekContext(environment()) as {
+      operatorKnowledgeVectorAxes: string[];
+      roster: Array<{
+        name: string;
+        knowledge: { vector: number[]; spatial: { range: Array<[number, number]> } };
+        skills: Array<{ knowledge: { preferred: boolean; spatial: { skillRangeBehavior: string } } }>;
+      }>;
+    };
+    const operator = context.roster.find(item => item.name === "干员1")!;
+
+    expect(context.operatorKnowledgeVectorAxes).toHaveLength(12);
+    expect(operator.knowledge.vector).toHaveLength(12);
+    expect(operator.knowledge.spatial.range).toEqual([]);
+    expect(operator.skills[0].knowledge).toMatchObject({ preferred: false, spatial: { skillRangeBehavior: "unchanged" } });
+  });
+
+  it("passes the resolved knowledge model and the current skill knowledge into context", () => {
+    const input = environment();
+    const baseKnowledge = resolveKnowledge({ id: "knowledge-test", name: "知识测试", position: "RANGED", damageType: "arts" });
+    const resolver = jest.fn((_name: string, skill: number) => ({
+      ...baseKnowledge,
+      skillTags: { [skill]: [`skill-${skill}`] },
+      spatial: { ...baseKnowledge.spatial, range: [[0, skill] as [number, number]], skillRangeBehavior: skill === 2 ? "extends" : "unchanged" },
+    }));
+    const context = buildDeepSeekContext({
+      ...input,
+      getCombatOperatorByName: name => input.players.has(name) ? {
+        position: "RANGED" as const,
+        role: "caster",
+        subProfession: "corecaster",
+        skills: [
+          { unlockPhase: 0, levels: [{ rank: 10, skillType: "MANUAL" }] },
+          { unlockPhase: 0, levels: [{ rank: 10, skillType: "MANUAL" }] },
+        ],
+      } : undefined,
+      getOperatorKnowledge: resolver,
+    }) as {
+      operatorKnowledgeModel: { generatedCommit: string; generatedOperatorCount: number; vectorAxes: string[] };
+      roster: Array<{ name: string; skills: Array<{ index: number; knowledge: { tags: string[]; spatial: { range: Array<[number, number]>; skillRangeBehavior: string } } }> }>;
+    };
+    const operator = context.roster.find(item => item.name === "干员1")!;
+
+    expect(context.operatorKnowledgeModel).toMatchObject({ generatedCommit: expect.stringMatching(/^[a-f0-9]{40}$/), generatedOperatorCount: 412 });
+    expect(context.operatorKnowledgeModel.vectorAxes).toHaveLength(12);
+    expect(resolver).toHaveBeenCalledWith("干员1", 2, input.players.get("干员1"));
+    expect(operator.skills[1]).toMatchObject({ index: 2, knowledge: { tags: ["skill-2"], spatial: { range: [[0, 2]], skillRangeBehavior: "extends" } } });
   });
 
   it("only exposes E2 operators and reports a blue-gate blocking entry", () => {
@@ -271,7 +342,7 @@ describe("DeepSeek core", () => {
     const feedback: Array<{ errors: string[] }> = [];
     let call = 0;
     const result = await generateDeepSeekScript({
-      ...environment(),
+      ...generationEnvironment(),
       requestCandidate: async input => {
         feedback.push(input.feedback);
         call++;
@@ -286,11 +357,18 @@ describe("DeepSeek core", () => {
 
   it("stops after three failed static candidates", async () => {
     const result = await generateDeepSeekScript({
-      ...environment(),
+      ...generationEnvironment(),
       requestCandidate: async () => ({ battleDsl: "invalid()" }),
     });
 
     expect(result.valid).toBe(false);
     expect(result.attempts).toBe(3);
+  });
+
+  it("requires a runtime operator knowledge resolver for generation", async () => {
+    await expect(generateDeepSeekScript({
+      ...environment(),
+      requestCandidate: async () => ({ battleDsl: battleDsl() }),
+    } as unknown as DeepSeekGenerationInput)).rejects.toThrow("DeepSeek generation requires getOperatorKnowledge");
   });
 });

@@ -4,6 +4,7 @@ import { validateScript } from "../copilot/ScriptValidator";
 import { type BattleAction, validateBattleDsl } from "./BattleDsl";
 import { parseDeepSeekBattleDsl } from "./BattleDslParser";
 import type { StageFacts } from "../engine/types";
+import { getOperatorKnowledge, getOperatorKnowledgeModelInfo, OPERATOR_VECTOR_AXES, type ResolvedOperatorKnowledge } from "../engine/OperatorKnowledge";
 import type { BattleScript, BattleScriptAction, MapData, PlayerOperator } from "../types";
 
 const DIRECTIONS = new Set(["Up", "Down", "Left", "Right", "None"]);
@@ -49,6 +50,7 @@ export interface DeepSeekCompileEnvironment {
   getCombatOperatorByName(name: string): PlanningCombatOperator | undefined;
   facts?: StageFacts;
   now?: () => Date;
+  getOperatorKnowledge?(name: string, skill: number, player: PlayerOperator): ResolvedOperatorKnowledge | undefined;
 }
 
 export interface DeepSeekCompileResult {
@@ -71,6 +73,7 @@ export interface DeepSeekGenerationResult extends DeepSeekCompileResult {
 }
 
 export interface DeepSeekGenerationInput extends DeepSeekCompileEnvironment {
+  getOperatorKnowledge: NonNullable<DeepSeekCompileEnvironment["getOperatorKnowledge"]>;
   requestCandidate(input: { context: unknown; feedback: DeepSeekFeedback }): Promise<unknown>;
 }
 
@@ -187,7 +190,37 @@ function buildBlueGateFronts(input: DeepSeekCompileEnvironment): BlueGateFront[]
   return [...blueGateFronts.values()];
 }
 
+function knowledgeFor(
+  input: DeepSeekCompileEnvironment,
+  player: PlayerOperator,
+  combat: PlanningCombatOperator,
+  skill: number,
+): ResolvedOperatorKnowledge {
+  return input.getOperatorKnowledge?.(player.name, skill, player) || getOperatorKnowledge({
+    id: player.id,
+    name: player.name,
+    role: combat.role,
+    subProfession: combat.subProfession,
+    position: combat.position,
+  });
+}
+
+function planningKnowledge(knowledge: ResolvedOperatorKnowledge): Record<string, unknown> {
+  return {
+    source: knowledge.source,
+    roles: knowledge.roles,
+    capabilities: knowledge.capabilities,
+    capabilityWeights: knowledge.capabilityWeights,
+    usageScenarios: knowledge.usageScenarios,
+    deployment: knowledge.deployment,
+    spatial: knowledge.spatial,
+    relationships: knowledge.relationships,
+    vector: knowledge.vector,
+  };
+}
+
 export function buildDeepSeekContext(input: DeepSeekCompileEnvironment): unknown {
+  const knowledgeModel = getOperatorKnowledgeModelInfo();
   const routeKeys = new Set((input.facts?.routeCells || []).map(point => `${point.row},${point.col}`));
   const goalKeys = new Set((input.facts?.goalCells || []).map(point => `${point.row},${point.col}`));
   const chokeKeys = new Set((input.facts?.chokeCells || []).map(point => `${point.row},${point.col}`));
@@ -196,6 +229,7 @@ export function buildDeepSeekContext(input: DeepSeekCompileEnvironment): unknown
     if (!player.own || player.elite !== 2) return [];
     const combat = input.getCombatOperatorByName(player.name);
     if (!combat) return [];
+    const primaryKnowledge = knowledgeFor(input, player, combat, 1);
     return [{
       name: player.name,
       elite: player.elite,
@@ -204,14 +238,23 @@ export function buildDeepSeekContext(input: DeepSeekCompileEnvironment): unknown
       position: combat.position,
       role: combat.role,
       subProfession: combat.subProfession,
+      knowledge: planningKnowledge(primaryKnowledge),
       skills: combat.skills.flatMap((skill, index) => {
         if (skill.unlockPhase > player.elite) return [];
         const level = skill.levels.find(item => item.rank === (player.skillLevel ?? 10)) || skill.levels.at(-1);
         const power = Math.round(Math.max(level?.metrics?.burstDps || 0, level?.metrics?.cycleDps || 0) * (level?.maxTargets || 1));
+        const skillKnowledge = knowledgeFor(input, player, combat, index + 1);
         return [{
           index: index + 1,
           unlockPhase: skill.unlockPhase,
           skillType: skillType(combat, index + 1, player.skillLevel) || "UNKNOWN",
+          knowledge: {
+            preferred: skillKnowledge.preferredSkills.includes(index + 1),
+            avoided: skillKnowledge.avoidedSkills.includes(index + 1),
+            sustainedHealing: skillKnowledge.sustainedHealingSkills.includes(index + 1),
+            tags: skillKnowledge.skillTags[index + 1] || [],
+            spatial: skillKnowledge.spatial,
+          },
           ...(power > 0 ? { annihilationPower: power } : {}),
           ...(level?.maxTargets ? { maxTargets: level.maxTargets } : {}),
         }];
@@ -221,6 +264,13 @@ export function buildDeepSeekContext(input: DeepSeekCompileEnvironment): unknown
   return {
     stageId: input.stageName,
     coordinateConvention: "x=column, y=row; exported MAA coordinates are converted after validation",
+    operatorKnowledgeModel: {
+      modelVersion: knowledgeModel.modelVersion,
+      generatedCommit: knowledgeModel.generatedCommit,
+      generatedOperatorCount: knowledgeModel.generatedOperatorCount,
+      vectorAxes: knowledgeModel.vectorAxes,
+    },
+    operatorKnowledgeVectorAxes: OPERATOR_VECTOR_AXES,
     allowedOperatorNames: roster.map(operator => operator.name),
     stage: {
       characterLimit: input.mapData.options.characterLimit,
@@ -412,6 +462,7 @@ export function compileDeepSeekCandidate(rawCandidate: unknown, environment: Dee
 }
 
 export async function generateDeepSeekScript(input: DeepSeekGenerationInput): Promise<DeepSeekGenerationResult> {
+  if (!input.getOperatorKnowledge) throw new Error("DeepSeek generation requires getOperatorKnowledge");
   const context = buildDeepSeekContext(input);
   let feedback: DeepSeekFeedback = { previousAttempt: null, errors: [] };
   let latest: DeepSeekCompileResult = validationResult(["DeepSeek did not return a candidate"]);

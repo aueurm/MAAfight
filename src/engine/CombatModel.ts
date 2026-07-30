@@ -1,5 +1,11 @@
 import modelJson from "../data/operatorCombat.v2.json";
 import type { PlayerOperator } from "../types";
+import {
+  getOperatorKnowledgeModelInfo,
+  getKnowledgeRangeOverride,
+  listSupplementalKnowledgeEntries,
+  resolveKnowledgeFallback,
+} from "./OperatorKnowledge";
 import type {
   CombatAttributes,
   CombatMetrics,
@@ -78,7 +84,38 @@ const model = modelJson as unknown as CombatModelV2;
 if (model.schemaVersion !== 2 || !model.source?.commit || !model.operators || model.source.exactOperatorCount <= 0) {
   throw new Error("Operator combat model v2 is missing or incompatible");
 }
+const knowledgeModelInfo = getOperatorKnowledgeModelInfo();
+if (knowledgeModelInfo.generatedCommit !== model.source.commit.toLowerCase() || knowledgeModelInfo.generatedOperatorCount !== model.source.exactOperatorCount) {
+  throw new Error("Generated operator knowledge does not match combat model");
+}
 
+function buildSupplementalOperators(): CombatOperatorRecord[] {
+  const base = Object.values(model.operators);
+  const supplemental: CombatOperatorRecord[] = [];
+  for (const entry of listSupplementalKnowledgeEntries()) {
+    if (!entry.id || model.operators[entry.id]) continue;
+    if (model.nameIndex[entry.name]) throw new Error(`Supplemental operator duplicates a combat-model name: ${entry.name}`);
+    const fallback = resolveKnowledgeFallback(entry, base);
+    if (!fallback) throw new Error(`Supplemental operator ${entry.name} requires fallbackTo or vector`);
+    supplemental.push({
+      ...fallback,
+      id: entry.id,
+      name: entry.name,
+      role: (entry.role || fallback.role) as EngineRole,
+      profession: entry.profession || fallback.profession,
+      subProfession: entry.subProfession === undefined ? fallback.subProfession : entry.subProfession,
+      position: entry.position || fallback.position,
+      damageType: entry.damageType || fallback.damageType,
+      rarity: entry.rarity ?? fallback.rarity,
+      modelCoverageGaps: [...new Set([...fallback.modelCoverageGaps, `knowledge_similarity_fallback:${fallback.id}`])].sort(),
+    });
+  }
+  return supplemental;
+}
+
+const supplementalOperators = buildSupplementalOperators();
+const supplementalById = new Map(supplementalOperators.map(record => [record.id, record]));
+const supplementalByName = new Map(supplementalOperators.map(record => [record.name, record]));
 const profileCache = new Map<string, ResolvedOperatorProfile>();
 
 function interpolate(minimum: number, maximum: number, ratio: number): number {
@@ -123,23 +160,23 @@ function metricsAtAttributes(base: CombatMetrics, source: CombatAttributes, reso
 
 export function getCombatModelInfo(): { modelVersion: string; commit: string; operatorCount: number } {
   return {
-    modelVersion: model.modelVersion,
+    modelVersion: `${model.modelVersion}+${knowledgeModelInfo.modelVersion}`,
     commit: model.source.commit,
-    operatorCount: model.source.exactOperatorCount,
+    operatorCount: model.source.exactOperatorCount + supplementalOperators.length,
   };
 }
 
 export function getCombatOperatorByName(name: string): CombatOperatorRecord | undefined {
   const id = model.nameIndex[name];
-  return id ? model.operators[id] : undefined;
+  return id ? model.operators[id] : supplementalByName.get(name);
 }
 
 export function getCombatOperator(idOrName: string): CombatOperatorRecord | undefined {
-  return model.operators[idOrName] || getCombatOperatorByName(idOrName);
+  return model.operators[idOrName] || supplementalById.get(idOrName) || getCombatOperatorByName(idOrName);
 }
 
 export function listCombatOperators(): CombatOperatorRecord[] {
-  return Object.values(model.operators);
+  return [...Object.values(model.operators), ...supplementalOperators];
 }
 
 export function roleForOperatorName(name: string): EngineRole | undefined {
@@ -153,7 +190,7 @@ export function resolveOperatorProfile(
 ): ResolvedOperatorProfile {
   const skillRank = Math.max(1, Math.min(10, player?.skillLevel ?? 10));
   const cacheKey = [
-    model.modelVersion, record.id, player?.elite ?? 2, player?.level ?? record.e2.maxLevel,
+    getCombatModelInfo().modelVersion, record.id, player?.elite ?? 2, player?.level ?? record.e2.maxLevel,
     player?.potential ?? 1, skill, skillRank, player?.module ?? 0, player?.moduleLevel ?? 0,
     player ? "player" : "reference",
   ].join("|");
@@ -185,6 +222,7 @@ export function resolveOperatorProfile(
     ...(player ? ["assumed_max_trust"] : []),
   ];
   const sourceMetrics = levelRecord?.metrics || record.baseMetrics;
+  const knowledgeRange = getKnowledgeRangeOverride(record, skill);
   const potentialCount = Math.max(0, Math.min(record.potentialRespawnTimeModifiers.length, player?.potential ?? 0));
   const respawnTime = Math.max(0, record.respawnTime
     + record.potentialRespawnTimeModifiers.slice(0, potentialCount).reduce((total, modifier) => total + modifier, 0));
@@ -200,8 +238,8 @@ export function resolveOperatorProfile(
     skillDuration: Math.max(0, levelRecord?.duration || 0),
     respawnTime,
     baseRangeId: record.e2.rangeId,
-    skillRangeId: levelRecord?.rangeId || null,
-    range: model.ranges[levelRecord?.rangeId || record.e2.rangeId || ""] || [[0, 0]],
+    skillRangeId: knowledgeRange?.source === "skill" ? `knowledge:${record.id}:skill:${skill}` : levelRecord?.rangeId || null,
+    range: knowledgeRange?.range || model.ranges[levelRecord?.rangeId || record.e2.rangeId || ""] || [[0, 0]],
     attributes: moduleResolved.attributes,
     metrics: metricsAtAttributes(sourceMetrics, record.e2.reference, moduleResolved.attributes),
     maxTargets: levelRecord?.maxTargets || 1,

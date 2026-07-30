@@ -59,6 +59,7 @@ src/
 
 - `StageFacts.ts`：从 `MapData` 提取敌人数、HP、路线、15 秒压力窗口和部署资源。
 - `CombatModel.ts`：严格加载 `operatorCombat.v2.json`，解析默认或玩家 E2 档案，并提供进程内缓存。
+- `OperatorKnowledge.ts`：加载可选的 `operatorKnowledge.v1.json`，提供策略、空间、向量与相似回退；新干员可继承相似战斗档案而不改 planner。
 - `EncounterContext.ts`：保留 15 秒窗口内的敌人、路线、防御、法抗和移动模式，构造能力需求。
 - `CandidateBuilder.ts`：从完整模型目录按队伍边际收益搜索 `(operator, skill)`，再统一构造前线职责、医疗覆盖、点位、朝向、撤退、冷却救场和动作顺序。
 - `Scoring.ts`：计算基础交战与技能交战，以及点位、费用、语料、功能覆盖和自动化评分。
