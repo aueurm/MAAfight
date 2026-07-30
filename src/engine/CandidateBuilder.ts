@@ -607,6 +607,15 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       ...input.picks.filter(pick => !prioritizedIds.has(pick.operatorId)),
     ]
     : input.picks;
+  const jointDecisions = new Map(input.jointPlan?.decisions.map(decision => [decision.pick.operatorId, decision]));
+  let plannedJointTime = 0;
+  const jointPreDelay = (pick: EnginePick): number | undefined => {
+    if (!input.jointPlan) return undefined;
+    const targetTime = jointDecisions.get(pick.operatorId)?.targetTime || 0;
+    const delay = Math.max(0, targetTime - plannedJointTime);
+    plannedJointTime = Math.max(plannedJointTime, targetTime);
+    return delay > 0 ? Math.round(delay * 1_000) : undefined;
+  };
 
   const removeActive = (deployment: ActiveDeployment): void => {
     active.delete(deployment.pick.operatorId);
@@ -704,6 +713,12 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       // ponytail: keep a legal uncovered fallback when the roster or map has no covered tile.
       if (covered.length) placements = covered;
     }
+    const joint = jointDecisions.get(pick.operatorId);
+    if (joint) {
+      const planned = placements.find(placement => placement.point.row === joint.location[0]
+        && placement.point.col === joint.location[1] && placement.direction === joint.direction);
+      if (planned) placements = [planned];
+    }
     if (placements.length === 0) continue;
     placements = placements.slice(0, MAX_PLACEMENTS_PER_PICK)
       .map(placement => ({
@@ -715,7 +730,7 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
         || left.point.row - right.point.row || left.point.col - right.point.col
         || left.direction.localeCompare(right.direction));
     const placement = placements[Math.min(input.positionVariant, placements.length - 1)];
-    addDeployment(pick, placement);
+    addDeployment(pick, placement, jointPreDelay(pick));
   }
 
   // ponytail: rotate one executor; add threat-window scheduling only after rehearsals prove it changes a result.

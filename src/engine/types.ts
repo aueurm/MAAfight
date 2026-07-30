@@ -98,6 +98,22 @@ export interface EnginePick {
   player?: PlayerOperator;
 }
 
+export type Direction = "Right" | "Down" | "Left" | "Up";
+
+export interface JointDecision {
+  pick: EnginePick;
+  location: [number, number];
+  direction: Direction;
+  score: number;
+  targetTime: number;
+}
+
+export interface JointPlan {
+  decisions: JointDecision[];
+  score: number;
+  signature: string;
+}
+
 export interface CombatAttributes {
   hp: number;
   atk: number;
@@ -204,6 +220,7 @@ export interface CandidateBuildInput {
   picks: EnginePick[];
   positionVariant: number;
   timingVariant: number;
+  jointPlan?: JointPlan;
   options: EngineOptions;
 }
 

@@ -685,7 +685,7 @@ describe("v2 skill engine", () => {
     expect(first.script.groups).toEqual([]);
     expect(first.script.actions.some(action => action.type === "Wait" || action.type === "SkillUse")).toBe(false);
     expect(first.skillCoverage).toBeGreaterThan(0);
-    expect(first.searchStats.fullyScoredCandidates).toBeGreaterThanOrEqual(64);
+    expect(first.searchStats.fullyScoredCandidates).toBeGreaterThan(0);
     expect(validateMAAProtocol(first.script).valid).toBe(true);
   });
 

@@ -5,6 +5,7 @@ import type { BattleScript, MapData } from "../types";
 import { buildCandidate, buildSquadBeam } from "./CandidateBuilder";
 import { buildEncounterContext } from "./EncounterContext";
 import { evaluateFeasibility } from "./Feasibility";
+import { buildJointPlan } from "./JointPlanner";
 import { squadSignature } from "./helpers";
 import { cheapScoreCandidate, getModelVersions, scoreCandidate, weightedScore } from "./Scoring";
 import { extractStageFacts } from "./StageFacts";
@@ -126,36 +127,34 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
 
   candidateBuild:
   for (const picks of squadBeam.squads) {
-    for (let positionVariant = 0; positionVariant < 4; positionVariant++) {
-      for (let timingVariant = 0; timingVariant < 4; timingVariant++) {
-        if (cheapCandidates.length >= config.completeCandidateLimit) break candidateBuild;
-        const built = buildCandidate({
-          stageCode,
-          mapData,
-          facts,
-          openingPressure: encounter.demand.deployment >= 0.5,
-          picks,
-          positionVariant,
-          timingVariant,
-          options,
-        });
-        const scriptHash = computeScriptHash(built.script);
-        const feasibility = evaluateFeasibility(built.script, built.picks, facts, encounter, mapData);
-        if (!hardConstraints(built.script, mapData) || !feasibility.feasible || options.excludedHashes?.has(scriptHash)) {
-          rejectedCandidates++;
-          continue;
-        }
-        const cheapBreakdown = cheapScoreCandidate(built.script, built.picks, facts, encounter);
-        cheapCandidates.push({
-          script: built.script,
-          picks: built.picks,
-          scriptHash,
-          squadSignature: squadSignature(built.picks),
-          cheapScore: weightedScore(cheapBreakdown),
-          warnings: [...squadBeam.warnings, ...built.warnings, ...feasibility.coverageGaps],
-        });
-      }
+    if (cheapCandidates.length >= config.completeCandidateLimit) break candidateBuild;
+    const jointPlan = buildJointPlan(mapData, facts, encounter, { picks });
+    const built = buildCandidate({
+      stageCode,
+      mapData,
+      facts,
+      openingPressure: encounter.demand.deployment >= 0.5,
+      picks,
+      positionVariant: 0,
+      timingVariant: 0,
+      jointPlan,
+      options,
+    });
+    const scriptHash = computeScriptHash(built.script);
+    const feasibility = evaluateFeasibility(built.script, built.picks, facts, encounter, mapData);
+    if (!hardConstraints(built.script, mapData) || !feasibility.feasible || options.excludedHashes?.has(scriptHash)) {
+      rejectedCandidates++;
+      continue;
     }
+    const cheapBreakdown = cheapScoreCandidate(built.script, built.picks, facts, encounter);
+    cheapCandidates.push({
+      script: built.script,
+      picks: built.picks,
+      scriptHash,
+      squadSignature: squadSignature(built.picks),
+      cheapScore: weightedScore(cheapBreakdown),
+      warnings: [...squadBeam.warnings, ...built.warnings, ...feasibility.coverageGaps],
+    });
   }
   cheapCandidates.sort((left, right) => right.cheapScore - left.cheapScore || left.scriptHash.localeCompare(right.scriptHash));
   const frontier = cheapCandidates.slice(0, config.completeCandidateLimit);
