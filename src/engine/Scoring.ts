@@ -2,7 +2,8 @@ import corpusJson from "../data/corpusPrior.v1.json";
 import copilotPriorJson from "../data/copilotPrior.v1.json";
 import type { BattleScript, BattleScriptAction } from "../types";
 import { getCombatModelInfo } from "./CombatModel";
-import { clamp, rotateDirection } from "./helpers";
+import { clamp } from "./helpers";
+import { temporalCoverageScore } from "./TemporalCoverage";
 import type { EncounterContext, EnginePick, ScoreBreakdown, StageFacts } from "./types";
 
 interface CorpusStats {
@@ -20,8 +21,6 @@ const copilotPrior = copilotPriorJson as unknown as {
   contexts?: Record<string, CorpusStats>;
   stages?: Record<string, CorpusStats>;
 };
-const routeKeyCache = new WeakMap<StageFacts, Set<string>>();
-
 function average(values: number[]): number {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 }
@@ -43,20 +42,10 @@ function contexts(facts: StageFacts): string[] {
   ].filter(name => corpusModel.contexts[name]);
 }
 
-function rangeCoverage(action: BattleScriptAction, pick: EnginePick, facts: StageFacts): number {
-  if (!action.location || facts.routeCells.length === 0) return 0;
-  let routeKeys = routeKeyCache.get(facts);
-  if (!routeKeys) {
-    routeKeys = new Set(facts.routeCells.map(cell => `${cell.row},${cell.col}`));
-    routeKeyCache.set(facts, routeKeys);
-  }
-  const covered = new Set<string>();
-  for (const offset of pick.profile.range) {
-    const [row, col] = rotateDirection(offset, action.direction || "Right");
-    const key = `${action.location[0] + row},${action.location[1] + col}`;
-    if (routeKeys.has(key)) covered.add(key);
-  }
-  return covered.size / facts.routeCells.length;
+function rangeCoverage(action: BattleScriptAction, pick: EnginePick, encounter: EncounterContext): number {
+  if (!action.location) return 0;
+  const score = temporalCoverageScore(pick, { row: action.location[0], col: action.location[1] }, action.direction || "Right", encounter.temporalPressure);
+  return score / (score + 50);
 }
 
 function stageDps(pick: EnginePick, defense: number, resistance: number, modeledDps: number): number {
@@ -85,7 +74,7 @@ function engagementScore(
 ): number {
   const deployed = deployedPairs(script, picks).map(pair => ({
     ...pair,
-    coverage: rangeCoverage(pair.action, pair.pick, facts),
+    coverage: rangeCoverage(pair.action, pair.pick, encounter),
   }));
   if (deployed.length === 0 || encounter.windows.length === 0) return 0;
   const healing = deployed.reduce((sum, { pick }) => sum + pick.profile.metrics.healingHps, 0);
@@ -128,10 +117,10 @@ function cheapCombatScore(picks: EnginePick[], encounter: EncounterContext): num
   return clamp(Math.min(1, damage / peak) * 75 + Math.min(1, healing / 1200) * 25);
 }
 
-function positionScore(script: BattleScript, picks: EnginePick[], facts: StageFacts): number {
+function positionScore(script: BattleScript, picks: EnginePick[], facts: StageFacts, encounter: EncounterContext): number {
   const deployed = deployedPairs(script, picks);
   if (!deployed.length) return 0;
-  const coverage = average(deployed.map(({ action, pick }) => rangeCoverage(action, pick, facts)));
+  const coverage = average(deployed.map(({ action, pick }) => rangeCoverage(action, pick, encounter)));
   const routeFit = average(deployed.map(({ action }) => Math.max(0, 1 - nearest(
     { row: action.location![0], col: action.location![1] }, facts.routeCells
   ) / 4)));
@@ -225,7 +214,7 @@ function breakdown(
 ): ScoreBreakdown {
   return {
     combat: full ? engagementScore(script, picks, facts, encounter) : cheapCombatScore(picks, encounter),
-    position: positionScore(script, picks, facts),
+    position: positionScore(script, picks, facts, encounter),
     timing: timingScore(script, facts),
     corpus: corpusScore(script, facts),
     tasks: taskScore(picks, encounter),

@@ -699,6 +699,20 @@ describe("v2 skill engine", () => {
       .toBeGreaterThan(buildEncounterContext(ground, groundFacts).demand.antiAir);
   });
 
+  it("keeps pressure in its actual route window instead of only its spawn window", () => {
+    const mapData = makeMapData();
+    mapData.routes[0].checkpoints = [
+      { row: 2, col: 2, type: "MOVE" },
+      { row: 2, col: 2, type: "WAIT_FOR_SECONDS", waitSeconds: 20 },
+    ];
+    const facts = extractStageFacts(mapData);
+    const encounter = buildEncounterContext(mapData, facts);
+
+    expect(facts.temporalPressure.buckets.some(bucket => bucket.time === 15)).toBe(true);
+    expect(facts.pressureWindows.find(window => window.start === 15)?.totalHp).toBeGreaterThan(0);
+    expect(encounter.criticalWindows.some(window => window.start === 15)).toBe(true);
+  });
+
   it("separates armor, resistance, boss, and multi-route demands", () => {
     const armored = makeMapData();
     armored.enemyDetails[0] = { ...armored.enemyDetails[0], def: 900, magicResistance: 0 };

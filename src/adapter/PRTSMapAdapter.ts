@@ -2,7 +2,7 @@ import type {
   PRTSLevelData, MapData, TileInfo, DeploymentPoint,
   EnemyRoute, WaveInfo, FragmentInfo, EnemySpawn,
   SpawnEvent, HighThreatArea, StrategicPoint,
-  EnemyDetail,
+  EnemyDetail, PRTSCheckpoint, RouteCheckpoint,
 } from "../types";
 import type { PRTSMapLoader, EnemyDatabaseEntry } from "../loader/PRTSMapLoader";
 import { isSpawnActionType, normalizeBuildableType } from "../shared/prtsMap";
@@ -15,8 +15,26 @@ function tileKeyToType(key: string): string {
   return map[key] || "unknown";
 }
 
-function isMoveCheckpoint(type: unknown): boolean {
-  return type === "MOVE" || type === 0;
+function normalizeCheckpointType(type: PRTSCheckpoint["type"]): NonNullable<RouteCheckpoint["type"]> {
+  if (type === "MOVE" || type === 0) return "MOVE";
+  if (type === "WAIT_CURRENT_FRAGMENT_TIME" || type === 1) return "WAIT_CURRENT_FRAGMENT_TIME";
+  if (type === "WAIT_FOR_SECONDS" || type === 5) return "WAIT_FOR_SECONDS";
+  if (type === "DISAPPEAR" || type === 6) return "DISAPPEAR";
+  return "APPEAR_AT_POS";
+}
+
+function isPathCheckpoint(checkpoint: RouteCheckpoint): boolean {
+  return checkpoint.type === "MOVE" || checkpoint.type === "APPEAR_AT_POS";
+}
+
+function normalizeCheckpoint(checkpoint: PRTSCheckpoint): RouteCheckpoint {
+  const type = normalizeCheckpointType(checkpoint.type);
+  return {
+    row: checkpoint.position.row,
+    col: checkpoint.position.col,
+    type,
+    ...(type === "WAIT_FOR_SECONDS" ? { waitSeconds: Math.max(0, Number(checkpoint.time) || 0) } : {}),
+  };
 }
 
 function isInactiveRouteMode(mode: unknown): boolean {
@@ -68,11 +86,10 @@ function adaptRoutes(prts: PRTSLevelData): { routes: EnemyRoute[]; strategicPoin
   for (let i = 0; i < prts.routes.length; i++) {
     const r = prts.routes[i];
     if (!r) continue;
-    const checkpoints = (r.checkpoints || [])
-      .filter(cp => isMoveCheckpoint(cp.type))
-      .map(cp => ({ row: cp.position.row, col: cp.position.col }));
+    const checkpoints = (r.checkpoints || []).map(normalizeCheckpoint);
+    const pathCheckpoints = checkpoints.filter(isPathCheckpoint);
 
-    if (isInactiveRouteMode(r.motionMode) || checkpoints.length === 0) continue;
+    if (isInactiveRouteMode(r.motionMode) || pathCheckpoints.length === 0) continue;
 
     routes.push({
       id: i,
@@ -82,7 +99,7 @@ function adaptRoutes(prts: PRTSLevelData): { routes: EnemyRoute[]; strategicPoin
       checkpoints,
     });
 
-    for (const cp of checkpoints) {
+    for (const cp of pathCheckpoints) {
       const key = `${cp.row},${cp.col}`;
       pathCrossCount.set(key, (pathCrossCount.get(key) || 0) + 1);
     }

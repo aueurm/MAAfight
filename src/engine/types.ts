@@ -1,4 +1,4 @@
-import type { BattleScript, DeploymentPoint, MapData, PlayerOperator } from "../types";
+import type { BattleScript, DeploymentPoint, EnemyMechanic, MapData, PlayerOperator } from "../types";
 
 export type EngineRole = "vanguard" | "guard" | "tank" | "sniper" | "caster" | "medic" | "support" | "specialist";
 
@@ -11,6 +11,53 @@ export interface PressureWindow {
   flyingCount: number;
   eliteCount: number;
   bossCount: number;
+}
+
+export interface TemporalCellPressure {
+  row: number;
+  col: number;
+  groundHp: number;
+  airHp: number;
+  groundCount: number;
+  airCount: number;
+  incomingAttack: number;
+  blockDemand: number;
+  eliteWeight: number;
+  bossWeight: number;
+  goalThreat: number;
+  mergeWeight: number;
+  routeIds: number[];
+  enemyIds: string[];
+  mechanisms: EnemyMechanic[];
+  coverageGaps: string[];
+}
+
+export interface TemporalPressureBucket {
+  time: number;
+  cells: TemporalCellPressure[];
+}
+
+export interface CriticalPressureWindow {
+  start: number;
+  end: number;
+  groundHp: number;
+  airHp: number;
+  groundCount: number;
+  airCount: number;
+  incomingAttack: number;
+  blockDemand: number;
+  eliteWeight: number;
+  bossWeight: number;
+  goalThreat: number;
+  mergeWeight: number;
+  severity: number;
+}
+
+export interface TemporalPressure {
+  bucketSeconds: number;
+  buckets: TemporalPressureBucket[];
+  criticalWindows: CriticalPressureWindow[];
+  coverageGaps: string[];
 }
 
 export interface StageFacts {
@@ -34,6 +81,9 @@ export interface StageFacts {
   initialCost: number;
   characterLimit: number;
   pressureWindows: PressureWindow[];
+  temporalPressure: TemporalPressure;
+  criticalWindows: CriticalPressureWindow[];
+  coverageGaps: string[];
   difficulty: "easy" | "medium" | "hard" | "extreme";
   summary: string;
 }
@@ -203,4 +253,8 @@ export interface EncounterContext {
   averageDefense: number;
   averageResistance: number;
   routeCells: Array<{ row: number; col: number }>;
+  temporalPressure: TemporalPressure;
+  criticalWindows: CriticalPressureWindow[];
+  coverageGaps: string[];
+  mechanismDemand: Partial<CapabilityDemand>;
 }

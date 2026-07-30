@@ -5,6 +5,7 @@ import {
   type CombatOperatorRecord,
 } from "./CombatModel";
 import { getOperatorKnowledge } from "./OperatorKnowledge";
+import { temporalCoverageScore, type TemporalDeployment } from "./TemporalCoverage";
 import { rotateDirection, squadSignature } from "./helpers";
 import type { BattleScript, BattleScriptOper, DeploymentPoint, MapData, PlayerOperator } from "../types";
 import type {
@@ -24,6 +25,8 @@ const MELEE_INCOMING_BONUS = 45;
 const MELEE_GOAL_FRONT_BONUS = 120;
 const RANGED_BLOCK_COVERAGE_BONUS = 100;
 const RANGED_ALL_BLOCKS_BONUS = 200;
+// ponytail: score only twelve structurally legal slots; expand only if rehearsals show a missed tactical cell.
+const MAX_PLACEMENTS_PER_PICK = 12;
 
 interface SquadState {
   picks: EnginePick[];
@@ -113,21 +116,14 @@ function knowledgeForPick(pick: EnginePick) {
 
 function maximumRouteCoverage(pick: EnginePick, facts: StageFacts): number {
   if (facts.routeCells.length === 0) return 0;
-  const routeKeys = new Set(facts.routeCells.map(cell => `${cell.row},${cell.col}`));
   let maximum = 0;
   for (const point of facts.deploymentPoints) {
     if (!compatible(pick, point)) continue;
     for (const direction of DIRECTIONS) {
-      const covered = new Set<string>();
-      for (const offset of pick.profile.range) {
-        const [row, col] = rotateDirection(offset, direction);
-        const key = `${point.row + row},${point.col + col}`;
-        if (routeKeys.has(key)) covered.add(key);
-      }
-      maximum = Math.max(maximum, covered.size / facts.routeCells.length);
+      maximum = Math.max(maximum, temporalCoverageScore(pick, point, direction, facts.temporalPressure));
     }
   }
-  return maximum * knowledgeForPick(pick).spatial.routeCoverageWeight;
+  return maximum / (maximum + 50) * knowledgeForPick(pick).spatial.routeCoverageWeight;
 }
 
 function capabilitiesForPick(pick: EnginePick, encounter: EncounterContext, facts: StageFacts): CapabilityDemand {
@@ -376,15 +372,11 @@ function placementScore(
   facts: StageFacts
 ): number {
   const spatial = knowledgeForPick(pick).spatial;
-  const routeKeys = new Set(facts.routeCells.map(cell => `${cell.row},${cell.col}`));
-  const covered = pick.profile.range.reduce((count, offset) => {
-    const [row, col] = rotateDirection(offset, direction);
-    return count + Number(routeKeys.has(`${point.row + row},${point.col + col}`));
-  }, 0);
+  const coverage = temporalCoverageScore(pick, point, direction, facts.temporalPressure);
   const nearestRoute = facts.routeCells.length ? Math.min(...facts.routeCells.map(cell => distance(point, cell))) : 0;
   const nearestGoal = facts.goalCells.length ? Math.min(...facts.goalCells.map(cell => distance(point, cell))) : 0;
   const melee = pick.profile.position === "MELEE";
-  return covered * 30 * spatial.routeCoverageWeight
+  return Math.log1p(coverage) * 20 * spatial.routeCoverageWeight
     - nearestRoute * (melee ? 22 : 8) * spatial.routeDistanceWeight
     - nearestGoal * (melee ? 1 : 0.5) * spatial.routeDistanceWeight;
 }
@@ -407,6 +399,22 @@ function rankedPlacements(pick: EnginePick, facts: StageFacts): RankedPlacement[
       || left.direction.localeCompare(right.direction));
   byPick.set(key, ranked);
   return ranked;
+}
+
+function temporalMarginalAdjustment(
+  pick: EnginePick,
+  placement: RankedPlacement,
+  active: Map<string, ActiveDeployment>,
+  facts: StageFacts
+): number {
+  const existing: TemporalDeployment[] = [...active.values()].map(deployment => ({
+    pick: deployment.pick,
+    location: deployment.placement.point,
+    direction: deployment.placement.direction,
+  }));
+  const base = temporalCoverageScore(pick, placement.point, placement.direction, facts.temporalPressure);
+  const marginal = temporalCoverageScore(pick, placement.point, placement.direction, facts.temporalPressure, existing);
+  return (Math.log1p(marginal) - Math.log1p(base)) * 20;
 }
 
 function routeThreats(mapData: MapData): Map<number, number> {
@@ -650,14 +658,7 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       removeActive(outgoing);
     }
     const ranked = rankedPlacements(pick, input.facts)
-      .filter(({ point }) => !occupiedPositions.has(`${point.row},${point.col}`))
-      .map(placement => ({
-        ...placement,
-        score: placement.score + placementPreference(pick, placement, meleeBlocks, input.mapData, threats, goalFronts, securedGoals),
-      }))
-      .sort((left, right) => right.score - left.score
-        || left.point.row - right.point.row || left.point.col - right.point.col
-        || left.direction.localeCompare(right.direction));
+      .filter(({ point }) => !occupiedPositions.has(`${point.row},${point.col}`));
     let placements = isTemporaryPick(pick)
       ? ranked.filter(({ point }) => !goalFronts.has(`${point.row},${point.col}`))
       : ranked;
@@ -704,6 +705,15 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       if (covered.length) placements = covered;
     }
     if (placements.length === 0) continue;
+    placements = placements.slice(0, MAX_PLACEMENTS_PER_PICK)
+      .map(placement => ({
+        ...placement,
+        score: placement.score + temporalMarginalAdjustment(pick, placement, active, input.facts)
+          + placementPreference(pick, placement, meleeBlocks, input.mapData, threats, goalFronts, securedGoals),
+      }))
+      .sort((left, right) => right.score - left.score
+        || left.point.row - right.point.row || left.point.col - right.point.col
+        || left.direction.localeCompare(right.direction));
     const placement = placements[Math.min(input.positionVariant, placements.length - 1)];
     addDeployment(pick, placement);
   }
@@ -734,16 +744,7 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
   }
   for (const pick of emergencyReserves) {
     let placements = rankedPlacements(pick, input.facts)
-      .filter(({ point }) => !emergencyPositions.has(`${point.row},${point.col}`))
-      .map(placement => ({
-        ...placement,
-        score: placement.score + placementPreference(
-          pick, placement, meleeBlocks, input.mapData, threats, goalFronts, securedGoals
-        ),
-      }))
-      .sort((left, right) => right.score - left.score
-        || left.point.row - right.point.row || left.point.col - right.point.col
-        || left.direction.localeCompare(right.direction));
+      .filter(({ point }) => !emergencyPositions.has(`${point.row},${point.col}`));
     if (isTemporaryPick(pick)) {
       placements = placements.filter(({ point }) => !goalFronts.has(`${point.row},${point.col}`));
     }
@@ -751,7 +752,16 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       const covered = placements.filter(placement => activeHealers.some(healer => coversPoint(healer, placement.point)));
       if (covered.length) placements = covered;
     }
-    const placement = placements[0];
+    const placement = placements.slice(0, MAX_PLACEMENTS_PER_PICK)
+      .map(candidate => ({
+        ...candidate,
+        score: candidate.score + temporalMarginalAdjustment(pick, candidate, active, input.facts) + placementPreference(
+          pick, candidate, meleeBlocks, input.mapData, threats, goalFronts, securedGoals
+        ),
+      }))
+      .sort((left, right) => right.score - left.score
+        || left.point.row - right.point.row || left.point.col - right.point.col
+        || left.direction.localeCompare(right.direction))[0];
     if (!placement) continue;
     emergencyPositions.add(`${placement.point.row},${placement.point.col}`);
     // ponytail: one cooldown condition reacts to any field loss without guessing a kill count or death time.

@@ -1,7 +1,8 @@
 import { createHash } from "crypto";
 import type { MapData } from "../types";
+import { buildMechanicAdjustment } from "./EnemyMechanics";
 import { clamp } from "./helpers";
-import type { EncounterContext, EncounterEnemyGroup, StageFacts } from "./types";
+import type { CapabilityDemand, EncounterContext, EncounterEnemyGroup, StageFacts } from "./types";
 
 const encounterCache = new Map<string, EncounterContext>();
 
@@ -57,8 +58,11 @@ export function buildEncounterContext(mapData: MapData, facts: StageFacts): Enco
   const averageResistance = totalCount
     ? windows.reduce((sum, window) => sum + window.groups.reduce((n, group) => n + group.res * group.count, 0), 0) / totalCount
     : 0;
-  const peakHp = Math.max(0, ...windows.map(window => window.totalHp));
-  const averageWindowHp = facts.totalHp / Math.max(1, windows.length);
+  const peakHp = Math.max(0,
+    ...facts.criticalWindows.map(window => window.groundHp + window.airHp),
+    ...windows.map(window => window.totalHp)
+  );
+  const averageWindowHp = facts.totalHp / Math.max(1, facts.criticalWindows.length || windows.length);
   const flying = windows.reduce((sum, window) => sum + window.groups
     .filter(group => group.motionMode === "fly").reduce((n, group) => n + group.count, 0), 0);
   const fast = windows.reduce((sum, window) => sum + window.groups
@@ -72,38 +76,53 @@ export function buildEncounterContext(mapData: MapData, facts: StageFacts): Enco
   const groundShare = facts.groundRouteCount / Math.max(1, facts.groundRouteCount + facts.flyingRouteCount);
   const referencePhysicalEffectiveness = Math.max(0.05, (1000 - averageDefense) / 1000);
   const referenceArtsEffectiveness = Math.max(0.05, 1 - averageResistance / 100);
+  const mechanisms = mapData.spawnTimeline.flatMap(spawn => {
+    const route = routes.get(spawn.routeIndex);
+    const enemy = enemies.get(spawn.enemyId);
+    return [...(enemy?.mechanics || []), ...(route?.motionMode === "fly" ? ["flying"] : [])];
+  });
+  const mechanismAdjustment = buildMechanicAdjustment(mechanisms);
+  const baseDemand: CapabilityDemand = {
+    physical: referencePhysicalEffectiveness,
+    arts: referenceArtsEffectiveness,
+    burst: clamp((peakHp / Math.max(1, averageWindowHp) - 1) / 2 + (facts.bossCount > 0 ? 0.5 : 0), 0, 1),
+    sustain: clamp((facts.criticalWindows.length || windows.length) / 8, 0, 1),
+    healing: clamp(averageAttack / 800 / Math.max(0.1, mechanismAdjustment.healingMultiplier) + facts.bossCount * 0.15, 0, 1),
+    block: clamp(
+      (facts.groundRouteCount / Math.max(1, facts.groundRouteCount + facts.flyingRouteCount) * 0.45
+        + facts.laneCount / 6) * mechanismAdjustment.blockMultiplier,
+      0,
+      1
+    ),
+    control: clamp(fast / Math.max(1, totalCount) + facts.eliteCount / Math.max(1, totalCount), 0, 1),
+    antiAir: clamp(flying / Math.max(1, totalCount) * 2, 0, 1),
+    coverage: clamp(facts.laneCount / 4 + facts.routeCells.length / 40, 0, 1),
+    singleTarget: clamp(eliteBossCount / Math.max(1, totalCount) * 3 + facts.bossCount * 0.35, 0, 1),
+    area: clamp(largestGroup / 10 + totalCount / Math.max(1, windows.length * 25), 0, 1),
+    laneHold: clamp(groundShare * (facts.laneCount / 4 + windows.length / 12), 0, 1),
+    support: clamp(averageAttack / 1800 + fast / Math.max(1, totalCount), 0, 1),
+    deployment: clamp(
+      Math.max(0, (20 - facts.initialCost) / 30)
+        + (windows[0]?.totalHp || 0) / Math.max(1, peakHp) * 0.5,
+      0,
+      1
+    ),
+  };
+  for (const [key, value] of Object.entries(mechanismAdjustment.demand)) {
+    const capability = key as keyof CapabilityDemand;
+    baseDemand[capability] = clamp(baseDemand[capability] + (value || 0), 0, 1);
+  }
   const context: EncounterContext = {
     hash,
     windows,
     averageDefense,
     averageResistance,
     routeCells: facts.routeCells,
-    demand: {
-      physical: referencePhysicalEffectiveness,
-      arts: referenceArtsEffectiveness,
-      burst: clamp((peakHp / Math.max(1, averageWindowHp) - 1) / 2 + (facts.bossCount > 0 ? 0.5 : 0), 0, 1),
-      sustain: clamp(windows.length / 8, 0, 1),
-      healing: clamp(averageAttack / 800 + facts.bossCount * 0.15, 0, 1),
-      block: clamp(
-        facts.groundRouteCount / Math.max(1, facts.groundRouteCount + facts.flyingRouteCount) * 0.45
-          + facts.laneCount / 6,
-        0,
-        1
-      ),
-      control: clamp(fast / Math.max(1, totalCount) + facts.eliteCount / Math.max(1, totalCount), 0, 1),
-      antiAir: clamp(flying / Math.max(1, totalCount) * 2, 0, 1),
-      coverage: clamp(facts.laneCount / 4 + facts.routeCells.length / 40, 0, 1),
-      singleTarget: clamp(eliteBossCount / Math.max(1, totalCount) * 3 + facts.bossCount * 0.35, 0, 1),
-      area: clamp(largestGroup / 10 + totalCount / Math.max(1, windows.length * 25), 0, 1),
-      laneHold: clamp(groundShare * (facts.laneCount / 4 + windows.length / 12), 0, 1),
-      support: clamp(averageAttack / 1800 + fast / Math.max(1, totalCount), 0, 1),
-      deployment: clamp(
-        Math.max(0, (20 - facts.initialCost) / 30)
-          + (windows[0]?.totalHp || 0) / Math.max(1, peakHp) * 0.5,
-        0,
-        1
-      ),
-    },
+    demand: baseDemand,
+    temporalPressure: facts.temporalPressure,
+    criticalWindows: facts.criticalWindows,
+    coverageGaps: [...new Set([...facts.coverageGaps, ...mechanismAdjustment.coverageGaps])].sort(),
+    mechanismDemand: { ...mechanismAdjustment.demand },
   };
   encounterCache.set(hash, context);
   return context;

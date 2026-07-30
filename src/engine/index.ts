@@ -4,6 +4,7 @@ import { exportToCopilotFormat } from "../copilot/ScriptExporter";
 import type { BattleScript, MapData } from "../types";
 import { buildCandidate, buildSquadBeam } from "./CandidateBuilder";
 import { buildEncounterContext } from "./EncounterContext";
+import { evaluateFeasibility } from "./Feasibility";
 import { squadSignature } from "./helpers";
 import { cheapScoreCandidate, getModelVersions, scoreCandidate, weightedScore } from "./Scoring";
 import { extractStageFacts } from "./StageFacts";
@@ -139,7 +140,8 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
           options,
         });
         const scriptHash = computeScriptHash(built.script);
-        if (!hardConstraints(built.script, mapData) || options.excludedHashes?.has(scriptHash)) {
+        const feasibility = evaluateFeasibility(built.script, built.picks, facts, encounter, mapData);
+        if (!hardConstraints(built.script, mapData) || !feasibility.feasible || options.excludedHashes?.has(scriptHash)) {
           rejectedCandidates++;
           continue;
         }
@@ -150,7 +152,7 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
           scriptHash,
           squadSignature: squadSignature(built.picks),
           cheapScore: weightedScore(cheapBreakdown),
-          warnings: [...squadBeam.warnings, ...built.warnings],
+          warnings: [...squadBeam.warnings, ...built.warnings, ...feasibility.coverageGaps],
         });
       }
     }

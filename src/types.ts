@@ -173,8 +173,20 @@ export interface EnemyRoute {
   motionMode: "walk" | "fly";
   startPosition: { row: number; col: number };
   endPosition: { row: number; col: number };
-  checkpoints: { row: number; col: number }[];
+  checkpoints: RouteCheckpoint[];
 }
+
+export interface RouteCheckpoint {
+  row: number;
+  col: number;
+  type?: "MOVE" | "WAIT_CURRENT_FRAGMENT_TIME" | "WAIT_FOR_SECONDS" | "DISAPPEAR" | "APPEAR_AT_POS";
+  waitSeconds?: number;
+}
+
+export type EnemyMechanic = "stealth" | "unblockable" | "flying" | "invulnerable"
+  | "multiPhase" | "revive" | "split" | "summon" | "deathExplosion"
+  | "specialTargeting" | "antiHeal" | "elementalDamage" | "taunt"
+  | "shiftImmune" | "tileInteraction" | "blockAmplified" | "damageReflect";
 
 export interface WaveInfo {
   index: number;
@@ -205,6 +217,7 @@ export interface EnemyDetail {
   moveSpeed: number;
   isBoss: boolean;
   isElite: boolean;
+  mechanics?: EnemyMechanic[];
 }
 
 export interface SpawnEvent {

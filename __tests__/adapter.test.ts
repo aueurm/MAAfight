@@ -60,6 +60,22 @@ describe("PRTSMapAdapter", () => {
     expect(mapData.strategicPoints.length).toBeGreaterThan(0);
   });
 
+  it("preserves route checkpoint waits without treating them as path turns", () => {
+    const data = JSON.parse(JSON.stringify(prtsData)) as PRTSLevelData;
+    const route = data.routes.find((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+    if (!route) throw new Error("fixture has no route");
+    route.checkpoints = [
+      { type: "MOVE", time: 0, position: { row: 2, col: 3 } },
+      { type: "WAIT_FOR_SECONDS", time: 4, position: { row: 2, col: 3 } },
+    ];
+
+    const mapData = adapter.adapt(data, "a001_01");
+    expect(mapData.routes[0].checkpoints).toEqual([
+      { type: "MOVE", row: 2, col: 3 },
+      { type: "WAIT_FOR_SECONDS", row: 2, col: 3, waitSeconds: 4 },
+    ]);
+  });
+
   it("should generate sorted spawn timeline", () => {
     const mapData = adapter.adapt(prtsData, "a001_01");
 
