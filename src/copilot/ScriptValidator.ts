@@ -47,6 +47,9 @@ export function validateScript(script: BattleScript, mapData?: MapData): Validat
     if (!hasCatalogOperator(name) && !groupNames.has(name)) warnings.push({ code: "UNKNOWN_OPERATOR", message: `Operator "${name}" not in catalog` });
   }
   const deployCount = actions.filter(action => action.type === "Deploy").length;
+  if (actions.some(action => action.type === "Skill") && actions.some(action => action.type === "SkillDaemon")) {
+    errors.push({ code: "MIXED_SKILL_CONTROL", message: "Manual Skill actions and SkillDaemon are mutually exclusive" });
+  }
   if (deployCount < 3) warnings.push({ code: "LOW_DEPLOY_COUNT", message: `Only ${deployCount} deployments` });
   if (deployCount > 0 && !actions.some(action => action.type === "SkillDaemon" || action.type === "Skill")) {
     warnings.push({ code: "NO_SKILL_DAEMON", message: "No SkillDaemon found" });

@@ -43,6 +43,8 @@ export function validateMAAProtocol(script: BattleScript): ProtocolValidationRes
   const groupNames = new Set((script.groups || []).map(group => group.name));
   const operatorNames = new Set<string>();
   let hasResetStopwatch = false;
+  let hasManualSkill = false;
+  let hasSkillDaemon = false;
 
   for (const operator of script.opers || []) {
     operatorNames.add(operator.name);
@@ -64,6 +66,8 @@ export function validateMAAProtocol(script: BattleScript): ProtocolValidationRes
     if (!ACTION_TYPES.has(action.type)) {
       error(errors, "MAA_INVALID_ACTION_TYPE", `Action ${index} has unsupported MAA action type: ${action.type}`, index);
     }
+    if (action.type === "Skill") hasManualSkill = true;
+    if (action.type === "SkillDaemon") hasSkillDaemon = true;
     if (action.type === "ResetStopwatch") hasResetStopwatch = true;
     checkName(warnings, action.name, "actions[].name", index);
     if (action.time_elapsed !== undefined && !hasResetStopwatch) {
@@ -75,6 +79,9 @@ export function validateMAAProtocol(script: BattleScript): ProtocolValidationRes
     if (action.type === "Deploy" && action.name && !operatorNames.has(action.name) && !groupNames.has(action.name)) {
       warning(warnings, "DEPLOY_NAME_NOT_DECLARED", `Deploy action references an undeclared name: ${action.name}`, index);
     }
+  }
+  if (hasManualSkill && hasSkillDaemon) {
+    error(errors, "MIXED_SKILL_CONTROL", "Manual Skill actions and SkillDaemon are mutually exclusive.");
   }
 
   return { valid: errors.length === 0, errors, warnings, score: Math.max(0, 100 - errors.length * 25 - warnings.length * 5) };

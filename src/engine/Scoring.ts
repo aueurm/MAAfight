@@ -200,7 +200,7 @@ function taskScore(picks: EnginePick[], encounter: EncounterContext): number {
 function automationScore(script: BattleScript): number {
   let score = 70;
   if (script.actions[0]?.type === "SpeedUp") score += 10;
-  if (script.actions.at(-1)?.type === "SkillDaemon") score += 15;
+  if (script.actions.at(-1)?.type === "SkillDaemon" || script.actions.some(action => action.type === "Skill")) score += 15;
   if (!script.actions.some(action => action.type === "Wait" || action.type === "SkillUse")) score += 5;
   return clamp(score);
 }

@@ -85,6 +85,27 @@ describe("FeedbackStore", () => {
     expect(store.successfulGeneration("stage-2", "old-box")).toBeUndefined();
   });
 
+  it("persists v3 diagnostics and learns them only for the matching revision", () => {
+    store.appendGeneration({
+      schemaVersion: 2, generationId: "generation-v3", scriptHash: "hash-v3", stageId: "stage-v3", stageName: "TEST-V3",
+      operatorBoxHash: "box", engineVersion: "v2-temporal-v1", modelVersion: "model", combatDataVersion: "combat",
+      candidateScore: 70, scoreBreakdown: {}, combatCoverage: 0, stageContentHash: "stage-hash", gameDataCommit: "game-data",
+      enemyTotal: 10, outputPath: "", script: script(), createdAt: "2026-07-30T00:00:00.000Z",
+    });
+    const record = store.recordFeedback({
+      scriptHash: "hash-v3", killed: 5, currentOperatorBoxHash: "box",
+      firstLeak: { time: 12, routeId: 2, location: [1, 3] },
+      failureTags: ["flying"], deploymentFailures: [{ reason: "cost" }],
+    });
+    const revision = { engineVersion: "v2-temporal-v1", stageContentHash: "stage-hash", gameDataCommit: "game-data" };
+    const bias = store.searchBias("stage-v3", "box", revision);
+
+    expect(record).toMatchObject({ schemaVersion: 3, firstLeak: { routeId: 2 }, failureTags: ["flying"] });
+    expect(bias.openingCoverage).toBeGreaterThan(0);
+    expect(bias.antiAir).toBeGreaterThan(0);
+    expect(store.searchBias("stage-v3", "box", { ...revision, engineVersion: "other" }).antiAir).toBe(0);
+  });
+
   it("summarizes feedback across internal variants of the same displayed stage", () => {
     const base = {
       schemaVersion: 2 as const,

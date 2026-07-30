@@ -38,6 +38,7 @@ interface CheapCandidate {
   squadSignature: string;
   cheapScore: number;
   warnings: string[];
+  coverageGaps: string[];
 }
 
 const engagementCache = new Map<string, ReturnType<typeof scoreCandidate>>();
@@ -74,12 +75,14 @@ function hardConstraints(script: BattleScript, mapData: MapData): boolean {
 }
 
 function engagementKey(candidate: CheapCandidate, encounterHash: string, combatVersion: string): string {
-  const actions = candidate.script.actions.filter(action => action.type === "Deploy").map(action => ({
+  const actions = candidate.script.actions.filter(action => action.type === "Deploy" || action.type === "Skill" || action.type === "SkillDaemon").map(action => ({
+    type: action.type,
     name: action.name,
     location: action.location,
     direction: action.direction,
     costs: action.costs,
     pre_delay: action.pre_delay,
+    time_elapsed: action.time_elapsed,
   }));
   return createHash("sha256").update(JSON.stringify({
     scorer: "skill-engagement-v1",
@@ -128,16 +131,18 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
   candidateBuild:
   for (const picks of squadBeam.squads) {
     if (cheapCandidates.length >= config.completeCandidateLimit) break candidateBuild;
-    const jointPlan = buildJointPlan(mapData, facts, encounter, { picks });
+    const jointPlan = buildJointPlan(mapData, facts, encounter, { picks, searchBias: options.searchBias });
     const built = buildCandidate({
       stageCode,
       mapData,
       facts,
-      openingPressure: encounter.demand.deployment >= 0.5,
+      openingPressure: encounter.demand.deployment + (options.searchBias?.openingCoverage || 0) * 0.25
+        + (options.searchBias?.costSafety || 0) * 0.1 >= 0.5,
       picks,
       positionVariant: 0,
       timingVariant: 0,
       jointPlan,
+      encounter,
       options,
     });
     const scriptHash = computeScriptHash(built.script);
@@ -154,6 +159,7 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
       squadSignature: squadSignature(built.picks),
       cheapScore: weightedScore(cheapBreakdown),
       warnings: [...squadBeam.warnings, ...built.warnings, ...feasibility.coverageGaps],
+      coverageGaps: [...new Set([...built.coverageGaps, ...feasibility.coverageGaps])].sort(),
     });
   }
   cheapCandidates.sort((left, right) => right.cheapScore - left.cheapScore || left.scriptHash.localeCompare(right.scriptHash));
@@ -177,7 +183,8 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
     }
     const feedback = options.feedbackAdjustment?.(candidate.script, candidate.scriptHash, scored.breakdown) || 0;
     const score = Math.max(0, Math.min(100, weightedScore(scored.breakdown) + feedback));
-    const warnings = [...new Set([...candidate.warnings, ...scored.coverageGaps])];
+    const coverageGaps = [...new Set([...candidate.coverageGaps, ...scored.coverageGaps])].sort();
+    const warnings = [...new Set([...candidate.warnings, ...coverageGaps])];
     candidate.script.metadata = {
       ...candidate.script.metadata,
       candidateScore: score,
@@ -186,7 +193,7 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
       combatModelVersion: versions.combat,
       combatCoverage: scored.coverage,
       skillCoverage: scored.skillCoverage,
-      coverageGaps: scored.coverageGaps,
+      coverageGaps,
       squadSignature: candidate.squadSignature,
       stageContentHash: encounter.hash,
       warnings,
@@ -201,7 +208,7 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
       combatModelVersion: versions.combat,
       combatCoverage: scored.coverage,
       skillCoverage: scored.skillCoverage,
-      coverageGaps: scored.coverageGaps,
+      coverageGaps,
       evaluatedCandidates: results.length + 1,
       rejectedCandidates,
       stageContentHash: encounter.hash,

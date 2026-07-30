@@ -46,7 +46,7 @@ export function buildTimelineEvents(mapData: MapData, facts: StageFacts): Timeli
   return events.sort((left, right) => left.time - right.time || left.type.localeCompare(right.type));
 }
 
-export function planDeploymentTimeline(script: BattleScript, options: MapOptions): DeploymentTimeline {
+export function planDeploymentTimeline(script: Pick<BattleScript, "actions">, options: MapOptions): DeploymentTimeline {
   const tick = Math.max(0.01, options.costIncreaseTime || 1);
   const deployments: PlannedDeployment[] = [];
   const reasons = new Set<string>();

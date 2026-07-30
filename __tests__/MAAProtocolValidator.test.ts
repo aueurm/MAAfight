@@ -47,6 +47,15 @@ describe("validateMAAProtocol", () => {
     expect(result.errors.some(issue => issue.code === "MAA_INVALID_ACTION_TYPE")).toBe(true);
   });
 
+  it("should reject mixed manual and daemon skill control", () => {
+    const result = validateMAAProtocol(makeScript({
+      actions: [{ type: "Skill", name: "test" }, { type: "SkillDaemon" }],
+    }));
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(issue => issue.code === "MIXED_SKILL_CONTROL")).toBe(true);
+  });
+
   it("should fail unknown action types", () => {
     const result = validateMAAProtocol(makeScript({
       actions: [{ type: "BadAction" }],

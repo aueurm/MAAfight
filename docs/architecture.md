@@ -8,10 +8,12 @@ GUI / pipeline 只提供两条显式路线：`rule-core` 使用 v2 确定性引�
 Stage code / local JSON
   -> PRTSMapLoader
   -> PRTSMapAdapter
-  -> extractStageFacts
+  -> RouteTimeline + temporal StageFacts
   -> EncounterContext
   -> squad Beam (operator + skill)
-  -> deployment Beam + cheap scoring
+  -> joint deployment Beam (operator + skill + cell + direction)
+  -> event deployment timeline + feasibility gates
+  -> manual Skill plan or SkillDaemon
   -> bounded skill engagement scoring
   -> ScriptValidator + MAAProtocolValidator
   -> ScriptExporter
@@ -57,21 +59,22 @@ src/
 
 ## 引擎模块
 
-- `StageFacts.ts`：从 `MapData` 提取敌人数、HP、路线、15 秒压力窗口和部署资源。
+- `StageFacts.ts`、`RouteTimeline.ts`、`TemporalPressure.ts`：从 `MapData` 逐秒展开出生、移动和等待，汇总 15 秒关键压力窗口与未知路线覆盖缺口。
 - `CombatModel.ts`：严格加载 `operatorCombat.v2.json`，解析默认或玩家 E2 档案，并提供进程内缓存。
 - `OperatorKnowledge.ts`：加载可选的 `operatorKnowledge.v1.json`，提供策略、空间、向量与相似回退；新干员可继承相似战斗档案而不改 planner。
-- `EncounterContext.ts`：保留 15 秒窗口内的敌人、路线、防御、法抗和移动模式，构造能力需求。
-- `CandidateBuilder.ts`：从完整模型目录按队伍边际收益搜索 `(operator, skill)`，再统一构造前线职责、医疗覆盖、点位、朝向、撤退、冷却救场和动作顺序。
-- `Scoring.ts`：计算基础交战与技能交战，以及点位、费用、语料、功能覆盖和自动化评分。
-- `index.ts`：使用宽度 32 的 squad Beam 和最多 256 个廉价完整候选；昂贵层按候选上限自适应预算评分。
+- `EncounterContext.ts`、`EnemyMechanics.ts`：从时序压力和敌人机制构造能力需求，不可建模的机制保留为 coverage gap。
+- `JointPlanner.ts`、`CandidateBuilder.ts`：先搜索不冲突的 `(operator, skill, cell, direction)` 联合位置，再编码前线职责、医疗覆盖、撤退、冷却救场和官方 MAA 动作。
+- `TimelinePlanner.ts`、`Feasibility.ts`：从出生、火力区、蓝门、飞行、Boss 和费用事件推导条件时间线；费用、空中火力、地面阻挡、位置和生存不满足时直接拒绝候选。
+- `SkillPlanner.ts`：仅在技能类型、SP 与关键窗口均可验证时输出条件 `Skill`；否则使用 `SkillDaemon`，两者互斥。
+- `Scoring.ts`、`index.ts`：对已通过硬约束的候选执行确定性排序；`candidateScore` 仅用于候选排序。
 
 引擎输出固定编队。任何候选若违反占位、声明干员、部署格或协议约束会被拒绝；所有候选均失败时抛出错误。
 
 ## 反馈
 
-`.maafight/generations.jsonl` 保存脚本 hash、stage 内容 hash、GameData commit、模型版本、分项评分和玩家库 hash。`.maafight/feedback.jsonl` 保存 `killed / total`。
+`.maafight/generations.jsonl` 保存脚本 hash、stage 内容 hash、GameData commit、模型版本、分项评分和玩家库 hash。`.maafight/feedback.jsonl` 的 v3 记录可额外保存首次漏怪、干员死亡、部署失败、剩余敌人与机制标签。
 
-只有同关卡内容、同玩家库和同 `v2-skill-v1` 引擎版本的 100% 结果可以复用；旧 v2 记录可读取但不会作为新引擎成功缓存。低于 100% 的脚本 hash 被排除。
+只有同关卡内容、同玩家库、同 GameData commit 和同 `v2-temporal-v1` 引擎版本的 100% 结果可以复用；旧记录仍可读取。相同 revision 的失败反馈只形成有限的开局、对空、爆发、治疗、费用和路线排序偏置，不能绕过可行性硬约束；低于 100% 的脚本 hash 被排除。
 
 ## 依赖边界
 

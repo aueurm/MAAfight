@@ -6,6 +6,7 @@ import {
 } from "./CombatModel";
 import { getOperatorKnowledge } from "./OperatorKnowledge";
 import { temporalCoverageScore, type TemporalDeployment } from "./TemporalCoverage";
+import { planSkillActions } from "./SkillPlanner";
 import { rotateDirection, squadSignature } from "./helpers";
 import type { BattleScript, BattleScriptOper, DeploymentPoint, MapData, PlayerOperator } from "../types";
 import type {
@@ -101,6 +102,19 @@ function adjustedDps(pick: EnginePick, encounter: EncounterContext, value: numbe
     return perHit / interval * (value / Math.max(1, profile.metrics.normalDps));
   }
   return 0;
+}
+
+function biasedDemand(demand: CapabilityDemand, options: EngineOptions): CapabilityDemand {
+  const bias = options.searchBias;
+  if (!bias) return demand;
+  return {
+    ...demand,
+    antiAir: demand.antiAir + bias.antiAir,
+    burst: demand.burst + bias.bossBurst,
+    healing: demand.healing + bias.healing,
+    coverage: demand.coverage + bias.openingCoverage,
+    deployment: demand.deployment + bias.openingCoverage * 0.25 + bias.costSafety * 0.1,
+  };
 }
 
 function knowledgeForPick(pick: EnginePick) {
@@ -285,11 +299,12 @@ export function buildSquadBeam(
   options: EngineOptions
 ): SquadBeamResult {
   const available = pickOptions(options);
+  const demand = biasedDemand(encounter.demand, options);
   // ponytail: one threshold gates early vanguard starts; calibrate per-stage only if rehearsals show false positives.
-  const openingVanguards = encounter.demand.deployment >= 0.5
+  const openingVanguards = demand.deployment >= 0.5
     ? available.filter(pick => pick.role === "vanguard")
     : [];
-  const openingHealers = encounter.demand.deployment >= 0.5 && facts.groundRouteCount > 0
+  const openingHealers = demand.deployment >= 0.5 && facts.groundRouteCount > 0
     ? available.filter(pick => pick.profile.position === "RANGED" && isSustainedHealer(pick))
     : [];
   // ponytail: cap at two healer slots; revisit only if rehearsals prove three separated goals need more.
@@ -323,7 +338,7 @@ export function buildSquadBeam(
           picks,
           capabilities: addCapabilities(state.capabilities, addition),
           score: state.score + marginalScore(
-            state.capabilities, addition, encounter.demand, pick, slot, deploymentCoreSize
+            state.capabilities, addition, demand, pick, slot, deploymentCoreSize
           ),
           signature: squadSignature(picks),
         });
@@ -554,7 +569,7 @@ function isTemporaryPick(pick: EnginePick): boolean {
   return knowledgeForPick(pick).deployment.temporary || pick.role === "vanguard" || pick.profile.subProfession === "executor";
 }
 
-export function buildCandidate(input: CandidateBuildInput): { script: BattleScript; picks: EnginePick[]; warnings: string[] } {
+export function buildCandidate(input: CandidateBuildInput): { script: BattleScript; picks: EnginePick[]; warnings: string[]; coverageGaps: string[] } {
   const occupiedPositions = new Set<string>();
   const deployedOperators = new Set<string>();
   const plannedRetirements: Array<{ actionIndex: number; respawnTime: number }> = [];
@@ -791,9 +806,19 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
       ...(plannedCooldownMs > 0 ? { time_elapsed: plannedCooldownMs } : {}),
     });
   }
-  actions.push({ type: "SkillDaemon" });
+  const skillPlan = input.encounter
+    ? planSkillActions(actions, input.picks, input.encounter, input.mapData.options)
+    : { actions: [], strategies: {}, coverageGaps: [], usesDaemon: true };
+  if (skillPlan.usesDaemon) actions.push({ type: "SkillDaemon" });
+  else {
+    actions.splice(1, 0, { type: "ResetStopwatch" });
+    actions.push(...skillPlan.actions);
+  }
 
-  const warnings = input.picks.length < 12 ? [`Only ${input.picks.length} modeled elite 2 operators are available for the fixed squad.`] : [];
+  const warnings = [
+    ...(input.picks.length < 12 ? [`Only ${input.picks.length} modeled elite 2 operators are available for the fixed squad.`] : []),
+    ...skillPlan.coverageGaps,
+  ];
   const script: BattleScript = {
     stage_name: input.stageCode,
     minimum_required: "v6.0.0",
@@ -811,5 +836,5 @@ export function buildCandidate(input: CandidateBuildInput): { script: BattleScri
     },
     version: 3,
   };
-  return { script, picks: input.picks, warnings };
+  return { script, picks: input.picks, warnings, coverageGaps: skillPlan.coverageGaps };
 }

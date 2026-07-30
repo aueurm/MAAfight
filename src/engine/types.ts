@@ -145,6 +145,10 @@ export interface ResolvedOperatorProfile {
   skill: number;
   skillRank: number;
   skillDuration: number;
+  skillType?: string;
+  spType?: string;
+  spCost?: number;
+  initSp?: number;
   respawnTime: number;
   baseRangeId: string | null;
   skillRangeId: string | null;
@@ -165,10 +169,20 @@ export interface ScoreBreakdown {
   automation: number;
 }
 
+export interface SearchBias {
+  openingCoverage: number;
+  antiAir: number;
+  bossBurst: number;
+  healing: number;
+  costSafety: number;
+  routeWeights: Record<number, number>;
+}
+
 export interface EngineOptions {
   playerOperators?: Map<string, PlayerOperator>;
   excludedHashes?: Set<string>;
   feedbackAdjustment?: (script: BattleScript, scriptHash: string, breakdown: ScoreBreakdown) => number;
+  searchBias?: SearchBias;
   now?: () => number;
   search?: Partial<SearchConfig>;
 }
@@ -221,6 +235,7 @@ export interface CandidateBuildInput {
   positionVariant: number;
   timingVariant: number;
   jointPlan?: JointPlan;
+  encounter?: EncounterContext;
   options: EngineOptions;
 }
 
