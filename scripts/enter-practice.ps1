@@ -10,6 +10,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
+trap {
+  @{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress
+  exit 1
+}
 
 function Resolve-MaaDir {
   param([string]$InputPath)
@@ -51,7 +57,7 @@ function Get-MaaGuiConfig {
       if (-not $profile) { $profile = $raw.Configurations.Default }
       $settings = $profile.Gui.ConnectSettings
       if ($settings) {
-        return @{ "Connect.AdbPath" = [string]$settings.AdbPath; "Connect.Address" = [string]$settings.Address; "Connect.ConnectConfig" = [string]$settings.Config; "Copilot.SelectFormation" = $profile.Copilot.SelectFormation }
+        return @{ "Connect.AdbPath" = [string]$settings.AdbPath; "Connect.Address" = [string]$settings.Address; "Connect.ConnectConfig" = [string]$settings.Config; "Copilot.SelectFormation" = $profile.Copilot.SelectFormation; "Client.Type" = [string]$profile.Gui.RuntimeSettings.ClientType }
       }
     } catch {
     }
@@ -63,6 +69,131 @@ function Get-MaaGuiConfig {
   $current = if ($raw.Current) { $raw.Current } else { "Default" }
   if ($raw.Configurations.$current) { return $raw.Configurations.$current }
   return $raw.Configurations.Default
+}
+
+function Read-MaaTaskDefinitions {
+  param([string]$Dir)
+
+  # Windows PowerShell ConvertFrom-Json rejects case-distinct documentation keys in current MAA resources.
+  Add-Type -AssemblyName System.Web.Extensions
+  $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+  $serializer.MaxJsonLength = 67108864
+  $tasks = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+  $taskDir = Join-Path $Dir 'resource\tasks'
+  $files = if (Test-Path -LiteralPath $taskDir) {
+    @(Get-ChildItem -LiteralPath $taskDir -Filter '*.json' -File -Recurse | Sort-Object FullName)
+  } else {
+    @(Get-Item -LiteralPath (Join-Path $Dir 'resource\tasks.json'))
+  }
+  foreach ($file in $files) {
+    $definitions = $serializer.DeserializeObject([IO.File]::ReadAllText($file.FullName))
+    foreach ($name in $definitions.Keys) {
+      if ($tasks.ContainsKey($name)) { throw "Duplicate MAA navigation task: $name" }
+      $tasks[$name] = $definitions[$name]
+    }
+  }
+  return $tasks
+}
+
+function Assert-SafeStageNavigation {
+  param([System.Collections.Generic.Dictionary[string,object]]$Tasks, [string]$StageName)
+
+  $target = "Stage$StageName"
+  if (-not $Tasks.ContainsKey($StageName) -or -not $Tasks.ContainsKey($target)) {
+    throw "No audited navigation task for $StageName"
+  }
+  $leaf = $Tasks[$target]
+  if ($leaf['action'] -ne 'ClickSelf' -or $leaf['algorithm'] -ne 'OcrDetect' -or @($leaf['text']) -notcontains $StageName -or $leaf['baseTask']) {
+    throw "MAA target task $target does not identify the selected stage"
+  }
+  foreach ($field in @('next', 'sub', 'onErrorNext', 'exceededNext')) {
+    if (@($leaf[$field]).Count -gt 0 -and $null -ne $leaf[$field]) { throw "MAA target task $target does not stop at stage details" }
+  }
+
+  # Deliberately accept a small, inspectable main-story navigation vocabulary. New task expressions fail closed.
+  $stagePattern = [Regex]::Escape($StageName)
+  $safeName = "^(?:$stagePattern|Stage$stagePattern|Swipe(?:Left|Right)ToStage$stagePattern|Episode[0-9]+|EpisodeNew|EnterEpisodeNew(?:-Click)?|SwipeUpToEpisode|StageTheme|ToChapterNew|ClickChapterNew(?:OpenTime|DefaultProgress|Overview)?|ChapterSlowlySwipeToThe(?:Left|Right)|SlowlySwipeToThe(?:Left|Right|Up)|Stop)$"
+  $queue = New-Object 'System.Collections.Generic.Queue[string]'
+  $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+  $queue.Enqueue($StageName)
+  while ($queue.Count -gt 0) {
+    $name = $queue.Dequeue()
+    if (-not $seen.Add($name)) { continue }
+    if ($seen.Count -gt 100) { throw 'MAA navigation task graph is too large to audit' }
+    if ($name -in @('#self', '#next')) { continue }
+    if ($name -notmatch '^[A-Za-z0-9_-]+(?:@[A-Za-z0-9_-]+)*$') { throw "Unsupported MAA navigation expression: $name" }
+    $parts = $name.Split('@')
+    foreach ($part in $parts) {
+      if ($part -match '^[0-9]+$') { continue }
+      if ($part -notmatch $safeName) { throw "MAA navigation reaches a non-navigation task: $part" }
+      if ($part -ne $name) { $queue.Enqueue($part) }
+    }
+    if ($parts.Length -gt 1) {
+      # Inspect explicit namespace overrides too, rather than trusting only the base task.
+      $prefix = $parts[0] + '@'
+      foreach ($key in $Tasks.Keys) { if ($key.StartsWith($prefix, [StringComparison]::Ordinal)) { $queue.Enqueue($key) } }
+    }
+    if (-not $Tasks.ContainsKey($name)) {
+      if ($parts.Length -gt 1) { continue }
+      throw "MAA navigation task is missing: $name"
+    }
+    $task = $Tasks[$name]
+    if ($task['action'] -and $task['action'] -notin @('DoNothing', 'ClickSelf', 'Swipe', 'Stop')) { throw "Unsafe navigation action in $name" }
+    if ($task['algorithm'] -and $task['algorithm'] -notin @('JustReturn', 'MatchTemplate', 'OcrDetect')) { throw "Unsupported navigation recognition in $name" }
+    if ((@($task['template']) -join ' ') -match 'Battle|StartButton|Medicine|Stone|Replenish|Prts') { throw "Battle template found in navigation task $name" }
+    foreach ($field in @('baseTask', 'next', 'sub', 'onErrorNext', 'exceededNext')) {
+      foreach ($next in @($task[$field])) { if ($next) { $queue.Enqueue([string]$next) } }
+    }
+  }
+  return $target
+}
+
+function Get-SafeTerminalTasks {
+  param([System.Collections.Generic.Dictionary[string,object]]$Tasks)
+
+  if (-not $Tasks.ContainsKey('Terminal-Entry')) { throw 'MAA terminal theme resources are unavailable' }
+  if (-not $Tasks.ContainsKey('Stop') -or $Tasks['Stop']['algorithm'] -ne 'JustReturn' -or $Tasks['Stop']['action'] -ne 'Stop' -or $Tasks['Stop']['baseTask']) {
+    throw 'MAA Stop task is not a terminal stop'
+  }
+  foreach ($field in @('next', 'sub', 'onErrorNext', 'exceededNext')) {
+    if ($Tasks['Stop'][$field]) { throw 'MAA Stop task has a continuation' }
+  }
+  if (-not $Tasks.ContainsKey('Return') -or $Tasks['Return']['action'] -ne 'ClickSelf' -or $Tasks['Return']['baseTask']) {
+    throw 'MAA standalone Return task is unavailable'
+  }
+  if (($Tasks['Return']['algorithm'] -and $Tasks['Return']['algorithm'] -ne 'MatchTemplate') -or $Tasks['Return']['rectMove']) {
+    throw 'MAA standalone Return task does not recognize the return button directly'
+  }
+  foreach ($template in @($Tasks['Return']['template'])) {
+    if ($template -and $template -notin @('Return.png', 'Return-White.png')) { throw 'MAA Return uses an unknown button template' }
+  }
+  foreach ($field in @('next', 'sub', 'onErrorNext', 'exceededNext')) {
+    if ($Tasks['Return'][$field]) { throw 'MAA standalone Return task has an unsafe continuation' }
+  }
+  $names = @($Tasks['Terminal-Entry']['next'])
+  if ($names.Count -eq 0) { throw 'MAA terminal theme list is empty' }
+  foreach ($name in $names) {
+    $current = [string]$name
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $hasClick = $false
+    while ($current) {
+      if ($current -notmatch '^Terminal[A-Za-z0-9]+$' -or -not $Tasks.ContainsKey($current) -or -not $seen.Add($current)) { throw "Unsupported terminal task: $current" }
+      $task = $Tasks[$current]
+      if ($task['action']) {
+        if ($task['action'] -ne 'ClickSelf') { throw "Unsupported terminal action: $current" }
+        $hasClick = $true
+      }
+      foreach ($field in @('next', 'sub', 'onErrorNext', 'exceededNext')) {
+        foreach ($next in @($task[$field])) {
+          if ($next -and ($field -ne 'next' -or $next -notin @('#self', 'Stop'))) { throw "Terminal task $current has an unsafe continuation" }
+        }
+      }
+      $current = [string]$task['baseTask']
+    }
+    if (-not $hasClick) { throw "Terminal task $name has no button action" }
+  }
+  # Do not run Terminal-Entry itself: its onErrorNext changes the selected UI theme.
+  return $names
 }
 
 function Test-AsciiPath {
@@ -540,6 +671,46 @@ function Wait-MaaTask {
   }
 }
 
+function Invoke-MaaNavigationTask {
+  param([IntPtr]$Handle, [string]$Type, [hashtable]$Parameters, [string]$Name)
+
+  $taskId = [MaaCoreEnterPractice]::AsstAppendTask($Handle, $Type, ($Parameters | ConvertTo-Json -Compress))
+  if ($taskId -le 0) { throw "MAA did not accept $Name" }
+  if ([MaaCoreEnterPractice]::AsstStart($Handle) -eq 0) { throw "MAA did not start $Name" }
+  Wait-MaaTask $Handle $taskId 120 $Name
+  return $taskId
+}
+
+function Test-MaaTargetStageCompleted {
+  param([object[]]$Events, [int]$TaskId, [string]$TargetTask, [string]$StageName)
+
+  foreach ($entry in $Events) {
+    $details = $entry.details
+    if ($entry.message -eq 20002 -and $details.taskid -eq $TaskId -and $details.taskchain -eq 'Custom' -and $details.subtask -eq 'ProcessTask' -and $details.details.task -eq $TargetTask -and
+      $details.details.action -eq 'ClickSelf' -and $details.details.result.text -eq $StageName) { return $true }
+  }
+  return $false
+}
+
+function Open-MaaTerminal {
+  param([IntPtr]$Handle, [string[]]$TerminalTasks)
+
+  # StartUp can stop at a detail/map page because its ReturnButton limit is zero.
+  # Each standalone Return ends immediately; never run ReturnButton's theme/settings fallback.
+  for ($attempt = 0; $attempt -lt 6; $attempt++) {
+    $taskId = Invoke-MaaNavigationTask $Handle 'Custom' @{ task_names = @($TerminalTasks) + @('Return', 'Stop') } 'open terminal'
+    $returned = $false
+    foreach ($entry in $maaEvents.ToArray()) {
+      $details = $entry.details
+      if ($entry.message -ne 20002 -or $details.taskid -ne $taskId -or $details.taskchain -ne 'Custom') { continue }
+      if ($details.details.task -in $TerminalTasks -and $details.details.action -eq 'ClickSelf') { return $taskId }
+      if ($details.details.task -eq 'Return' -and $details.details.action -eq 'ClickSelf') { $returned = $true }
+    }
+    if (-not $returned) { throw 'Current screen is not a recognized home, terminal or stage navigation screen; open the stage details manually and retry' }
+  }
+  throw 'Could not reach the terminal within six verified return steps'
+}
+
 function New-ConnectedMaaHandle {
   $handle = [MaaCoreEnterPractice]::AsstCreateEx([MaaCoreEnterPractice]::Callback, [IntPtr]::Zero)
   if ($handle -eq [IntPtr]::Zero) { throw "AsstCreateEx failed" }
@@ -620,14 +791,53 @@ New-Item -ItemType Directory -Force -Path $userDir | Out-Null
 if ([MaaCoreEnterPractice]::AsstSetUserDir($userDir) -eq 0) { throw "AsstSetUserDir failed" }
 if ([MaaCoreEnterPractice]::AsstLoadResource($MaaDir) -eq 0) { throw "AsstLoadResource failed" }
 
-# MAA v6.17.5 skips every Fight subtask when times=0, including navigation.
-# Require the selected stage detail screen; no automatic normal battle is queued.
+# Fight times=0 skips navigation in current MAA. Audited Custom tasks can still navigate without a Fight task.
 $handle = New-ConnectedMaaHandle
 try {
   $bgr = Get-ScreenBgr $handle
   $alreadyInPracticeFormation = Test-PracticeFormation $bgr
-  if (-not $alreadyInPracticeFormation -and -not (Test-StageDetail $bgr)) {
-    throw "Open the $stageName stage detail screen manually before entering practice; current MAA does not provide navigation-only mode."
+  $startupTaskId = $null
+  $terminalTaskId = $null
+  $navigationTaskId = $null
+  $stageVerified = $false
+  $navigationSkipped = $true
+  $navigationMode = 'manual-practice-formation'
+  $navigationReason = $null
+  if (-not $alreadyInPracticeFormation) {
+    $targetTask = $null
+    try {
+      $navigationTasks = Read-MaaTaskDefinitions $MaaDir
+      $targetTask = Assert-SafeStageNavigation $navigationTasks $stageName
+      $terminalTasks = @(Get-SafeTerminalTasks $navigationTasks)
+      $clientType = [string]$maaConfig.'Client.Type'
+      if (-not $clientType.Trim()) { throw 'MAA game client type is not configured' }
+    } catch {
+      $navigationReason = $_.Exception.Message
+    }
+    if ($targetTask -and -not $navigationReason) {
+      # StartUp's official namespace handles results and forbids StartButton1 before clicking.
+      $startupTaskId = Invoke-MaaNavigationTask $handle 'StartUp' @{ enable = $true; client_type = $clientType; start_game_enabled = $false } 'return to home'
+      $terminalTaskId = Open-MaaTerminal $handle $terminalTasks
+      $navigationTaskId = Invoke-MaaNavigationTask $handle 'Custom' @{ task_names = @($stageName) } "navigate to $stageName"
+      if (-not (Test-MaaTargetStageCompleted $maaEvents.ToArray() $navigationTaskId $targetTask $stageName)) {
+        throw "Navigation did not confirm the selected stage $stageName; practice was not started"
+      }
+      $deadline = (Get-Date).AddSeconds(10)
+      do {
+        $bgr = Get-ScreenBgr $handle
+        if (Test-StageDetail $bgr) { break }
+        Start-Sleep -Milliseconds 250
+      } while ((Get-Date) -lt $deadline)
+      if (-not (Test-StageDetail $bgr)) { throw "Navigation to $stageName did not reach stage details; practice was not started" }
+      $stageVerified = $true
+      $navigationSkipped = $false
+      $navigationMode = 'official-navigation'
+    } elseif (Test-StageDetail $bgr) {
+      # Preserve manual entry for unsupported stages, but never claim the stage was verified.
+      $navigationMode = 'manual-stage-detail'
+    } else {
+      throw "Automatic navigation is unavailable for $stageName ($navigationReason). Open the selected stage details manually and retry."
+    }
   }
 
   $closedProxy = $false
@@ -655,9 +865,13 @@ try {
     ok = $true
     stage = $stageName
     maaDir = $MaaDir
-    startupTaskId = $null
-    navigationTaskId = $null
-    navigationSkipped = $true
+    startupTaskId = $startupTaskId
+    terminalTaskId = $terminalTaskId
+    navigationTaskId = $navigationTaskId
+    navigationSkipped = $navigationSkipped
+    navigationMode = $navigationMode
+    navigationReason = $navigationReason
+    stageVerified = $stageVerified
     practiceVerified = $true
     alreadyInPracticeFormation = $alreadyInPracticeFormation
     taskCompleted = ($null -ne $copilotTaskId)

@@ -1,6 +1,6 @@
 # MAA 执行评估层
 
-> 状态：分阶段落地中。当前 v2 已有 dry-run skeleton、MAA callback import、结算页与战斗过程截图观察、结果 summary、本机 MAA / ADB probe、MaaCore 连接握手和 GUI 演习执行 helper。`run` 本身仍不会启动 MAA 任务或开始作战；GUI `enter-practice` 从手动打开的关卡详情页点击演习入口，并在传入生成脚本路径时执行 MAA `Copilot` 作业。
+> 状态：分阶段落地中。当前 v2 已有 dry-run skeleton、MAA callback import、结算页与战斗过程截图观察、结果 summary、本机 MAA / ADB probe、MaaCore 连接握手和 GUI 演习执行 helper。`run` 本身仍不会启动 MAA 任务或开始作战；GUI `enter-practice` 可用经过检查的 MAA 导航任务进入目标详情页，再点击演习入口，并在传入生成脚本路径时执行 MAA `Copilot` 作业。
 
 ## 目标
 
@@ -37,7 +37,11 @@ MAA 回调中的 `SubTaskExtraInfo.what = "StageDrops"` 包含 `stage`、`drops`
 
 当前 `scripts/start-mumu.ps1` 读取 MAA 6 的 `Gui.StartUpSettings`，并兼容旧版 `Start.EmulatorPath` 和 `Start.OpenEmulatorAfterLaunch` 配置。GUI 服务监听成功后异步启动 helper，打开界面不等待 MuMu 完成启动；后台通过 ADB 连接和 `sys.boot_completed` 确认就绪，失败或超时通过 `/api/emulator-status` 在界面顶部显示。MAA 路径优先来自 GUI 保存的 `maaPath`、`MAAFIGHT_MAA_PATH` 或脚本参数。
 
-`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口：MAA 6.17.5 的 `Fight times=0` 会跳过全部子任务，不能再用于仅导航。因此须先手动打开目标关卡，确认 1280x720 关卡详情页后，若代理指挥开关亮起则先关闭，再点击演习按钮。传入生成脚本路径时，它会继续追加 MAA `Copilot` 任务执行该作业文件，并在结束后复用截图观察器读取结算星级。
+`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口。MAA 6.17.5 的 `Fight times=0` 会跳过全部子任务，但官方 `Custom` 任务仍可用于受限导航。helper 先检查本机资源中的关卡任务图，只接受可核查的主线导航任务族；通过 `StartUp` 返回游戏主页、识别当前主题的终端按钮，再运行目标关卡的 `Custom` 导航。必须收到同一任务 ID 下目标 `Stage<code>` 的 OCR 和 `ClickSelf` 完成回调，并复核详情页，才将 `stageVerified` 设为 true。
+
+导航检查会遍历继承、子任务、异常和超限分支，拒绝战斗入口、未知表达式和带后续跳转的目标末节点。主题导航只取官方按钮候选，不运行修改主题的 fallback。未知或复杂任务图仅在用户已打开详情页时保留手动入口，并返回 `stageVerified=false` 与提示；既有演习编队同样不会冒充已验证关卡。
+
+确认详情后，若代理指挥开关亮起则先关闭，再点击演习按钮。官方 PLAN 编队验证通过后才交给 MAA `Copilot`；作业完成后观察结算星级。helper 的异常以单行 UTF-8 JSON 返回，GUI 显示原因，不再展示本地代码页编码的 PowerShell 堆栈。
 
 参考：
 

@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
 import { spawn } from "child_process";
+import { StringDecoder } from "string_decoder";
 import type { FastifyInstance } from "fastify";
 import {
   analyzeStage,
@@ -69,10 +70,12 @@ function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: str
 
     let stdout = "";
     let stderr = "";
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     let settled = false;
     const timer = setTimeout(() => {
       child.kill();
-      finish(() => reject(new Error("enter practice timed out after 900 seconds")));
+      finish(() => reject(new Error("进入演习超时（15 分钟），请检查游戏当前画面后重试。")));
     }, 900_000);
 
     function finish(done: () => void): void {
@@ -83,28 +86,31 @@ function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: str
     }
 
     child.stdout.on("data", chunk => {
-      stdout += String(chunk);
+      stdout += stdoutDecoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
     child.stderr.on("data", chunk => {
-      stderr += String(chunk);
+      stderr += stderrDecoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
     child.on("error", err => finish(() => reject(err)));
     child.on("close", code => finish(() => {
+      stdout += stdoutDecoder.end();
+      stderr += stderrDecoder.end();
+      const jsonLine = stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+      let result: { ok?: boolean; error?: string } | undefined;
+      try { result = jsonLine ? JSON.parse(jsonLine) : undefined; } catch { /* Report malformed output below. */ }
       if (code !== 0) {
-        reject(new Error((stderr || stdout || `enter practice exited with code ${code}`).trim()));
+        const diagnostic = result?.error || (stderr || stdout).trim().split(/\r?\n/)[0] || `进程退出码 ${code}`;
+        reject(new Error(`进入演习失败：${diagnostic}`));
         return;
       }
 
-      const jsonLine = stdout.trim().split(/\r?\n/).filter(Boolean).pop();
       if (!jsonLine) {
-        reject(new Error("enter practice returned empty output"));
+        reject(new Error("演习入口没有返回执行结果。"));
         return;
       }
-      try {
-        resolve(JSON.parse(jsonLine));
-      } catch (err) {
-        reject(new Error(`enter practice returned invalid JSON: ${errorMessage(err)}`));
-      }
+      if (!result || typeof result !== "object") reject(new Error("演习入口返回了无法读取的结果。"));
+      else if (result.ok === false) reject(new Error(`进入演习失败：${result.error || "请检查游戏当前画面。"}`));
+      else resolve(result);
     }));
   });
 }
@@ -115,6 +121,7 @@ interface PracticeScriptSnapshot {
   json: string;
   contentHash: string;
   scriptHash: string;
+  stageName: string;
 }
 
 function preparePracticeScript(scriptPath: string, stage: string, cwd: string, expectedHash?: string): PracticeScriptSnapshot {
@@ -139,7 +146,7 @@ function preparePracticeScript(scriptPath: string, stage: string, cwd: string, e
   fs.mkdirSync(runDir, { recursive: true });
   const runPath = path.join(runDir, `${randomUUID()}.json`);
   fs.writeFileSync(runPath, json, { encoding: "utf8", flag: "wx" });
-  return { originalPath, runPath, json, contentHash: hashScriptJson(json), scriptHash };
+  return { originalPath, runPath, json, contentHash: hashScriptJson(json), scriptHash, stageName: parsed.stage_name.trim() };
 }
 
 export function publishThreeStarCandidate(scriptPath: string, expectedJson: string): string | undefined {
@@ -304,7 +311,8 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
       const requestedHash = body.scriptHash?.trim();
       if (requestedHash && !scriptPath) throw new Error("scriptPath is required to verify scriptHash");
       const snapshot = scriptPath ? preparePracticeScript(scriptPath, body.stage.trim(), cwd, requestedHash) : undefined;
-      const scriptResult = await runEnterPracticeScript(body.stage.trim(), maaProbe?.maaInstallDir || undefined, snapshot?.runPath);
+      const navigationStage = snapshot?.stageName || resolveStage(body.stage.trim())?.code || body.stage.trim();
+      const scriptResult = await runEnterPracticeScript(navigationStage, maaProbe?.maaInstallDir || undefined, snapshot?.runPath);
       const result = scriptResult && typeof scriptResult === "object" ? scriptResult as Record<string, unknown> : {};
       if (snapshot) {
         if (hashScriptJson(fs.readFileSync(snapshot.runPath, "utf8")) !== snapshot.contentHash) {

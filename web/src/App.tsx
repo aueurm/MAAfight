@@ -715,7 +715,7 @@ export default function App() {
         <div className="panel actions">
           <h2>操作</h2>
           <button onClick={runGenerate} disabled={loading !== null}>{loading === "generate" ? "分析生成中..." : "分析并生成脚本"}</button>
-          <p className="hint">演习前，请在游戏中手动打开所选关卡的详情页，并等待“演习”按钮可用。</p>
+          <p className="hint">支持的关卡会自动导航后进入演习；若无法导航，请手动打开所选关卡详情页后重试。</p>
           <button onClick={runValidateAndEnterPractice} disabled={loading !== null || !jsonPreview}>{loading === "practice" ? "验证进入中..." : "验证脚本并进入演习"}</button>
           <button onClick={runOpenOutputDir} disabled={loading !== null}>{loading === "open" ? "打开中..." : "打开输出目录"}</button>
           <button className="secondary" onClick={copyDebugInfo} disabled={!configInfo}>{copiedDebug ? "已复制调试信息" : "复制调试信息"}</button>

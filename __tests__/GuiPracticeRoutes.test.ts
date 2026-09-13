@@ -124,6 +124,49 @@ describe("GUI practice execution identity", () => {
     expect(fs.existsSync(outputPath)).toBe(false);
   });
 
+  it("shows a structured UTF-8 helper error without PowerShell stack output", async () => {
+    spawn.mockImplementationOnce(() => {
+      const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: () => boolean };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => true;
+      setImmediate(() => {
+        const output = Buffer.from(JSON.stringify({ ok: false, error: "未找到所选关卡：1-7" }));
+        const split = output.indexOf(Buffer.from("未")) + 1;
+        child.stdout.emit("data", output.subarray(0, split));
+        child.stdout.emit("data", output.subarray(split));
+        child.stderr.emit("data", "At C:\\private-path\\helper.ps1:630\n+ CategoryInfo: OperationStopped");
+        child.emit("close", 1);
+      });
+      return child as unknown as ChildProcess;
+    });
+
+    const response = await enter();
+    expect(response.statusCode).toBe(400);
+    expect(response.json().errors).toEqual(["进入演习失败：未找到所选关卡：1-7"]);
+    expect(observer).not.toHaveBeenCalled();
+    expect(feedback).not.toHaveBeenCalled();
+  });
+
+  it("keeps legacy helper diagnostics concise when structured output is absent", async () => {
+    spawn.mockImplementationOnce(() => {
+      const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: () => boolean };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => true;
+      setImmediate(() => {
+        child.stderr.emit("data", "Navigation timed out\nAt C:\\private-path\\helper.ps1:630\n+ throw ...");
+        child.emit("close", 1);
+      });
+      return child as unknown as ChildProcess;
+    });
+
+    const response = await enter();
+    expect(response.statusCode).toBe(400);
+    expect(response.json().errors).toEqual(["进入演习失败：Navigation timed out"]);
+    expect(feedback).not.toHaveBeenCalled();
+  });
+
   it("refuses to publish a replaced candidate and attributes the result only to the executed snapshot", async () => {
     const replacement = JSON.parse(originalJson);
     replacement.stage_name = "OF-1";
@@ -179,6 +222,8 @@ describe("GUI practice execution identity", () => {
     const response = await enter({ stage: "a001_01" });
     expect(response.statusCode).toBe(200);
     expect(response.json().result.publishedOutputPath).toBe(outputPath);
+    const args = spawn.mock.calls[0][1] as string[];
+    expect(args[args.indexOf("-Stage") + 1]).toBe("GT-1");
   });
 
   it("rejects a changed private snapshot before observing or recording a result", async () => {
