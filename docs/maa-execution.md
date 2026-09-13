@@ -37,9 +37,15 @@ MAA 回调中的 `SubTaskExtraInfo.what = "StageDrops"` 包含 `stage`、`drops`
 
 当前 `scripts/start-mumu.ps1` 读取 MAA 6 的 `Gui.StartUpSettings`，并兼容旧版 `Start.EmulatorPath` 和 `Start.OpenEmulatorAfterLaunch` 配置。GUI 服务监听成功后异步启动 helper，打开界面不等待 MuMu 完成启动；后台通过 ADB 连接和 `sys.boot_completed` 确认就绪，失败或超时通过 `/api/emulator-status` 在界面顶部显示。MAA 路径优先来自 GUI 保存的 `maaPath`、`MAAFIGHT_MAA_PATH` 或脚本参数。
 
-`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口。MAA 6.17.5 的 `Fight times=0` 会跳过全部子任务，但官方 `Custom` 任务仍可用于受限导航。helper 先检查本机资源中的关卡任务图，只接受可核查的主线导航任务族；通过 `StartUp` 返回游戏主页、识别当前主题的终端按钮，再运行目标关卡的 `Custom` 导航。必须收到同一任务 ID 下目标 `Stage<code>` 的 OCR 和 `ClickSelf` 完成回调，并复核详情页，才将 `stageVerified` 设为 true。
+`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口。GUI 独立打开；点击演习时，若后台 MuMu 启动仍在进行，则有界等待 Android / ADB 就绪。随后独立 PowerShell 进程执行 MAA `StartUp`，显式设置 `start_game_enabled=true`，等待完整唤醒任务完成后才导航。唤醒和导航各有 300 秒上限；GUI 总预算含默认 600 秒演习与退出余量，超时终止本次进程树。
 
-导航检查会遍历继承、子任务、异常和超限分支，拒绝战斗入口、未知表达式和带后续跳转的目标末节点。主题导航只取官方按钮候选，不运行修改主题的 fallback。未知或复杂任务图仅在用户已打开详情页时保留手动入口，并返回 `stageVerified=false` 与提示；既有演习编队同样不会冒充已验证关卡。
+导航复用 MAA 原生 `Fight` 的选关代码，包括通用主线、资源关及已有活动单关任务，不再要求存在 `Stage<code>` 专用叶节点。资源按 MAA 顺序加载：本体、本体热更新缓存，以及配置客户端的资源和缓存。第 10 章起显式传递 Normal / Hard，GUI 保留 `tough_` 与 H 关的难度身份；关卡解锁、活动开放和演习入口仍由实际页面决定。
+
+MAA 6.17.5 的 `times=0` 会跳过整个 Fight，因此导航进程使用 `times=1`，但在排队前加载项目目录内的临时资源覆盖：`FightBegin` 被完整替换为无点击的 Stop，普通开战、药、石和代理入口及其点击别名也被阻断。覆盖保留导航需要的 OCR 类型，并清空危险分支；药、石、掉落上报和倍率调整均关闭。安装目录保持只读。`SSReopen-*` 是独立的批量刷关入口，不接受为单个演习关卡；任意 MAA task 名也不能作为关卡输入。
+
+自动导航必须同时收到本次 Fight 完成和受保护停止点的回调，再用独立只读 OCR 精确核对目标编号和详情页。导航进程退出后，演习进程重新加载原始资源，再次 OCR 核对目标；临时战斗屏障不会污染 Copilot。原生别名可能跳到别关，例如 CE-5 → CE-6，此时核对失败并停止，不会冒充目标成功。缺少原生导航路线时，仍可手动打开详情页，但同样必须通过精确 OCR。
+
+仅验证唤醒与导航、停在详情页而不进入演习：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/enter-practice.ps1 -Stage 11-11 -NavigateOnly`。可用 `-Difficulty Hard` 指定支持该难度的主线关卡。能导航不等于关卡提供演习模式。
 
 确认详情后，若代理指挥开关亮起则先关闭，再点击演习按钮。官方 PLAN 编队验证通过后才交给 MAA `Copilot`；作业完成后观察结算星级。helper 的异常以单行 UTF-8 JSON 返回，GUI 显示原因，不再展示本地代码页编码的 PowerShell 堆栈。
 

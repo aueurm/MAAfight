@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
-import { spawn } from "child_process";
+import { execFile, spawn, type ChildProcess } from "child_process";
 import { StringDecoder } from "string_decoder";
 import type { FastifyInstance } from "fastify";
 import {
@@ -49,7 +49,46 @@ function enterPracticeScriptPath(): string {
   return path.resolve(__dirname, "..", "..", "scripts", "enter-practice.ps1");
 }
 
-function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: string): Promise<unknown> {
+const EMULATOR_STARTUP_WAIT_MS = 195_000;
+// StartUp (300 s), navigation (300 s), Copilot (600 s), and connection/exit overhead.
+const PRACTICE_HELPER_TIMEOUT_MS = (300 + 300 + 600 + 60) * 1_000;
+const PROCESS_TREE_STOP_TIMEOUT_MS = 10_000;
+
+async function waitForEmulatorStartup(getStatus?: () => EmulatorStartupStatus): Promise<void> {
+  let status = getStatus?.();
+  // A previous failure may already have been resolved by starting MuMu manually.
+  if (status?.state !== "starting") return;
+  const deadline = Date.now() + EMULATOR_STARTUP_WAIT_MS;
+  while (status?.state === "starting") {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("等待 MuMu 启动超时（195 秒），请处理模拟器窗口中的提示后重试演习。");
+    await new Promise(resolve => setTimeout(resolve, Math.min(500, remaining)));
+    status = getStatus?.();
+  }
+  if (status?.state === "failed") {
+    throw new Error(`MuMu 启动未完成：${status.message || "未确认 Android 和 ADB 就绪，请检查模拟器窗口后重试。"}`);
+  }
+}
+
+function stopPracticeProcessTree(child: ChildProcess): Promise<void> {
+  if (process.platform !== "win32" || child.pid === undefined) {
+    child.kill();
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    execFile("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+      windowsHide: true,
+      timeout: PROCESS_TREE_STOP_TIMEOUT_MS,
+    }, error => {
+      if (error) {
+        child.kill();
+        reject(new Error("未能确认演习子进程已全部停止，请先检查进程和游戏画面再重试。"));
+      } else resolve();
+    });
+  });
+}
+
+function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: string, difficulty?: "Normal" | "Hard"): Promise<unknown> {
   const args = [
     "-NoProfile",
     "-ExecutionPolicy",
@@ -61,6 +100,7 @@ function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: str
   ];
   if (maaDir) args.push("-MaaDir", maaDir);
   if (scriptPath) args.push("-ScriptPath", scriptPath);
+  if (difficulty) args.push("-Difficulty", difficulty);
 
   return new Promise((resolve, reject) => {
     const child = spawn("powershell.exe", args, {
@@ -73,10 +113,12 @@ function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: str
     const stdoutDecoder = new StringDecoder("utf8");
     const stderrDecoder = new StringDecoder("utf8");
     let settled = false;
-    const timer = setTimeout(() => {
-      child.kill();
-      finish(() => reject(new Error("进入演习超时（15 分钟），请检查游戏当前画面后重试。")));
-    }, 900_000);
+    const timer = setTimeout(() => finish(() => {
+      void stopPracticeProcessTree(child).then(
+        () => reject(new Error("进入演习超时（21 分钟，含唤醒、导航和战斗），已停止本次演习进程，请检查游戏当前画面后重试。")),
+        error => reject(new Error(`进入演习超时（21 分钟，含唤醒、导航和战斗）。${errorMessage(error)}`)),
+      );
+    }), PRACTICE_HELPER_TIMEOUT_MS);
 
     function finish(done: () => void): void {
       if (settled) return;
@@ -311,8 +353,13 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
       const requestedHash = body.scriptHash?.trim();
       if (requestedHash && !scriptPath) throw new Error("scriptPath is required to verify scriptHash");
       const snapshot = scriptPath ? preparePracticeScript(scriptPath, body.stage.trim(), cwd, requestedHash) : undefined;
-      const navigationStage = snapshot?.stageName || resolveStage(body.stage.trim())?.code || body.stage.trim();
-      const scriptResult = await runEnterPracticeScript(navigationStage, maaProbe?.maaInstallDir || undefined, snapshot?.runPath);
+      const requestedStage = resolveStage(body.stage.trim());
+      const navigationStage = snapshot?.stageName || requestedStage?.code || body.stage.trim();
+      const chapter = /^(H?)(\d+)-\d+$/i.exec(navigationStage);
+      const difficulty = requestedStage?.stageId.startsWith("tough_") ? "Hard"
+        : chapter && Number(chapter[2]) >= 10 ? (chapter[1] ? "Hard" : "Normal") : undefined;
+      await waitForEmulatorStartup(options.emulatorStatus);
+      const scriptResult = await runEnterPracticeScript(navigationStage, maaProbe?.maaInstallDir || undefined, snapshot?.runPath, difficulty);
       const result = scriptResult && typeof scriptResult === "object" ? scriptResult as Record<string, unknown> : {};
       if (snapshot) {
         if (hashScriptJson(fs.readFileSync(snapshot.runPath, "utf8")) !== snapshot.contentHash) {
@@ -321,7 +368,7 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
         result.originalScriptPath = snapshot.originalPath;
         result.scriptHash = snapshot.scriptHash;
       }
-      if (result.navigationSkipped) {
+      if (result.navigationSkipped && result.stageVerified !== true) {
         warnings.push("已从当前关卡详情页进入演习；请确认游戏关卡与所选关卡一致。");
       }
       if (result.copilotTaskId) {
