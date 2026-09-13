@@ -76,6 +76,7 @@ function runSegment(label, command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: root,
     encoding: "utf-8",
+    maxBuffer: 16 * 1024 * 1024,
     timeout: options.timeoutMs || 120000,
     env: { ...process.env, ...(options.env || {}) },
   });
@@ -87,6 +88,8 @@ function runSegment(label, command, args, options = {}) {
     ok: result.status === 0,
     status: result.status,
     durationMs,
+    processError: result.error?.message,
+    signal: result.signal,
     stdout: result.stdout || "",
     stderr: result.stderr || "",
   };
@@ -292,6 +295,10 @@ function writeReports(results, qualityReports = []) {
       durationMs: r.durationMs,
       failureMessage: r.failureMessage,
       command: r.command,
+      processError: r.processError,
+      signal: r.signal,
+      stderr: !r.ok ? r.stderr?.slice(-8000) : undefined,
+      runtimeReport: r.runtimeReport,
     })),
   };
 
@@ -566,6 +573,7 @@ function runBenchmark(options) {
     results.push({
       ...runtime,
       ok: runtimePassed,
+      runtimeReport,
       failureMessage: runtimePassed
         ? undefined
         : runtimeReport

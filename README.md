@@ -58,14 +58,12 @@ DeepSeek 仅为 `MANUAL` 技能生成手动开技动作；`AUTO` 与 `PASSIVE` �
 
 使用 DeepSeek 前，在仓库根目录的 `.env` 配置 `DEEPSEEK_API_KEY`。该文件已被 Git 忽略，不能提交。
 
-7. 点击 `验证脚本并进入演习`。
+7. 先在游戏中手动打开目标关卡详情页，等待 `演习` 按钮可用，再点击 `验证脚本并进入演习`。
 
 这一步会：
 
 - 先验证当前 JSON。
-- 调用 MAA 的 `StartUp` 唤醒明日方舟。
-- 复用 MAA 的关卡导航进入目标关卡详情页。
-- 如果 MAA 当前不支持自动导航该关卡，页面会提示你先手动打开关卡详情页。
+- 确认当前画面是关卡详情页；请确保关卡与 GUI 中所选关卡一致。
 - 如果代理指挥开启，就先取消代理指挥。
 - 点击 `演习`，进入编队页。
 - 使用刚生成的 JSON 文件执行 MAA `Copilot` 作业。
@@ -73,11 +71,13 @@ DeepSeek 仅为 `MANUAL` 技能生成手动开技动作；`AUTO` 与 `PASSIVE` �
 
 建议先用演习测试新脚本。DeepSeek 候选只有在 GUI 返回三星结果后，才会复制到 `output/` 并标记为已验证；未通过演习的候选始终留在 `.candidates/`。
 
+MAA 6.17.5 的 `Fight times=0` 会跳过整个任务，已不能用于“仅导航”。当前演习入口要求手动打开关卡详情页；不会把次数改为 `1` 来触发普通理智作战。
+
 ## MAA 和模拟器要求
 
 - MAA 的连接设置需要已经配好。
-- MAA 的 `config/gui.json` 里需要有可用的 `Connect.AdbPath`、`Connect.Address` 和 `Connect.ConnectConfig`。
-- `npm run gui` 会尝试复用 MAA 的模拟器启动配置启动 MuMu；如果没有配置，也可以手动先启动模拟器。
+- 支持 MAA 6 的 `config/gui.new.json`（当前配置的 `Gui.ConnectSettings`），同时兼容旧 `config/gui.json`；需要有效的 ADB 路径、连接地址与连接配置。
+- `npm run gui` 打开 GUI 后，后台复用 MAA 的启动配置启动 MuMu。界面可立即使用；模拟器启动失败或等待就绪超时会显示提示。也可以手动启动模拟器。
 
 ## 常用 CLI
 
@@ -93,7 +93,7 @@ node dist/index.js run connect --maa D:\app\MAA --pretty
 
 ## 使用提示
 
-- 部分活动或插曲关卡需要手动打开到关卡详情页后再执行。
+- 演习入口需要先手动打开目标关卡详情页。
 - DeepSeek 候选的静态错误会在同一次生成中回传给下一轮 API 请求；它不会被当成已通关作业。
 - 输出目录和文件名可以留空，系统会自动使用默认值。
 
@@ -103,3 +103,4 @@ node dist/index.js run connect --maa D:\app\MAA --pretty
 - [算法边界](docs/algorithm-boundary.md)
 - [MAA 执行评估层](docs/maa-execution.md)
 - [导出契约](docs/maa-copilot-export-contract.md)
+- [2026-09 兼容性检查](docs/compatibility-2026-09.md)

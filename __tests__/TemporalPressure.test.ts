@@ -31,6 +31,20 @@ describe("temporal pressure", () => {
     expect(timeline.points.find(point => point.time === 5)).toMatchObject({ row: 0, col: 3 });
   });
 
+  it("applies the level move multiplier in game seconds without scaling checkpoint waits", () => {
+    const mapData = makeMapData();
+    const timeline = buildSpawnRouteTimeline(mapData.spawnTimeline[0], mapData.routes[0], mapData.enemyDetails[0], { moveMultiplier: 0.5 });
+    expect(timeline.points.find(point => point.time === 2)).toMatchObject({ row: 0, col: 1 });
+    expect(timeline.points.find(point => point.time === 4)).toMatchObject({ row: 0, col: 2 });
+    expect(timeline.points.find(point => point.time === 6)).toMatchObject({ row: 0, col: 2 });
+    expect(timeline.points.at(-1)).toMatchObject({ row: 0, col: 4, time: 10 });
+
+    mapData.options.moveMultiplier = 0.5;
+    const pressure = buildTemporalPressure(mapData);
+    expect(cellsAt(pressure, 2).has("0,1")).toBe(true);
+    expect(cellsAt(pressure, 10).has("0,4")).toBe(true);
+  });
+
   it("maps ground pressure, blue-box threat, merges, and flying pressure by time and cell", () => {
     const mapData = makeMapData();
     mapData.routes.push({

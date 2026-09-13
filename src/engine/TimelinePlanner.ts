@@ -15,6 +15,7 @@ export interface PlannedDeployment {
   actionIndex: number;
   name?: string;
   time: number;
+  endTime: number;
   cost: number;
   affordable: boolean;
 }
@@ -22,11 +23,21 @@ export interface PlannedDeployment {
 export interface DeploymentTimeline {
   deployments: PlannedDeployment[];
   reasons: string[];
+  time: number;
+  wallTime: number;
+  speedMultiplier: number;
+  stopwatchWallTime?: number;
+}
+
+export function costTick(options: MapOptions): number {
+  const raw = options.costIncreaseTime;
+  // 保留游戏数据中的长周期；不能把关卡内几乎不回费的 999999 改成每秒一费。
+  return Number.isFinite(raw) && raw > 0 ? raw : Number.POSITIVE_INFINITY;
 }
 
 export function costAt(time: number, options: MapOptions): number {
-  const tick = Math.max(0.01, options.costIncreaseTime || 1);
-  return Math.min(options.maxCost, options.initialCost + Math.floor(Math.max(0, time) / tick));
+  const tick = costTick(options);
+  return Math.min(options.maxCost, options.initialCost + Math.floor(Math.max(0, time) / tick + 1e-9));
 }
 
 export function buildTimelineEvents(mapData: MapData, facts: StageFacts): TimelineEvent[] {
@@ -47,34 +58,75 @@ export function buildTimelineEvents(mapData: MapData, facts: StageFacts): Timeli
 }
 
 export function planDeploymentTimeline(script: Pick<BattleScript, "actions">, options: MapOptions): DeploymentTimeline {
-  const tick = Math.max(0.01, options.costIncreaseTime || 1);
+  const tick = costTick(options);
   const deployments: PlannedDeployment[] = [];
+  const active: Array<{ deployment: PlannedDeployment; location?: [number, number] }> = [];
   const reasons = new Set<string>();
   let time = 0;
+  let wallTime = 0;
+  let speedMultiplier = 1;
+  let stopwatchWallTime: number | undefined;
+  let blocked = false;
   let available = Math.min(options.maxCost, Math.max(0, options.initialCost));
   let tickRemainder = 0;
-  const advance = (seconds: number): void => {
-    const total = tickRemainder + Math.max(0, seconds);
-    const gained = Math.floor(total / tick);
-    tickRemainder = total - gained * tick;
+  const advance = (wallSeconds: number): void => {
+    const gameSeconds = Math.max(0, wallSeconds) * speedMultiplier;
+    const total = tickRemainder + gameSeconds;
+    const gained = Number.isFinite(tick) ? Math.floor(total / tick + 1e-9) : 0;
+    tickRemainder = Number.isFinite(tick) ? Math.max(0, total - gained * tick) : 0;
     available = Math.min(options.maxCost, available + gained);
-    time += Math.max(0, seconds);
+    time += gameSeconds;
+    wallTime += Math.max(0, wallSeconds);
+  };
+  const waitForCost = (target: number): void => {
+    if (blocked || available >= target) return;
+    if (target > options.maxCost || !Number.isFinite(tick)) {
+      reasons.add("cost_timeline_unaffordable");
+      blocked = true;
+      return;
+    }
+    advance(Math.max(0, (target - available) * tick - tickRemainder) / speedMultiplier);
   };
 
   for (const [actionIndex, action] of script.actions.entries()) {
-    advance((action.pre_delay || 0) / 1000);
-    if (action.type !== "Deploy" || action.cooling) continue;
-    const cost = Math.max(0, action.costs || 0);
-    if (cost > options.maxCost) {
-      reasons.add("cost_timeline_unaffordable");
-      deployments.push({ actionIndex, name: action.name, time, cost, affordable: false });
-      continue;
+    // 击杀/死亡冷却依赖实际战斗，不能把其后的动作当成立即执行。
+    if ((action.kills || 0) > 0 || (action.cooling !== undefined && action.cooling >= 0) || (action.cost_changes || 0) < 0) {
+      reasons.add("action_condition_timing_unknown");
+      blocked = true;
     }
-    if (available < cost) advance(Math.max(0, (cost - available) * tick - tickRemainder));
-    const affordable = available >= cost;
-    if (!affordable) reasons.add("cost_timeline_unaffordable");
-    else available -= cost;
-    deployments.push({ actionIndex, name: action.name, time, cost, affordable });
+    if (!blocked) {
+      waitForCost(available + Math.max(0, action.cost_changes || 0));
+      waitForCost(Math.max(0, action.costs || 0));
+      if ((action.elapsed_time || 0) > 0) {
+        if (stopwatchWallTime === undefined) {
+          reasons.add("stopwatch_not_started");
+          blocked = true;
+        }
+        else advance(Math.max(0, stopwatchWallTime + action.elapsed_time! / 1000 - wallTime));
+      }
+    }
+    // MAA 的 pre_delay 从原生条件满足后开始，pre/post/elapsed_time 均为真实毫秒。
+    if (!blocked) advance((action.pre_delay || 0) / 1000);
+    if (action.type === "Deploy") {
+      const cost = Math.max(0, action.costs || 0);
+      const deployment = { actionIndex, name: action.name, time: blocked ? Number.POSITIVE_INFINITY : time,
+        endTime: Number.POSITIVE_INFINITY, cost, affordable: !blocked && available >= cost };
+      deployments.push(deployment);
+      if (deployment.affordable) {
+        available -= cost;
+        active.push({ deployment, location: action.location });
+      }
+    }
+    if (blocked) continue;
+    if (action.type === "Retreat") {
+      const index = active.findIndex(item => action.location
+        ? item.location?.[0] === action.location[0] && item.location?.[1] === action.location[1]
+        : item.deployment.name === action.name);
+      if (index >= 0) active.splice(index, 1)[0].deployment.endTime = time;
+    }
+    if (action.type === "ResetStopwatch") stopwatchWallTime = wallTime;
+    if (action.type === "SpeedUp") speedMultiplier = speedMultiplier === 1 ? 2 : 1;
+    advance((action.post_delay || 0) / 1000);
   }
-  return { deployments, reasons: [...reasons].sort() };
+  return { deployments, reasons: [...reasons].sort(), time, wallTime, speedMultiplier, stopwatchWallTime };
 }

@@ -2,10 +2,11 @@ import type {
   PRTSLevelData, MapData, TileInfo, DeploymentPoint,
   EnemyRoute, WaveInfo, FragmentInfo, EnemySpawn,
   SpawnEvent, HighThreatArea, StrategicPoint,
-  EnemyDetail, PRTSCheckpoint, RouteCheckpoint,
+  EnemyDetail, EnemyMechanic, PRTSCheckpoint, RouteCheckpoint,
 } from "../types";
 import type { PRTSMapLoader, EnemyDatabaseEntry } from "../loader/PRTSMapLoader";
 import { isSpawnActionType, normalizeBuildableType } from "../shared/prtsMap";
+import { resolveDefaultHiddenGroups } from "./hiddenGroups";
 
 function tileKeyToType(key: string): string {
   const map: Record<string, string> = {
@@ -17,21 +18,25 @@ function tileKeyToType(key: string): string {
 
 function normalizeCheckpointType(type: PRTSCheckpoint["type"]): NonNullable<RouteCheckpoint["type"]> {
   if (type === "MOVE" || type === 0) return "MOVE";
-  if (type === "WAIT_CURRENT_FRAGMENT_TIME" || type === 1) return "WAIT_CURRENT_FRAGMENT_TIME";
-  if (type === "WAIT_FOR_SECONDS" || type === 5) return "WAIT_FOR_SECONDS";
-  if (type === "DISAPPEAR" || type === 6) return "DISAPPEAR";
-  return "APPEAR_AT_POS";
+  if (type === "WAIT_FOR_SECONDS" || type === 1) return "WAIT_FOR_SECONDS";
+  if (type === "WAIT_CURRENT_FRAGMENT_TIME" || type === 3) return "WAIT_CURRENT_FRAGMENT_TIME";
+  if (type === "DISAPPEAR" || type === 5) return "DISAPPEAR";
+  if (type === "APPEAR_AT_POS" || type === 6) return "APPEAR_AT_POS";
+  throw new Error(`Unsupported route checkpoint type: ${String(type)}`);
 }
 
 function isPathCheckpoint(checkpoint: RouteCheckpoint): boolean {
   return checkpoint.type === "MOVE" || checkpoint.type === "APPEAR_AT_POS";
 }
 
-function normalizeCheckpoint(checkpoint: PRTSCheckpoint): RouteCheckpoint {
+function mapPosition(position: { row: number; col: number }, rows: number): { row: number; col: number } {
+  return { row: rows - 1 - position.row, col: position.col };
+}
+
+function normalizeCheckpoint(checkpoint: PRTSCheckpoint, rows: number): RouteCheckpoint {
   const type = normalizeCheckpointType(checkpoint.type);
   return {
-    row: checkpoint.position.row,
-    col: checkpoint.position.col,
+    ...mapPosition(checkpoint.position, rows),
     type,
     ...(type === "WAIT_FOR_SECONDS" ? { waitSeconds: Math.max(0, Number(checkpoint.time) || 0) } : {}),
   };
@@ -79,23 +84,22 @@ function adaptTiles(prts: PRTSLevelData): { tiles: TileInfo[][]; deploymentPoint
   return { tiles, deploymentPoints };
 }
 
-function adaptRoutes(prts: PRTSLevelData): { routes: EnemyRoute[]; strategicPoints: StrategicPoint[] } {
+function adaptRoutes(prts: PRTSLevelData, excludedRouteIds: Set<number>): { routes: EnemyRoute[]; strategicPoints: StrategicPoint[] } {
   const routes: EnemyRoute[] = [];
   const pathCrossCount = new Map<string, number>();
 
   for (let i = 0; i < prts.routes.length; i++) {
     const r = prts.routes[i];
-    if (!r) continue;
-    const checkpoints = (r.checkpoints || []).map(normalizeCheckpoint);
+    if (!r || isInactiveRouteMode(r.motionMode) || excludedRouteIds.has(i)) continue;
+    const rows = prts.mapData.map.length;
+    const checkpoints = (r.checkpoints || []).map(checkpoint => normalizeCheckpoint(checkpoint, rows));
     const pathCheckpoints = checkpoints.filter(isPathCheckpoint);
-
-    if (isInactiveRouteMode(r.motionMode) || pathCheckpoints.length === 0) continue;
 
     routes.push({
       id: i,
       motionMode: normalizeMotionMode(r.motionMode),
-      startPosition: { row: r.startPosition.row, col: r.startPosition.col },
-      endPosition: { row: r.endPosition.row, col: r.endPosition.col },
+      startPosition: mapPosition(r.startPosition, rows),
+      endPosition: mapPosition(r.endPosition, rows),
       checkpoints,
     });
 
@@ -126,37 +130,53 @@ function adaptRoutes(prts: PRTSLevelData): { routes: EnemyRoute[]; strategicPoin
   return { routes, strategicPoints };
 }
 
-function adaptWaves(prts: PRTSLevelData): WaveInfo[] {
+function adaptWaves(prts: PRTSLevelData): { waves: WaveInfo[]; excludedRouteIds: Set<number> } {
   const waves: WaveInfo[] = [];
-  let absoluteTime = 0;
+  const enabledGroups = resolveDefaultHiddenGroups(prts);
+  const enabledRouteIds = new Set<number>();
+  const excludedRouteIds = new Set<number>();
 
   for (let wi = 0; wi < prts.waves.length; wi++) {
     const w = prts.waves[wi];
-    absoluteTime += w.preDelay;
 
     const fragments: FragmentInfo[] = [];
     for (const frag of w.fragments) {
-      const fragTime = absoluteTime + frag.preDelay;
       const enemySpawns: EnemySpawn[] = [];
+      let spawnScheduleDuration = 0;
 
       for (const action of frag.actions) {
         if (!isSpawnActionType(action.actionType)) continue;
+        if (!Number.isFinite(action.preDelay) || action.preDelay < 0) {
+          throw new Error(`Invalid spawn preDelay for ${action.key}: expected non-negative finite game seconds`);
+        }
+        // PRTS.Map advances the raw schedule before filtering inactive hidden groups.
+        spawnScheduleDuration = Math.max(spawnScheduleDuration, action.preDelay + (action.count - 1) * action.interval);
+        if (action.hiddenGroup != null && typeof action.hiddenGroup !== "string") {
+          throw new Error(`Invalid spawn hiddenGroup for ${action.key}: expected a string or null`);
+        }
+        if (action.hiddenGroup && !enabledGroups.has(action.hiddenGroup)) {
+          excludedRouteIds.add(action.routeIndex);
+          continue;
+        }
+        enabledRouteIds.add(action.routeIndex);
         enemySpawns.push({
           enemyId: action.key,
           count: action.count,
+          preDelay: action.preDelay,
           interval: action.interval,
           routeIndex: action.routeIndex,
         });
       }
 
-      fragments.push({ preDelay: frag.preDelay, enemySpawns });
+      fragments.push({ preDelay: frag.preDelay, enemySpawns, spawnScheduleDuration });
     }
 
     waves.push({ index: wi, preDelay: w.preDelay, postDelay: w.postDelay, fragments });
-    absoluteTime += w.postDelay;
   }
 
-  return waves;
+  // Shared routes remain valid; only routes used exclusively by disabled SPAWN groups are removed.
+  for (const routeId of enabledRouteIds) excludedRouteIds.delete(routeId);
+  return { waves, excludedRouteIds };
 }
 
 function buildSpawnTimeline(waves: WaveInfo[]): SpawnEvent[] {
@@ -167,16 +187,21 @@ function buildSpawnTimeline(waves: WaveInfo[]): SpawnEvent[] {
     absoluteTime += wave.preDelay;
     for (const frag of wave.fragments) {
       absoluteTime += frag.preDelay;
+      const fragmentStart = absoluteTime;
       for (const spawn of frag.enemySpawns) {
         for (let i = 0; i < spawn.count; i++) {
+          const time = fragmentStart + (spawn.preDelay ?? 0) + i * spawn.interval;
           timeline.push({
-            time: absoluteTime + i * spawn.interval,
+            time,
             enemyId: spawn.enemyId,
             count: 1,
             routeIndex: spawn.routeIndex,
           });
+          // Sibling actions share one start; the next fragment waits for scheduled spawns.
+          absoluteTime = Math.max(absoluteTime, time);
         }
       }
+      absoluteTime = Math.max(absoluteTime, fragmentStart + (frag.spawnScheduleDuration ?? 0));
     }
     absoluteTime += wave.postDelay;
   }
@@ -185,27 +210,20 @@ function buildSpawnTimeline(waves: WaveInfo[]): SpawnEvent[] {
 }
 
 function buildHighThreatAreas(
-  waves: WaveInfo[], routes: EnemyRoute[]
+  spawnTimeline: SpawnEvent[], routes: EnemyRoute[]
 ): HighThreatArea[] {
   const byRoute = new Map<number, { enemyTypes: Set<string>; count: number; firstTime: number }>();
   const routeById = new Map(routes.map(route => [route.id, route]));
 
-  let absoluteTime = 0;
-  for (const wave of waves) {
-    absoluteTime += wave.preDelay;
-    for (const frag of wave.fragments) {
-      absoluteTime += frag.preDelay;
-      for (const spawn of frag.enemySpawns) {
-        let entry = byRoute.get(spawn.routeIndex);
-        if (!entry) {
-          entry = { enemyTypes: new Set(), count: 0, firstTime: absoluteTime };
-          byRoute.set(spawn.routeIndex, entry);
-        }
-        entry.enemyTypes.add(spawn.enemyId);
-        entry.count += spawn.count;
-      }
+  for (const spawn of spawnTimeline) {
+    let entry = byRoute.get(spawn.routeIndex);
+    if (!entry) {
+      entry = { enemyTypes: new Set(), count: 0, firstTime: spawn.time };
+      byRoute.set(spawn.routeIndex, entry);
     }
-    absoluteTime += wave.postDelay;
+    entry.enemyTypes.add(spawn.enemyId);
+    entry.count += spawn.count;
+    entry.firstTime = Math.min(entry.firstTime, spawn.time);
   }
 
   return Array.from(byRoute.entries()).map(([routeIdx, data]) => {
@@ -227,30 +245,39 @@ function getOverrideVal(
   return mDef?.m_defined ? mDef.m_value : base;
 }
 
+function inferEnemyMechanics(description: string | undefined): EnemyMechanic[] {
+  if (!description) return [];
+  const mechanics: EnemyMechanic[] = [];
+  if (description.includes("隐匿")) mechanics.push("stealth");
+  if (description.includes("首次倒下后重生")) mechanics.push("revive");
+  return mechanics;
+}
+
 export class PRTSMapAdapter {
   constructor(private loader: PRTSMapLoader) {}
 
   adapt(prtsData: PRTSLevelData, stageId: string, displayName?: string): MapData {
+    if (!Array.isArray(prtsData?.mapData?.map) || !Array.isArray(prtsData?.mapData?.tiles)
+      || !Array.isArray(prtsData?.routes) || !Array.isArray(prtsData?.waves) || !Array.isArray(prtsData?.enemyDbRefs)) {
+      throw new Error(`Unsupported level structure for ${stageId}: map, routes, waves and enemy references must be arrays`);
+    }
+    const moveMultiplier = prtsData.options.moveMultiplier;
+    if (moveMultiplier !== undefined && (!Number.isFinite(moveMultiplier) || moveMultiplier <= 0)) {
+      throw new Error(`Invalid moveMultiplier for ${stageId}: expected a positive finite number`);
+    }
     const { tiles, deploymentPoints } = adaptTiles(prtsData);
-    const { routes, strategicPoints } = adaptRoutes(prtsData);
-    const waves = adaptWaves(prtsData);
+    const { waves, excludedRouteIds } = adaptWaves(prtsData);
+    const { routes, strategicPoints } = adaptRoutes(prtsData, excludedRouteIds);
     const spawnTimeline = buildSpawnTimeline(waves);
-    const highThreatAreas = buildHighThreatAreas(waves, routes);
+    const highThreatAreas = buildHighThreatAreas(spawnTimeline, routes);
 
     // Resolve enemy details - use enemyDbRefs + loader if available
-    const enemySet = new Set<string>();
-    for (const wave of prtsData.waves) {
-      for (const frag of wave.fragments) {
-        for (const action of frag.actions) {
-          if (isSpawnActionType(action.actionType)) enemySet.add(action.key);
-        }
-      }
-    }
+    const enemySet = new Set(spawnTimeline.map(spawn => spawn.enemyId));
 
     const enemyDetails: EnemyDetail[] = [];
     for (const enemyId of enemySet) {
-      const dbEntry = this.loader.getEnemyInfo(enemyId);
       const ref = prtsData.enemyDbRefs.find(e => e.id === enemyId);
+      const dbEntry = this.loader.getEnemyInfo(enemyId, ref?.level || 0);
       const attr = ref?.overwrittenData?.attributes;
       const baseAttr = dbEntry?.attributes || { maxHp: 0, atk: 0, def: 0, magicResistance: 0, moveSpeed: 1, attackSpeed: 100, massLevel: 1 };
 
@@ -266,6 +293,7 @@ export class PRTSMapAdapter {
         isElite: (dbEntry?.enemyTags?.includes("elite")) ||
                  getOverrideVal(attr?.maxHp, baseAttr.maxHp) > 5000 ||
                  getOverrideVal(attr?.atk, baseAttr.atk) > 800,
+        mechanics: inferEnemyMechanics(dbEntry?.description),
       });
     }
 
@@ -286,8 +314,11 @@ export class PRTSMapAdapter {
         initialCost: prtsData.options.initialCost,
         maxCost: prtsData.options.maxCost,
         costIncreaseTime: prtsData.options.costIncreaseTime,
+        moveMultiplier,
       },
-      runes: prtsData.runes,
+      runes: prtsData.runes?.map(rune => rune.position
+        ? { ...rune, position: mapPosition(rune.position, prtsData.mapData.map.length) }
+        : rune),
       _raw: prtsData,
     };
   }

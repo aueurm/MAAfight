@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import { runCli } from "../src/index";
 import type { BattleScript } from "../src/types";
+import { titleFixture } from "./screenFixtures";
 
 const childProcess = require("child_process") as typeof import("child_process");
 
@@ -92,16 +93,7 @@ describe("run command", () => {
   }
 
   function failedResultBgr(): Buffer {
-    const buffer = blankBgr();
-    for (let y = 346; y <= 374; y++) {
-      for (let x = 136; x <= 164; x++) {
-        const offset = (y * 1280 + x) * 3;
-        buffer[offset] = 255;
-        buffer[offset + 1] = 255;
-        buffer[offset + 2] = 255;
-      }
-    }
-    return buffer;
+    return titleFixture("mission-failed");
   }
 
   function bgrWithStars(stars: number): Buffer {
@@ -253,7 +245,7 @@ describe("run command", () => {
     expect(fs.existsSync(path.join(cwd, ".maafight", "run-results.jsonl"))).toBe(false);
   });
 
-  it("prints run connect JSON without writing RunResult", async () => {
+  it.each(["legacy", "current", "invalid-current"])("prints run connect JSON using %s GUI configuration without writing RunResult", async format => {
     const maaDir = path.join(cwd, "maa");
     const configDir = path.join(maaDir, "config");
     fs.mkdirSync(configDir, { recursive: true });
@@ -261,7 +253,7 @@ describe("run command", () => {
     fs.writeFileSync(path.join(maaDir, "MaaCore.dll"), "", "utf8");
     const adbPath = path.join(cwd, "adb.exe");
     fs.writeFileSync(adbPath, "", "utf8");
-    fs.writeFileSync(path.join(configDir, "gui.json"), JSON.stringify({
+    fs.writeFileSync(path.join(configDir, "gui.json"), "\uFEFF" + JSON.stringify({
       Current: "Default",
       Configurations: {
         Default: {
@@ -271,6 +263,13 @@ describe("run command", () => {
         },
       },
     }), "utf8");
+    const address = format === "current" ? "127.0.0.1:16416" : "127.0.0.1:16384";
+    if (format !== "legacy") {
+      const currentConfig = { Current: "Practice", Configurations: {
+        Practice: { Gui: { ConnectSettings: { AdbPath: adbPath, Address: address, Config: "MuMuEmulator12" } } },
+      } };
+      fs.writeFileSync(path.join(configDir, "gui.new.json"), format === "current" ? "\uFEFF" + JSON.stringify(currentConfig) : "{", "utf8");
+    }
     jest.spyOn(childProcess, "spawnSync").mockImplementation((command) => {
       if (String(command).endsWith("powershell.exe")) {
         return {
@@ -298,7 +297,7 @@ describe("run command", () => {
       maaFound: true,
       maaCoreVersion: "v6.13.0",
       adbPath,
-      address: "127.0.0.1:16384",
+      address,
       connectConfig: "MuMuEmulator12",
       connectSuccess: true,
       asstConnected: true,

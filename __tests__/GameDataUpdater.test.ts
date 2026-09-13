@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-const { buildStageIndex, collectLevelPaths, validateSnapshot } = require("../scripts/update-game-data");
+const { buildStageIndex, collectLevelPaths, replaceAll, validateSnapshot } = require("../scripts/update-game-data");
 
 const temporaryRoots: string[] = [];
 
@@ -37,7 +37,7 @@ describe("game data updater", () => {
         activity_01: { stageId: "activity_01", code: "GT-1", name: "活动", levelId: "activities-a001-level_a001_01" },
         missing: { stageId: "missing", code: "NO-1", name: "缺失", levelId: "Obt/Main/level_missing" },
       },
-    }, levelPaths);
+    }, levelPaths, "a".repeat(40));
 
     expect(levelPaths).toEqual([
       "activities/a001/level_a001_01.json",
@@ -48,6 +48,8 @@ describe("game data updater", () => {
       count: 2,
     });
     expect(stageIndex.byStageId.missing).toBeUndefined();
+    expect(stageIndex.unavailable.missing.code).toBe("NO-1");
+    expect(stageIndex.source.commit).toBe("a".repeat(40));
     expect(() => validateSnapshot({
       levelsRoot,
       levelPaths,
@@ -57,6 +59,11 @@ describe("game data updater", () => {
       operatorKnowledgeModelPath,
       commit: "a".repeat(40),
     })).not.toThrow();
+
+    expect(() => validateSnapshot({
+      levelsRoot, levelPaths, stageIndex: { ...stageIndex, source: { commit: "b".repeat(40) } },
+      enemyDatabasePath, operatorModelPath, operatorKnowledgeModelPath, commit: "a".repeat(40),
+    })).toThrow("Stage index commit does not match");
 
     fs.rmSync(enemyDatabasePath);
     expect(() => validateSnapshot({
@@ -68,5 +75,37 @@ describe("game data updater", () => {
       operatorKnowledgeModelPath,
       commit: "a".repeat(40),
     })).toThrow("Enemy database is missing");
+  });
+
+  it("restores all previous files when installing a snapshot fails", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-game-data-rollback-"));
+    temporaryRoots.push(root);
+    const first = path.join(root, "first.json");
+    const second = path.join(root, "second.json");
+    const staged = path.join(root, "staged.json");
+    fs.writeFileSync(first, "previous first");
+    fs.writeFileSync(second, "previous second");
+    fs.writeFileSync(staged, "replacement");
+    expect(() => replaceAll([
+      { staged, target: first },
+      { staged: path.join(root, "missing.json"), target: second },
+    ])).toThrow();
+    expect(fs.readFileSync(first, "utf8")).toBe("previous first");
+    expect(fs.readFileSync(second, "utf8")).toBe("previous second");
+    expect(fs.readdirSync(root).some(file => file.includes("backup"))).toBe(false);
+  });
+
+  it("preserves the installed file and stale backup when a backup already exists", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-game-data-stale-"));
+    temporaryRoots.push(root);
+    const target = path.join(root, "target.json");
+    const staged = path.join(root, "staged.json");
+    const backup = `${target}.maafight-update-backup-${process.pid}-0`;
+    fs.writeFileSync(target, "installed");
+    fs.writeFileSync(staged, "replacement");
+    fs.writeFileSync(backup, "stale backup");
+    expect(() => replaceAll([{ staged, target }])).toThrow("Stale update backup exists");
+    expect(fs.readFileSync(target, "utf8")).toBe("installed");
+    expect(fs.readFileSync(backup, "utf8")).toBe("stale backup");
   });
 });

@@ -102,21 +102,20 @@ function skillAnnihilationPower(combat: PlanningCombatOperator | undefined, skil
 }
 
 function hasNativeCondition(action: Record<string, unknown>): boolean {
-  return ["kills", "costs", "costChanges", "cost_changes", "cooling", "timeElapsed", "time_elapsed"].some(key => action[key] !== undefined);
+  return ["kills", "costs", "costChanges", "cooling", "timeElapsed"].some(key => action[key] !== undefined);
 }
 
 function hasTimeElapsed(action: BattleAction): boolean {
-  const raw = action as unknown as Record<string, unknown>;
-  return raw.timeElapsed !== undefined || raw.time_elapsed !== undefined;
+  return action.timeElapsed !== undefined;
 }
 
-function conditions(action: BattleAction): Pick<BattleScriptAction, "kills" | "costs" | "cost_changes" | "cooling" | "time_elapsed"> {
+function conditions(action: BattleAction): Pick<BattleScriptAction, "kills" | "costs" | "cost_changes" | "cooling" | "elapsed_time"> {
   return {
     ...(action.kills !== undefined ? { kills: action.kills } : {}),
     ...(action.costs !== undefined ? { costs: action.costs } : {}),
     ...(action.costChanges !== undefined ? { cost_changes: action.costChanges } : {}),
     ...(action.cooling !== undefined ? { cooling: action.cooling } : {}),
-    ...(action.timeElapsed !== undefined ? { time_elapsed: action.timeElapsed } : {}),
+    ...(action.timeElapsed !== undefined ? { elapsed_time: action.timeElapsed } : {}),
   };
 }
 
@@ -323,7 +322,7 @@ export function compileDeepSeekCandidate(rawCandidate: unknown, environment: Dee
     if (!Number.isInteger(skill) || !skillRecord || skillRecord.unlockPhase > (player?.elite ?? -1)) {
       errors.push(`INVALID_SKILL: ${operator.name} skill ${operator.skill}`);
     }
-    if (!Number.isInteger(operator.skillUsage) || operator.skillUsage < 0 || operator.skillUsage > 3) {
+    if (!Number.isInteger(operator.skillUsage) || operator.skillUsage < 0 || operator.skillUsage > 2) {
       errors.push(`INVALID_SKILL_USAGE: ${operator.name}`);
     }
     selected.set(operator.name, {
@@ -388,7 +387,7 @@ export function compileDeepSeekCandidate(rawCandidate: unknown, environment: Dee
       if (rawAction.skillIndex !== undefined && rawAction.skillIndex !== selectedSkill) errors.push(`SKILL_MISMATCH: action ${index}`);
       const selectedType = typeof name === "string" ? selected.get(name)?.skillType : undefined;
       if (selectedType && selectedType !== "MANUAL") errors.push(`NON_MANUAL_SKILL_USE: ${name} skill ${selectedSkill}`);
-      if (typeof name === "string" && selected.get(name)?.skillUsage !== 2) errors.push(`MANUAL_SKILL_USAGE_REQUIRED: ${name} must use skillUsage=2`);
+      if (typeof name === "string" && selected.get(name)?.skillUsage !== 0) errors.push(`MANUAL_SKILL_USAGE_REQUIRED: ${name} must use skillUsage=0 to disable automatic activation`);
     } else if (type === "Retreat") {
       if (typeof name !== "string" || !active.has(name)) errors.push(`RETREAT_OPERATOR_NOT_ACTIVE: action ${index}`);
       if (!(Number(rawAction.delay) > 0) && !hasNativeCondition(rawAction)) errors.push(`UNTIMED_RETREAT: action ${index}`);

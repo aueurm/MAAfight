@@ -1,13 +1,13 @@
 import { createHash } from "crypto";
 import { performance } from "perf_hooks";
-import { exportToCopilotFormat } from "../copilot/ScriptExporter";
+import { toCopilotObject } from "../copilot/ScriptExporter";
 import type { BattleScript, MapData } from "../types";
 import { buildCandidate, buildSquadBeam } from "./CandidateBuilder";
 import { buildEncounterContext } from "./EncounterContext";
 import { evaluateFeasibility } from "./Feasibility";
 import { buildJointPlan } from "./JointPlanner";
 import { squadSignature } from "./helpers";
-import { cheapScoreCandidate, getModelVersions, scoreCandidate, weightedScore } from "./Scoring";
+import { getModelVersions, scoreCandidate, weightedScore } from "./Scoring";
 import { extractStageFacts } from "./StageFacts";
 import type {
   EngineOptions,
@@ -31,20 +31,24 @@ const DEFAULT_SEARCH: SearchConfig = {
   deadlineCheckInterval: 8,
 };
 
-interface CheapCandidate {
+interface ScoredCandidate {
   script: BattleScript;
   picks: EnginePick[];
   scriptHash: string;
   squadSignature: string;
-  cheapScore: number;
+  score: number;
+  scored: ReturnType<typeof scoreCandidate>;
   warnings: string[];
   coverageGaps: string[];
 }
 
+class SearchDeadlineError extends Error {}
+
 const engagementCache = new Map<string, ReturnType<typeof scoreCandidate>>();
 
 export function computeScriptHash(script: BattleScript): string {
-  return createHash("sha256").update(exportToCopilotFormat(script, { compress: true })).digest("hex");
+  const { metadata: _metadata, ...strategy } = toCopilotObject(script);
+  return createHash("sha256").update(JSON.stringify(strategy)).digest("hex");
 }
 
 function hardConstraints(script: BattleScript, mapData: MapData): boolean {
@@ -74,22 +78,13 @@ function hardConstraints(script: BattleScript, mapData: MapData): boolean {
   return script.groups.length === 0 && script.opers.length <= 12 && deploys.length > 0;
 }
 
-function engagementKey(candidate: CheapCandidate, encounterHash: string, combatVersion: string): string {
-  const actions = candidate.script.actions.filter(action => action.type === "Deploy" || action.type === "Skill" || action.type === "SkillDaemon").map(action => ({
-    type: action.type,
-    name: action.name,
-    location: action.location,
-    direction: action.direction,
-    costs: action.costs,
-    pre_delay: action.pre_delay,
-    time_elapsed: action.time_elapsed,
-  }));
+function engagementKey(candidate: Pick<ScoredCandidate, "scriptHash" | "squadSignature">, encounterHash: string, combatVersion: string): string {
   return createHash("sha256").update(JSON.stringify({
-    scorer: "skill-engagement-v1",
+    scorer: "skill-engagement-v2",
     combatVersion,
     encounterHash,
     squad: candidate.squadSignature,
-    actions,
+    scriptHash: candidate.scriptHash,
   })).digest("hex");
 }
 
@@ -121,50 +116,101 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
   const now = options.now || (() => performance.now());
   const startedAt = now();
   const config = configFor(options);
+  // 留出同一总预算内的收尾时间；候选进入 frontier 前已完成战斗评分。
+  const constructionBudgetMs = config.deadlineMs - Math.min(50, config.deadlineMs * 0.1);
+  let phase = "stage facts";
+  const checkDeadline = (): void => {
+    if (now() - startedAt >= constructionBudgetMs) throw new SearchDeadlineError(`Search deadline exceeded during ${phase}`);
+  };
+  checkDeadline();
   const facts = extractStageFacts(mapData);
   const encounter = buildEncounterContext(mapData, facts);
   const versions = getModelVersions();
-  const squadBeam = buildSquadBeam(facts, encounter, { ...options, search: config });
-  const cheapCandidates: CheapCandidate[] = [];
+  const configuredBeamWidth = Math.max(1, Math.floor(config.squadBeamWidth));
+  const beamWidths = configuredBeamWidth <= 4 ? [configuredBeamWidth] : [4, configuredBeamWidth];
+  const candidates: ScoredCandidate[] = [];
+  const triedSquads = new Set<string>();
+  const acceptedHashes = new Set<string>();
+  let expandedSquads = 0;
   let rejectedCandidates = 0;
+  const rejectionReasons = new Set<string>();
+  let buildDeadlineReached = false;
 
-  candidateBuild:
-  for (const picks of squadBeam.squads) {
-    if (cheapCandidates.length >= config.completeCandidateLimit) break candidateBuild;
-    const jointPlan = buildJointPlan(mapData, facts, encounter, { picks, searchBias: options.searchBias });
-    const built = buildCandidate({
-      stageCode,
-      mapData,
-      facts,
-      openingPressure: encounter.demand.deployment + (options.searchBias?.openingCoverage || 0) * 0.25
-        + (options.searchBias?.costSafety || 0) * 0.1 >= 0.5,
-      picks,
-      positionVariant: 0,
-      timingVariant: 0,
-      jointPlan,
-      encounter,
-      options,
-    });
-    const scriptHash = computeScriptHash(built.script);
-    const feasibility = evaluateFeasibility(built.script, built.picks, facts, encounter, mapData);
-    if (!hardConstraints(built.script, mapData) || !feasibility.feasible || options.excludedHashes?.has(scriptHash)) {
-      rejectedCandidates++;
-      continue;
+  try {
+    for (const squadBeamWidth of beamWidths) {
+      if (candidates.length >= config.completeCandidateLimit) break;
+      phase = "squad selection";
+      checkDeadline();
+      const squadBeam = buildSquadBeam(facts, encounter, { ...options, search: { ...config, squadBeamWidth } }, checkDeadline);
+      expandedSquads += squadBeam.expandedStates;
+      for (const picks of squadBeam.squads) {
+        if (candidates.length >= config.completeCandidateLimit) break;
+        const squadKey = picks.map(pick => `${pick.operatorId}:${pick.skill}`).join("|");
+        if (triedSquads.has(squadKey)) continue;
+        triedSquads.add(squadKey);
+        phase = "joint placement";
+        checkDeadline();
+        const jointPlan = buildJointPlan(mapData, facts, encounter, { picks, searchBias: options.searchBias, checkDeadline });
+        phase = "candidate construction";
+        const built = buildCandidate({
+          stageCode,
+          mapData,
+          facts,
+          openingPressure: encounter.demand.deployment + (options.searchBias?.openingCoverage || 0) * 0.25
+            + (options.searchBias?.costSafety || 0) * 0.1 >= 0.5,
+          picks,
+          positionVariant: 0,
+          timingVariant: 0,
+          jointPlan,
+          encounter,
+          options,
+        }, checkDeadline);
+        const scriptHash = computeScriptHash(built.script);
+        if (acceptedHashes.has(scriptHash)) continue;
+        const feasibility = evaluateFeasibility(built.script, built.picks, facts, encounter, mapData);
+        const violations = [
+          ...(!hardConstraints(built.script, mapData) ? ["hard_constraints_failed"] : []),
+          ...feasibility.reasons,
+          ...(options.excludedHashes?.has(scriptHash) ? ["excluded_script_hash"] : []),
+        ];
+        if (violations.length) {
+          for (const reason of violations) rejectionReasons.add(reason);
+          rejectedCandidates++;
+          continue;
+        }
+        phase = "candidate scoring";
+        checkDeadline();
+        const identity = { scriptHash, squadSignature: squadSignature(built.picks) };
+        const cacheKey = engagementKey(identity, encounter.hash, versions.combat);
+        let scored = engagementCache.get(cacheKey);
+        if (!scored) {
+          scored = scoreCandidate(built.script, built.picks, facts, encounter, mapData);
+          engagementCache.set(cacheKey, scored);
+        }
+        acceptedHashes.add(scriptHash);
+        candidates.push({
+          script: built.script,
+          picks: built.picks,
+          ...identity,
+          score: weightedScore(scored.breakdown),
+          scored,
+          warnings: [...squadBeam.warnings, ...built.warnings, ...feasibility.coverageGaps],
+          coverageGaps: [...new Set([...built.coverageGaps, ...feasibility.coverageGaps])].sort(),
+        });
+      }
     }
-    const cheapBreakdown = cheapScoreCandidate(built.script, built.picks, facts, encounter);
-    cheapCandidates.push({
-      script: built.script,
-      picks: built.picks,
-      scriptHash,
-      squadSignature: squadSignature(built.picks),
-      cheapScore: weightedScore(cheapBreakdown),
-      warnings: [...squadBeam.warnings, ...built.warnings, ...feasibility.coverageGaps],
-      coverageGaps: [...new Set([...built.coverageGaps, ...feasibility.coverageGaps])].sort(),
-    });
+  } catch (error) {
+    if (!(error instanceof SearchDeadlineError)) throw error;
+    buildDeadlineReached = true;
   }
-  cheapCandidates.sort((left, right) => right.cheapScore - left.cheapScore || left.scriptHash.localeCompare(right.scriptHash));
-  const frontier = cheapCandidates.slice(0, config.completeCandidateLimit);
-  if (frontier.length === 0) throw new Error("V2 skill engine produced no protocol-safe candidate");
+  candidates.sort((left, right) => right.score - left.score || left.scriptHash.localeCompare(right.scriptHash));
+  const frontier = candidates.slice(0, config.completeCandidateLimit);
+  if (frontier.length === 0) {
+    const cause = buildDeadlineReached ? `search deadline exceeded during ${phase}` : "no feasible candidate";
+    const reasons = [...rejectionReasons].sort().join(", ") || "no complete candidate was validated";
+    throw new Error(`V2 skill engine ${cause}; rejected ${rejectedCandidates} candidates: ${reasons}`);
+  }
+  buildDeadlineReached ||= now() - startedAt >= config.deadlineMs;
 
   const results: EngineResult[] = [];
   let target = Math.min(config.minimumFullCandidates, frontier.length);
@@ -175,12 +221,7 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
 
   for (let index = 0; index < frontier.length && results.length < target; index++) {
     const candidate = frontier[index];
-    const cacheKey = engagementKey(candidate, encounter.hash, versions.combat);
-    let scored = engagementCache.get(cacheKey);
-    if (!scored) {
-      scored = scoreCandidate(candidate.script, candidate.picks, facts, encounter);
-      engagementCache.set(cacheKey, scored);
-    }
+    const scored = candidate.scored;
     const feedback = options.feedbackAdjustment?.(candidate.script, candidate.scriptHash, scored.breakdown) || 0;
     const score = Math.max(0, Math.min(100, weightedScore(scored.breakdown) + feedback));
     const coverageGaps = [...new Set([...candidate.coverageGaps, ...scored.coverageGaps])].sort();
@@ -265,9 +306,10 @@ export function generateCopilotScript(stageCode: string, mapData: MapData, optio
 
   const best = bestOf(results);
   if (!best) throw new Error("V2 skill engine deadline expired before a complete candidate was scored");
+  if (buildDeadlineReached) terminationReason = "deadline";
   const elapsedMs = Math.max(0, now() - startedAt);
   const searchStats: SearchStats = {
-    expandedSquads: squadBeam.expandedStates,
+    expandedSquads,
     cheapCompleteCandidates: frontier.length,
     fullyScoredCandidates: results.length,
     rejectedCandidates,

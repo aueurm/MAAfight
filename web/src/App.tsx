@@ -3,6 +3,7 @@ import {
   enterPractice,
   generateCopilot,
   getConfig,
+  getEmulatorStatus,
   getFeedbackSummary,
   openOutputDir,
   recordFeedback,
@@ -89,6 +90,7 @@ export default function App() {
   const [result, setResult] = useState<GenerateResponse | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [emulatorWarning, setEmulatorWarning] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [practiceTestResult, setPracticeTestResult] = useState<PracticeTestResult | "">("");
   const [loading, setLoading] = useState<ActionName>(null);
@@ -100,6 +102,23 @@ export default function App() {
   const [feedbackStatus, setFeedbackStatus] = useState("");
   const [feedbackSummary, setFeedbackSummary] = useState<FeedbackSummary | null>(null);
   const operatorFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const status = await getEmulatorStatus();
+        if (cancelled) return;
+        setEmulatorWarning(status.state === "failed" ? status.message || "MuMu 启动失败，请检查模拟器。" : "");
+        if (status.state === "starting") timer = window.setTimeout(poll, 2000);
+      } catch {
+        if (!cancelled) timer = window.setTimeout(poll, 5000);
+      }
+    };
+    void poll();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, []);
 
   useEffect(() => {
     getConfig().then(config => {
@@ -296,7 +315,7 @@ export default function App() {
       const testResult = normalizePracticeTestResult(response.result);
       setPracticeTestResult(testResult);
       if (response.result?.publishedOutputPath) {
-        setResult(prev => prev ? { ...prev, outputPath: response.result!.publishedOutputPath, publicationStatus: "published" } : prev);
+        setResult(prev => prev ? { ...prev, publicationStatus: "published" } : prev);
       }
       setStatusMessage(testResult
         ? `测试结果：${testResult}${response.result?.publishedOutputPath ? "；DeepSeek 候选已发布" : ""}`
@@ -483,6 +502,8 @@ export default function App() {
         </div>
         <span className="status-dot">Local {configInfo?.version || ""}</span>
       </header>
+
+      {emulatorWarning && <div className="alert warning" role="alert"><p>{emulatorWarning}</p></div>}
 
       <section className="grid">
         <div className="panel">
@@ -694,6 +715,7 @@ export default function App() {
         <div className="panel actions">
           <h2>操作</h2>
           <button onClick={runGenerate} disabled={loading !== null}>{loading === "generate" ? "分析生成中..." : "分析并生成脚本"}</button>
+          <p className="hint">演习前，请在游戏中手动打开所选关卡的详情页，并等待“演习”按钮可用。</p>
           <button onClick={runValidateAndEnterPractice} disabled={loading !== null || !jsonPreview}>{loading === "practice" ? "验证进入中..." : "验证脚本并进入演习"}</button>
           <button onClick={runOpenOutputDir} disabled={loading !== null}>{loading === "open" ? "打开中..." : "打开输出目录"}</button>
           <button className="secondary" onClick={copyDebugInfo} disabled={!configInfo}>{copiedDebug ? "已复制调试信息" : "复制调试信息"}</button>

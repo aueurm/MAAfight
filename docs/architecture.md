@@ -4,6 +4,8 @@
 
 GUI / pipeline 只提供两条显式路线：`rule-core` 使用 v2 确定性引擎；`deepseek-core` 使用 DeepSeek API 规划、再由本地确定性编译器校验。两者共用 copilot 导出与验证，任何 DeepSeek 候选都不能绕过本地校验或演习发布门槛。
 
+默认关卡、敌人、干员战斗数据与生成知识固定到同一 GameData commit。加载器按快照隔离旧缓存；上游缺失关卡文件或不支持的路径语义会明确报错。
+
 ```text
 Stage code / local JSON
   -> PRTSMapLoader
@@ -74,7 +76,7 @@ src/
 
 `.maafight/generations.jsonl` 保存脚本 hash、stage 内容 hash、GameData commit、模型版本、分项评分和玩家库 hash。`.maafight/feedback.jsonl` 的 v3 记录可额外保存首次漏怪、干员死亡、部署失败、剩余敌人与机制标签。
 
-只有同关卡内容、同玩家库、同 GameData commit 和同 `v2-temporal-v1` 引擎版本的 100% 结果可以复用；旧记录仍可读取。相同 revision 的失败反馈只形成有限的开局、对空、爆发、治疗、费用和路线排序偏置，不能绕过可行性硬约束；低于 100% 的脚本 hash 被排除。
+只有同关卡内容、同玩家库、同 GameData commit 和同 `v2-temporal-maa617-v2` 引擎版本的 100% 结果可以复用；旧记录仍可读取。相同 revision 的失败反馈只形成有限的开局、对空、爆发、治疗、费用和路线排序偏置，不能绕过可行性硬约束；低于 100% 的脚本 hash 被排除。
 
 ## 依赖边界
 
@@ -86,4 +88,4 @@ src/
 - CLI 和 GUI 不实现自己的生成分支，只调用同一 pipeline / engine。
 - DeepSeek 连接直接使用原生 `fetch` 和 `.env` 中的 `DEEPSEEK_API_KEY`，不引入 Provider 抽象或外部 SDK。
 - DeepSeek 的固定 Prompt 不接受用户自由战术要求；输入只包含关卡事实、合法部署点、路线、敌人和当前玩家干员 / 技能。
-- `deepseek-core` 将 `MANUAL`、`AUTO`、`PASSIVE` 技能类型提供给规划模型：仅手动技能可生成 `Skill`；条件撤退和手动技能条件使用 MAA 原生字段，含 `time_elapsed` 的候选在编译时自动从 `ResetStopwatch` 开始计时。
+- `deepseek-core` 将 `MANUAL`、`AUTO`、`PASSIVE` 技能类型提供给规划模型：仅手动技能可生成 `Skill`；条件撤退和手动技能条件使用 MAA 原生字段，含 `elapsed_time` 的候选在编译时自动从 `ResetStopwatch` 开始计时。

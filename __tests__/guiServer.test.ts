@@ -244,10 +244,11 @@ describe("GUI server routes", () => {
       metadata: { source: "maafight-deepseek-core" },
     }), "utf8");
 
-    expect(publishThreeStarCandidate(candidatePath)).toBe(path.join(outputDir, "candidate.json"));
+    const expectedJson = fs.readFileSync(candidatePath, "utf8");
+    expect(publishThreeStarCandidate(candidatePath, expectedJson)).toBe(path.join(outputDir, "candidate.json"));
     expect(fs.existsSync(path.join(outputDir, "candidate.json"))).toBe(true);
     expect(JSON.parse(fs.readFileSync(path.join(outputDir, "candidate.json"), "utf8")).doc.details).toBe("Three-star rehearsal verified.");
-    expect(publishThreeStarCandidate(path.join(outputDir, "candidate.json"))).toBeUndefined();
+    expect(publishThreeStarCandidate(path.join(outputDir, "candidate.json"), expectedJson)).toBeUndefined();
   });
 
   it("should record and summarize battle feedback", async () => {

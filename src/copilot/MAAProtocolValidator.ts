@@ -68,11 +68,23 @@ export function validateMAAProtocol(script: BattleScript): ProtocolValidationRes
     }
     if (action.type === "Skill") hasManualSkill = true;
     if (action.type === "SkillDaemon") hasSkillDaemon = true;
-    if (action.type === "ResetStopwatch") hasResetStopwatch = true;
     checkName(warnings, action.name, "actions[].name", index);
-    if (action.time_elapsed !== undefined && !hasResetStopwatch) {
-      warning(warnings, "TIME_ELAPSED_WITHOUT_RESET", "time_elapsed requires an earlier ResetStopwatch.", index);
+    if ("time_elapsed" in action) {
+      error(errors, "UNSUPPORTED_TIME_ELAPSED", "MAA ignores time_elapsed. Regenerate using elapsed_time in milliseconds.", index);
     }
+    if (action.elapsed_time !== undefined) {
+      if (!Number.isInteger(action.elapsed_time) || action.elapsed_time < 0) {
+        error(errors, "INVALID_ELAPSED_TIME", "elapsed_time must be a non-negative integer in milliseconds.", index);
+      }
+      if (action.elapsed_time > 0 && !hasResetStopwatch) error(errors, "ELAPSED_TIME_WITHOUT_RESET", "elapsed_time requires an earlier ResetStopwatch; otherwise MAA ignores this timing condition.", index);
+    }
+    if (action.timeout !== undefined && (!Number.isInteger(action.timeout) || action.timeout < -1)) {
+      error(errors, "INVALID_TIMEOUT", "timeout must be an integer in milliseconds, at least -1.", index);
+    }
+    if (action.timeout !== undefined && action.skip_if_not_ready !== undefined) {
+      error(errors, "CONFLICTING_SKILL_TIMEOUT", "MAA skips actions containing both timeout and skip_if_not_ready.", index);
+    }
+    if (action.type === "ResetStopwatch") hasResetStopwatch = true;
     if (action.type === "MoveCamera" && !hasDelay(action) && !hasDelay(script.actions[index + 1])) {
       warning(warnings, "MOVE_CAMERA_WITHOUT_DELAY", "MoveCamera is not followed by a delay.", index);
     }

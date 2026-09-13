@@ -75,7 +75,8 @@ export function extractStageFacts(mapData: MapData): StageFacts {
     : [...spawnWindows.values()].sort((left, right) => left.start - right.start);
 
   const routeCells = uniquePoints(mapData.routes.flatMap(route => routePathCells(route)));
-  const goalCells = uniquePoints(mapData.routes.map(route => route.endPosition));
+  const goalTiles = mapData.tiles.flatMap(row => row.filter(tile => tile.key === "end"));
+  const goalCells = uniquePoints(goalTiles.length ? goalTiles.map(({ row, col }) => ({ row, col })) : mapData.routes.map(route => route.endPosition));
   const chokeCells = uniquePoints(mapData.strategicPoints
     .filter(point => point.type === "chokepoint")
     .map(point => ({ row: point.row, col: point.col })));

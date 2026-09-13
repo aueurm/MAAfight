@@ -5,9 +5,6 @@ param(
   [string]$Address = "",
   [string]$ConnectConfig = "",
   [string]$ScriptPath = "",
-  [string]$ClientType = "Official",
-  [int]$StartupTimeoutSec = 180,
-  [int]$NavigationTimeoutSec = 120,
   [int]$ExecutionTimeoutSec = 600,
   [switch]$SelfTest
 )
@@ -45,11 +42,27 @@ function Resolve-MaaDir {
 function Get-MaaGuiConfig {
   param([string]$Dir)
 
+  $newConfigPath = Join-Path $Dir "config\gui.new.json"
+  if (Test-Path -LiteralPath $newConfigPath) {
+    try {
+      $raw = Get-Content -LiteralPath $newConfigPath -Encoding UTF8 -Raw | ConvertFrom-Json
+      $current = if ($raw.Current) { $raw.Current } else { "Default" }
+      $profile = $raw.Configurations.$current
+      if (-not $profile) { $profile = $raw.Configurations.Default }
+      $settings = $profile.Gui.ConnectSettings
+      if ($settings) {
+        return @{ "Connect.AdbPath" = [string]$settings.AdbPath; "Connect.Address" = [string]$settings.Address; "Connect.ConnectConfig" = [string]$settings.Config; "Copilot.SelectFormation" = $profile.Copilot.SelectFormation }
+      }
+    } catch {
+    }
+  }
+
   $configPath = Join-Path $Dir "config\gui.json"
   if (-not (Test-Path -LiteralPath $configPath)) { return $null }
   $raw = Get-Content -LiteralPath $configPath -Encoding UTF8 -Raw | ConvertFrom-Json
   $current = if ($raw.Current) { $raw.Current } else { "Default" }
-  return $raw.Configurations.$current
+  if ($raw.Configurations.$current) { return $raw.Configurations.$current }
+  return $raw.Configurations.Default
 }
 
 function Test-AsciiPath {
@@ -70,69 +83,17 @@ function Resolve-CopilotFilePath {
   # ponytail: MaaCore receives this JSON through ANSI P/Invoke here; stage non-ASCII paths in an ASCII cache.
   $safeDir = Join-Path (Join-Path (Resolve-Path ".").Path ".maafight") "copilot-run"
   New-Item -ItemType Directory -Force -Path $safeDir | Out-Null
-  $hash = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash.ToLowerInvariant()
+  $sha = [Security.Cryptography.SHA256]::Create()
+  $inputFile = [IO.File]::OpenRead($resolved)
+  try {
+    $hash = [BitConverter]::ToString($sha.ComputeHash($inputFile)).Replace("-", "").ToLowerInvariant()
+  } finally {
+    $inputFile.Dispose()
+    $sha.Dispose()
+  }
   $safePath = Join-Path $safeDir "${hash}.json"
   Copy-Item -LiteralPath $resolved -Destination $safePath -Force
   return $safePath
-}
-
-function Test-MaaMainStageId {
-  param([string]$StageId)
-
-  return $StageId -match "^(main|sub|tough|hard)_"
-}
-
-function Get-MaaFightNavigationIndex {
-  param([string]$Dir)
-
-  $mainStages = @{}
-  $taskStages = @{}
-  $stagesPath = Join-Path $Dir "resource\stages.json"
-  if (Test-Path -LiteralPath $stagesPath) {
-    try {
-      $stages = Get-Content -LiteralPath $stagesPath -Encoding UTF8 -Raw | ConvertFrom-Json
-      $stageMetas = if ($stages -is [array]) { $stages } else { $stages.PSObject.Properties | ForEach-Object { $_.Value } }
-      foreach ($meta in $stageMetas) {
-        $code = ([string]$meta.code).Trim().ToUpperInvariant()
-        $stageId = ([string]$meta.stageId).Trim()
-        $apCost = 0
-        try { $apCost = [int]$meta.apCost } catch { $apCost = 0 }
-        if ($code -and $apCost -gt 0 -and (Test-MaaMainStageId $stageId)) {
-          $mainStages[$code] = $true
-        }
-      }
-    } catch {
-    }
-  }
-
-  $taskDir = Join-Path $Dir "resource\tasks\Stages"
-  if (Test-Path -LiteralPath $taskDir) {
-    Get-ChildItem -LiteralPath $taskDir -Filter "*.json" -File | ForEach-Object {
-      try {
-        $tasks = Get-Content -LiteralPath $_.FullName -Encoding UTF8 -Raw | ConvertFrom-Json
-        foreach ($task in $tasks.PSObject.Properties) {
-          $name = $task.Name.Trim().ToUpperInvariant()
-          if ($name -cmatch "^(?=.*\d)[A-Z0-9]+(?:-[A-Z0-9]+)+$") {
-            $taskStages[$name] = $true
-          }
-        }
-      } catch {
-      }
-    }
-  }
-
-  return @{
-    mainStages = $mainStages
-    taskStages = $taskStages
-  }
-}
-
-function Test-MaaFightNavigationSupported {
-  param([string]$StageName, [hashtable]$Index)
-
-  $stage = $StageName.Trim().ToUpperInvariant()
-  if (-not $stage) { return $false }
-  return $Index.mainStages.ContainsKey($stage) -or $Index.taskStages.ContainsKey($stage)
 }
 
 $width = 1280
@@ -260,67 +221,129 @@ function Invoke-SelfTest {
   if (-not (Test-AsciiPath $safeCopilotPath)) { throw "safe copilot path should be ASCII" }
   if (-not (Test-Path -LiteralPath $safeCopilotPath)) { throw "safe copilot file should exist" }
 
-  $navTestDir = Join-Path (Join-Path (Resolve-Path ".").Path ".maafight") "selftest-nav"
-  $navResourceDir = Join-Path $navTestDir "resource"
-  $navStageDir = Join-Path $navResourceDir "tasks\Stages"
-  New-Item -ItemType Directory -Force -Path $navStageDir | Out-Null
-  Set-Content -LiteralPath (Join-Path $navResourceDir "stages.json") -Encoding UTF8 -Value '[
-    { "code": "3-8", "stageId": "main_03-08", "apCost": 18 },
-    { "code": "S3-1", "stageId": "sub_03-1-1", "apCost": 15 },
-    { "code": "12-12", "stageId": "main_12-10", "apCost": 21 },
-    { "code": "1-2", "stageId": "main_01-02", "apCost": 0 },
-    { "code": "OF-F1", "stageId": "a003_f01_perm", "apCost": 9 }
-  ]'
-  Set-Content -LiteralPath (Join-Path $navStageDir "OF.json") -Encoding UTF8 -Value '{ "OF-F3": { "algorithm": "JustReturn" } }'
-  Set-Content -LiteralPath (Join-Path $navStageDir "Supplies.json") -Encoding UTF8 -Value '{ "CE-6": { "algorithm": "JustReturn" }, "PR-A-1": { "algorithm": "JustReturn" } }'
-  $navIndex = Get-MaaFightNavigationIndex $navTestDir
-  if (-not (Test-MaaFightNavigationSupported "OF-F3" $navIndex)) { throw "OF-F3 should be navigation-supported" }
-  if (-not (Test-MaaFightNavigationSupported "CE-6" $navIndex)) { throw "CE-6 should be navigation-supported from Supplies.json" }
-  if (-not (Test-MaaFightNavigationSupported "PR-A-1" $navIndex)) { throw "PR-A-1 should be navigation-supported from Supplies.json" }
-  if (-not (Test-MaaFightNavigationSupported "3-8" $navIndex)) { throw "numeric mainline stage should keep navigation" }
-  if (-not (Test-MaaFightNavigationSupported "S3-1" $navIndex)) { throw "sub mainline stage should keep navigation" }
-  if (-not (Test-MaaFightNavigationSupported "12-12" $navIndex)) { throw "array stages.json mainline stage should keep navigation" }
-  if (Test-MaaFightNavigationSupported "OF-F1" $navIndex) { throw "OF-F1 should be navigation-skipped" }
-  if (Test-MaaFightNavigationSupported "1-2" $navIndex) { throw "zero sanity mainline stage should skip navigation" }
-  if (Test-MaaFightNavigationSupported "TR-1" $navIndex) { throw "teaching stage should skip navigation" }
-  if (Test-MaaFightNavigationSupported "XX-1" $navIndex) { throw "missing stage should skip navigation" }
+  $configTestDir = Join-Path (Join-Path (Resolve-Path ".").Path ".maafight") "selftest-config"
+  $guiConfigDir = Join-Path $configTestDir "config"
+  New-Item -ItemType Directory -Force -Path $guiConfigDir | Out-Null
+  Set-Content -LiteralPath (Join-Path $guiConfigDir "gui.new.json") -Encoding UTF8 -Value '{ "Current": "Practice", "Configurations": { "Practice": { "Gui": { "ConnectSettings": { "AdbPath": "C:\\adb.exe", "Address": "127.0.0.1:16384", "Config": "MuMuEmulator12" } }, "Copilot": { "SelectFormation": 2 } } } }'
+  $newConfig = Get-MaaGuiConfig $configTestDir
+  if ($newConfig.'Connect.AdbPath' -ne "C:\adb.exe" -or $newConfig.'Connect.Address' -ne "127.0.0.1:16384" -or $newConfig.'Connect.ConnectConfig' -ne "MuMuEmulator12") { throw "MAA 6 GUI connection config should load" }
+  if ($newConfig.'Copilot.SelectFormation' -ne 2) { throw "MAA 6 selected formation should load" }
+  Set-Content -LiteralPath (Join-Path $guiConfigDir "gui.new.json") -Encoding UTF8 -Value '{}'
+  Set-Content -LiteralPath (Join-Path $guiConfigDir "gui.json") -Encoding UTF8 -Value '{ "Configurations": { "Default": { "Connect.Address": "emulator-5554", "Copilot.SelectFormation": "3" } } }'
+  $legacyConfig = Get-MaaGuiConfig $configTestDir
+  if ($legacyConfig.'Connect.Address' -ne "emulator-5554" -or $legacyConfig.'Copilot.SelectFormation' -ne "3") { throw "legacy GUI connection and formation config should load" }
 
-  @{ ok = $true; selfTest = $true } | ConvertTo-Json -Compress
+  function Assert-SelfTestThrows {
+    param([scriptblock]$Action, [string]$Expected)
+    try { & $Action | Out-Null } catch {
+      if ($_.Exception.Message -like "*$Expected*") { return }
+      throw
+    }
+    throw "expected failure containing: $Expected"
+  }
+
+  $maaConfig = @{ 'Copilot.SelectFormation' = 0 }
+  if ((Get-CopilotFormationIndex) -ne 0) { throw "current formation (0) must be preserved" }
+  $maaConfig = @{ 'Copilot.SelectFormation' = 5 }
+  Assert-SelfTestThrows { Get-CopilotFormationIndex } "integer from 0 to 4"
+
+  $completed = @(@{ message = 10002; details = @{ taskid = 7; taskchain = "Copilot" } })
+  if (-not (Get-MaaTaskState $completed 7)) { throw "matching completion callback should complete task" }
+  if (Get-MaaTaskState $completed 8) { throw "another task's completion must not complete task" }
+  if (Get-MaaTaskState @(@{ message = 3; details = @{ taskid = 7 } }) 7) { throw "AllTasksCompleted alone must not prove task success" }
+  $failed = @(@{ message = 10000; details = @{ taskid = 7; taskchain = "Copilot" } }) + $completed
+  Assert-SelfTestThrows { Get-MaaTaskState $failed 7 } "failed or stopped"
+  Assert-SelfTestThrows { Get-MaaTaskState @(@{ message = 10004; details = @{ taskid = 7 } }) 7 } "failed or stopped"
+  $ignoredPrecheck = @(@{ message = 20000; details = @{ taskid = 7; subtask = "ProcessTask"; details = @{ task = "BattleStartPre" } } }) + $completed
+  if (-not (Get-MaaTaskState $ignoredPrecheck 7)) { throw "ignored initial precheck may precede a successful Copilot" }
+
+  [MaaCoreEnterPractice]::Callback.Invoke(10000, '{"taskid":7,"taskchain":"Copilot"}', [IntPtr]::Zero)
+  Assert-SelfTestThrows { Wait-MaaTask ([IntPtr]::Zero) 7 1 "test" } "failed or stopped"
+  $maaEvents.Clear()
+  [MaaCoreEnterPractice]::Callback.Invoke(4, '{"async_call_id":9,"what":"Click","details":{"ret":true}}', [IntPtr]::Zero)
+  Read-MaaEvents
+  if (-not (Get-MaaAsyncResult $maaEvents.ToArray() 9)) { throw "callback delegate should preserve a successful click result" }
+  if (Get-MaaAsyncResult $maaEvents.ToArray() 10) { throw "another async call must not prove success" }
+  Assert-SelfTestThrows { Get-MaaAsyncResult @(@{ message = 4; details = @{ async_call_id = 9; what = "Screencap"; details = @{ ret = $false } } }) 9 } "Screencap failed"
+  Assert-SelfTestThrows { Get-MaaAsyncResult @(@{ message = 4; details = @{ async_call_id = 9; what = "Click"; details = @{} } }) 9 } "Click failed"
+  $maaEvents.Clear()
+
+  $templateTestDir = Join-Path (Join-Path (Resolve-Path ".").Path ".maafight") "selftest-practice-template"
+  $templateTestPath = Join-Path $templateTestDir "resource\template\Battle\StartButton"
+  New-Item -ItemType Directory -Force -Path $templateTestPath | Out-Null
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\__tests__\fixtures\practice-start-button.png") -Destination (Join-Path $templateTestPath "BattleStartExercise.png") -Force
+  $practiceTemplate = Read-PracticeTemplate $templateTestDir
+  $exerciseFormation = New-Object byte[] $screenBytes
+  for ($y = 0; $y -lt $practiceTemplate.height; $y++) {
+    [Array]::Copy($practiceTemplate.bgr, $y * $practiceTemplate.width * 3, $exerciseFormation, (($y + 366) * $width + 1038) * 3, $practiceTemplate.width * 3)
+  }
+  if (-not (Test-PracticeFormation $exerciseFormation)) { throw "real exercise button should verify formation" }
+  if (Test-PracticeFormation $blank) { throw "blank screen must not verify exercise formation" }
+  if (Test-PracticeFormation $sample) { throw "stage-detail buttons must not verify exercise formation" }
+  $normalFormation = $exerciseFormation.Clone()
+  for ($p = 0; $p -lt $normalFormation.Length; $p += 3) {
+    $blue = $normalFormation[$p]
+    $normalFormation[$p] = $normalFormation[$p + 2]
+    $normalFormation[$p + 2] = $blue
+  }
+  if (Test-PracticeFormation $normalFormation) { throw "normal orange formation button must not verify exercise" }
+  function Get-ScreenBgr { param([IntPtr]$Handle) return $normalFormation }
+  Assert-SelfTestThrows { Invoke-Copilot ([IntPtr]::Zero) "unused.json" } "Exercise formation changed"
+
+  @{ ok = $true; selfTest = $true; callbackChecks = 11; practiceChecks = 5 } | ConvertTo-Json -Compress
 }
-
-if ($SelfTest) {
-  Invoke-SelfTest
-  return
-}
-
-$MaaDir = Resolve-MaaDir $MaaDir
-$maaConfig = Get-MaaGuiConfig $MaaDir
-$stageName = $Stage.Trim()
-$navigationIndex = Get-MaaFightNavigationIndex $MaaDir
-$navigationSupported = Test-MaaFightNavigationSupported $stageName $navigationIndex
-if (-not $AdbPath.Trim() -and $maaConfig) { $AdbPath = [string]$maaConfig.'Connect.AdbPath' }
-if (-not $Address.Trim() -and $maaConfig) { $Address = [string]$maaConfig.'Connect.Address' }
-if (-not $ConnectConfig.Trim() -and $maaConfig) { $ConnectConfig = [string]$maaConfig.'Connect.ConnectConfig' }
-if (-not $ConnectConfig.Trim()) { $ConnectConfig = "General" }
-
-if (-not $stageName) { throw "Stage is required" }
-if ($ScriptPath.Trim() -and -not (Test-Path -LiteralPath $ScriptPath.Trim())) { throw "script file not found: $ScriptPath" }
-if (-not (Test-Path -LiteralPath (Join-Path $MaaDir "MaaCore.dll"))) { throw "MaaCore.dll not found in $MaaDir" }
-if (-not $AdbPath.Trim()) { throw "adb path is required. Configure MAA connection settings or pass -AdbPath." }
-if (-not $Address.Trim()) { throw "adb address is required. Configure MAA connection settings or pass -Address." }
-if (-not (Test-Path -LiteralPath $AdbPath)) { throw "adb.exe not found: $AdbPath" }
-
-$root = (Resolve-Path ".").Path
-$userDir = Join-Path $root ".maafight\maa-core"
-New-Item -ItemType Directory -Force -Path $userDir | Out-Null
-
-[System.Environment]::SetEnvironmentVariable("PATH", "$MaaDir;$env:PATH", "Process")
 
 $code = @'
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
+public sealed class MaaPracticeEvent {
+  public int Message;
+  public string Json;
+}
+
 public static class MaaCoreEnterPractice {
+  [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+  public delegate void ApiCallback(int message, [MarshalAs(UnmanagedType.LPUTF8Str)] string details, IntPtr customArg);
+
+  private static readonly ConcurrentQueue<MaaPracticeEvent> Events = new ConcurrentQueue<MaaPracticeEvent>();
+  public static readonly ApiCallback Callback = ReceiveCallback;
+
+  private static void ReceiveCallback(int message, string details, IntPtr customArg) {
+    Events.Enqueue(new MaaPracticeEvent { Message = message, Json = details });
+  }
+
+  public static MaaPracticeEvent[] DrainEvents() {
+    var result = new List<MaaPracticeEvent>();
+    MaaPracticeEvent item;
+    while (Events.TryDequeue(out item)) result.Add(item);
+    return result.ToArray();
+  }
+
+  // Match the complete official exercise button, including its blue PLAN footer.
+  // Sampling every fourth pixel bounds CPU work while retaining both color and lettering.
+  public static double PracticeTemplateScore(byte[] bgr, byte[] template, int tw, int th) {
+    if (bgr == null || bgr.Length != 1280 * 720 * 3 || tw <= 0 || th <= 0 ||
+        tw > 232 || th > 374 || template == null || template.Length != tw * th * 3) return 0;
+    double best = 0;
+    for (int oy = 318; oy <= 692 - th; oy++) {
+      for (int ox = 989; ox <= 1221 - tw; ox++) {
+        long error = 0;
+        int count = 0;
+        for (int y = 0; y < th; y += 4) {
+          for (int x = 0; x < tw; x += 4) {
+            int p = ((oy + y) * 1280 + ox + x) * 3, t = (y * tw + x) * 3;
+            for (int c = 0; c < 3; c++) { error += Math.Abs(bgr[p + c] - template[t + c]); count++; }
+          }
+        }
+        best = Math.Max(best, 1.0 - (double)error / (count * 255));
+      }
+    }
+    return best;
+  }
+
   [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)]
   public static extern bool SetDllDirectory(string lpPathName);
 
@@ -331,7 +354,7 @@ public static class MaaCoreEnterPractice {
   public static extern byte AsstLoadResource(string path);
 
   [DllImport("MaaCore.dll", CallingConvention = CallingConvention.Cdecl)]
-  public static extern IntPtr AsstCreate();
+  public static extern IntPtr AsstCreateEx(ApiCallback callback, IntPtr customArg);
 
   [DllImport("MaaCore.dll", CallingConvention = CallingConvention.Cdecl)]
   public static extern void AsstDestroy(IntPtr handle);
@@ -366,22 +389,107 @@ public static class MaaCoreEnterPractice {
 '@
 
 Add-Type -TypeDefinition $code
-[MaaCoreEnterPractice]::SetDllDirectory($MaaDir) | Out-Null
+$maaEvents = New-Object 'System.Collections.Generic.List[object]'
 
-if ([MaaCoreEnterPractice]::AsstSetUserDir($userDir) -eq 0) { throw "AsstSetUserDir failed" }
-if ([MaaCoreEnterPractice]::AsstLoadResource($MaaDir) -eq 0) { throw "AsstLoadResource failed" }
+function Read-MaaEvents {
+  foreach ($entry in [MaaCoreEnterPractice]::DrainEvents()) {
+    $details = $entry.Json | ConvertFrom-Json
+    $maaEvents.Add(@{ message = $entry.Message; details = $details })
+  }
+}
+
+function Get-MaaTaskState {
+  param([object[]]$Events, [int]$TaskId)
+
+  $completed = $false
+  $lastSubtask = ""
+  foreach ($entry in $Events) {
+    $details = $entry.details
+    if ($entry.message -eq 0 -or $entry.message -eq 1) { throw "MaaCore internal error: $($details.what) $($details.why)" }
+    if ($details.taskid -ne $TaskId) { continue }
+    if ($entry.message -eq 20000) { $lastSubtask = "$($details.subtask) $($details.details.task)" }
+    if ($entry.message -eq 10000 -or $entry.message -eq 10004) {
+      throw "MAA task $TaskId failed or stopped (callback $($entry.message)); $lastSubtask $($details.details.error)"
+    }
+    if ($entry.message -eq 10002) { $completed = $true }
+  }
+  return $completed
+}
+
+function Get-MaaAsyncResult {
+  param([object[]]$Events, [int]$CallId)
+
+  foreach ($entry in $Events) {
+    if ($entry.message -ne 4 -or $entry.details.async_call_id -ne $CallId) { continue }
+    if ($entry.details.details.ret -isnot [bool] -or -not $entry.details.details.ret) { throw "MAA $($entry.details.what) failed (async call $CallId)" }
+    return $true
+  }
+  return $false
+}
+
+function Wait-MaaAsyncCall {
+  param([int]$CallId)
+
+  if ($CallId -le 0) { throw "MAA asynchronous call was not accepted" }
+  $deadline = (Get-Date).AddSeconds(5)
+  do {
+    Read-MaaEvents
+    if (Get-MaaAsyncResult $maaEvents.ToArray() $CallId) { return }
+    Start-Sleep -Milliseconds 50
+  } while ((Get-Date) -lt $deadline)
+  throw "MAA asynchronous call $CallId completed without a verified result"
+}
+
+function Read-PracticeTemplate {
+  param([string]$Dir)
+
+  $paths = @("resource\template\Battle\StartButton\BattleStartExercise.png", "resource\template\BattleStartExercise.png")
+  $templatePath = $paths | ForEach-Object { Join-Path $Dir $_ } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+  if (-not $templatePath) { throw "Official BattleStartExercise template is missing; practice cannot be verified" }
+  Add-Type -AssemblyName System.Drawing
+  $bitmap = New-Object System.Drawing.Bitmap $templatePath
+  try {
+    $pixels = New-Object byte[] ($bitmap.Width * $bitmap.Height * 3)
+    for ($y = 0; $y -lt $bitmap.Height; $y++) {
+      for ($x = 0; $x -lt $bitmap.Width; $x++) {
+        $color = $bitmap.GetPixel($x, $y)
+        $p = ($y * $bitmap.Width + $x) * 3
+        $pixels[$p] = $color.B; $pixels[$p + 1] = $color.G; $pixels[$p + 2] = $color.R
+      }
+    }
+    return @{ bgr = $pixels; width = $bitmap.Width; height = $bitmap.Height }
+  } finally { $bitmap.Dispose() }
+}
+
+function Test-PracticeFormation {
+  param([byte[]]$Bgr)
+
+  return [MaaCoreEnterPractice]::PracticeTemplateScore($Bgr, $practiceTemplate.bgr, $practiceTemplate.width, $practiceTemplate.height) -ge 0.92
+}
+
+function Wait-PracticeFormation {
+  param([IntPtr]$Handle)
+
+  $deadline = (Get-Date).AddSeconds(15)
+  do {
+    if (Test-PracticeFormation (Get-ScreenBgr $Handle)) { return }
+    Start-Sleep -Milliseconds 250
+  } while ((Get-Date) -lt $deadline)
+  throw "Exercise formation was not verified; Copilot was not started. No normal battle will be queued."
+}
 
 function Invoke-Click {
   param([IntPtr]$Handle, [int]$X, [int]$Y)
   $callId = [MaaCoreEnterPractice]::AsstAsyncClick($Handle, $X, $Y, 1)
-  if ($callId -le 0) { throw "AsstAsyncClick failed at $X,$Y" }
+  Wait-MaaAsyncCall $callId
   return $callId
 }
 
 function Get-ScreenBgr {
   param([IntPtr]$Handle)
 
-  [MaaCoreEnterPractice]::AsstAsyncScreencap($Handle, 1) | Out-Null
+  $captureId = [MaaCoreEnterPractice]::AsstAsyncScreencap($Handle, 1)
+  Wait-MaaAsyncCall $captureId
   $bgr = New-Object byte[] $screenBytes
   $size = [MaaCoreEnterPractice]::AsstGetImageBgr($Handle, $bgr, [UInt64]$bgr.Length)
   if ($size -lt $screenBytes) { throw "AsstGetImageBgr returned $size bytes" }
@@ -412,10 +520,18 @@ function Wait-PracticeReady {
 }
 
 function Wait-MaaTask {
-  param([IntPtr]$Handle, [int]$TimeoutSec, [string]$Name)
+  param([IntPtr]$Handle, [int]$TaskId, [int]$TimeoutSec, [string]$Name)
 
   $deadline = (Get-Date).AddSeconds($TimeoutSec)
-  while ([MaaCoreEnterPractice]::AsstRunning($Handle) -ne 0) {
+  $idleDeadline = $null
+  while ($true) {
+    Read-MaaEvents
+    $completed = Get-MaaTaskState $maaEvents.ToArray() $TaskId
+    if ([MaaCoreEnterPractice]::AsstRunning($Handle) -eq 0) {
+      if ($completed) { return }
+      if (-not $idleDeadline) { $idleDeadline = (Get-Date).AddSeconds(5) }
+      if ((Get-Date) -gt $idleDeadline) { throw "$Name stopped without TaskChainCompleted callback" }
+    }
     if ((Get-Date) -gt $deadline) {
       [MaaCoreEnterPractice]::AsstStop($Handle) | Out-Null
       throw "$Name timed out after $TimeoutSec seconds"
@@ -425,8 +541,8 @@ function Wait-MaaTask {
 }
 
 function New-ConnectedMaaHandle {
-  $handle = [MaaCoreEnterPractice]::AsstCreate()
-  if ($handle -eq [IntPtr]::Zero) { throw "AsstCreate failed" }
+  $handle = [MaaCoreEnterPractice]::AsstCreateEx([MaaCoreEnterPractice]::Callback, [IntPtr]::Zero)
+  if ($handle -eq [IntPtr]::Zero) { throw "AsstCreateEx failed" }
 
   try {
     if ([MaaCoreEnterPractice]::AsstConnect($handle, $AdbPath, $Address, $ConnectConfig) -eq 0) {
@@ -442,58 +558,21 @@ function New-ConnectedMaaHandle {
   }
 }
 
-function Invoke-Startup {
-  param([IntPtr]$Handle)
-
-  $startupParams = @{
-    client_type = $ClientType
-    start_game_enabled = $true
-  } | ConvertTo-Json -Compress
-  $startupTaskId = [MaaCoreEnterPractice]::AsstAppendTask($Handle, "StartUp", $startupParams)
-  if ($startupTaskId -le 0) { throw "AsstAppendTask StartUp failed" }
-  if ([MaaCoreEnterPractice]::AsstStart($Handle) -eq 0) { throw "AsstStart StartUp failed" }
-
-  Wait-MaaTask $Handle $StartupTimeoutSec "StartUp wakeup"
-
-  return $startupTaskId
-}
-
-function Invoke-FightNavigation {
-  param([IntPtr]$Handle, [string]$StageName)
-
-  $taskParams = @{
-    stage = $StageName
-    times = 0
-    medicine = 0
-    expiring_medicine = 0
-    stone = 0
-    series = 1
-    report_to_penguin = $false
-    report_to_yituliu = $false
-  } | ConvertTo-Json -Compress
-
-  $taskId = [MaaCoreEnterPractice]::AsstAppendTask($Handle, "Fight", $taskParams)
-  if ($taskId -le 0) { throw "AsstAppendTask Fight failed for $StageName" }
-  if ([MaaCoreEnterPractice]::AsstStart($Handle) -eq 0) { throw "AsstStart Fight failed" }
-
-  Wait-MaaTask $Handle $NavigationTimeoutSec "Fight navigation"
-
-  return $taskId
-}
-
 function Get-CopilotFormationIndex {
-  if (-not $maaConfig) { return 4 }
+  if (-not $maaConfig -or $null -eq $maaConfig.'Copilot.SelectFormation') { return 4 }
   try {
     $value = [int]([string]$maaConfig.'Copilot.SelectFormation')
-    if ($value -gt 0) { return $value }
+    if ($value -ge 0 -and $value -le 4) { return $value }
   } catch {
   }
-  return 4
+  throw "MAA Copilot.SelectFormation must be an integer from 0 to 4"
 }
 
 function Invoke-Copilot {
   param([IntPtr]$Handle, [string]$FilePath)
 
+  # Copilot accepts normal and exercise starts; verify exercise immediately before handing over control.
+  if (-not (Test-PracticeFormation (Get-ScreenBgr $Handle))) { throw "Exercise formation changed; Copilot was not started" }
   $taskParams = @{
     filename = (Resolve-Path -LiteralPath $FilePath).Path
     formation = $true
@@ -509,51 +588,65 @@ function Invoke-Copilot {
   if ($taskId -le 0) { throw "AsstAppendTask Copilot failed for $FilePath" }
   if ([MaaCoreEnterPractice]::AsstStart($Handle) -eq 0) { throw "AsstStart Copilot failed" }
 
-  Wait-MaaTask $Handle $ExecutionTimeoutSec "Copilot execution"
+  Wait-MaaTask $Handle $taskId $ExecutionTimeoutSec "Copilot execution"
 
   return $taskId
 }
 
-$startupTaskId = $null
-if ($navigationSupported) {
-  $startupHandle = New-ConnectedMaaHandle
-  try {
-    $startupTaskId = Invoke-Startup $startupHandle
-  } finally {
-    [MaaCoreEnterPractice]::AsstDestroy($startupHandle)
-  }
+if ($SelfTest) {
+  Invoke-SelfTest
+  return
 }
 
+$MaaDir = Resolve-MaaDir $MaaDir
+$maaConfig = Get-MaaGuiConfig $MaaDir
+$stageName = $Stage.Trim()
+if (-not $AdbPath.Trim() -and $maaConfig) { $AdbPath = [string]$maaConfig.'Connect.AdbPath' }
+if (-not $Address.Trim() -and $maaConfig) { $Address = [string]$maaConfig.'Connect.Address' }
+if (-not $ConnectConfig.Trim() -and $maaConfig) { $ConnectConfig = [string]$maaConfig.'Connect.ConnectConfig' }
+if (-not $ConnectConfig.Trim()) { $ConnectConfig = "General" }
+if (-not $stageName) { throw "Stage is required" }
+if ($ScriptPath.Trim() -and -not (Test-Path -LiteralPath $ScriptPath.Trim())) { throw "script file not found: $ScriptPath" }
+if (-not (Test-Path -LiteralPath (Join-Path $MaaDir "MaaCore.dll"))) { throw "MaaCore.dll not found in $MaaDir" }
+if (-not $AdbPath.Trim()) { throw "adb path is required. Configure MAA connection settings or pass -AdbPath." }
+if (-not $Address.Trim()) { throw "adb address is required. Configure MAA connection settings or pass -Address." }
+if (-not (Test-Path -LiteralPath $AdbPath)) { throw "adb.exe not found: $AdbPath" }
+$practiceTemplate = Read-PracticeTemplate $MaaDir
+$root = (Resolve-Path ".").Path
+$userDir = Join-Path $root ".maafight\maa-core"
+New-Item -ItemType Directory -Force -Path $userDir | Out-Null
+[System.Environment]::SetEnvironmentVariable("PATH", "$MaaDir;$env:PATH", "Process")
+[MaaCoreEnterPractice]::SetDllDirectory($MaaDir) | Out-Null
+if ([MaaCoreEnterPractice]::AsstSetUserDir($userDir) -eq 0) { throw "AsstSetUserDir failed" }
+if ([MaaCoreEnterPractice]::AsstLoadResource($MaaDir) -eq 0) { throw "AsstLoadResource failed" }
+
+# MAA v6.17.5 skips every Fight subtask when times=0, including navigation.
+# Require the selected stage detail screen; no automatic normal battle is queued.
 $handle = New-ConnectedMaaHandle
 try {
-  $navigationTaskId = $null
-  $navigationSkipped = -not $navigationSupported
-  if (-not $navigationSkipped) {
-    $navigationTaskId = Invoke-FightNavigation $handle $stageName
-  }
-
   $bgr = Get-ScreenBgr $handle
-  if (-not (Test-StageDetail $bgr)) {
-    if ($navigationSkipped) {
-      throw "MAA Fight navigation is not configured for $stageName; open the stage detail screen manually and retry."
-    }
-    throw "stage detail screen not detected; practice click skipped"
+  $alreadyInPracticeFormation = Test-PracticeFormation $bgr
+  if (-not $alreadyInPracticeFormation -and -not (Test-StageDetail $bgr)) {
+    throw "Open the $stageName stage detail screen manually before entering practice; current MAA does not provide navigation-only mode."
   }
 
   $closedProxy = $false
-  if (Test-ProxyEnabled $bgr) {
+  $practiceCallId = $null
+  if (-not $alreadyInPracticeFormation -and (Test-ProxyEnabled $bgr)) {
     Invoke-Click $handle 1066 592 | Out-Null
     $closedProxy = $true
     $bgr = Wait-ProxyDisabled $handle
   }
 
-  $bgr = Wait-PracticeReady $handle $bgr
-  $practiceCallId = Invoke-Click $handle 934 658
+  if (-not $alreadyInPracticeFormation) {
+    $bgr = Wait-PracticeReady $handle $bgr
+    $practiceCallId = Invoke-Click $handle 934 658
+    Wait-PracticeFormation $handle
+  }
   $copilotTaskId = $null
   $resolvedScriptPath = $null
   $copilotScriptPath = $null
   if ($ScriptPath.Trim()) {
-    Start-Sleep -Milliseconds 1500
     $resolvedScriptPath = (Resolve-Path -LiteralPath $ScriptPath.Trim()).Path
     $copilotScriptPath = Resolve-CopilotFilePath $resolvedScriptPath
     $copilotTaskId = Invoke-Copilot $handle $copilotScriptPath
@@ -562,9 +655,12 @@ try {
     ok = $true
     stage = $stageName
     maaDir = $MaaDir
-    startupTaskId = $startupTaskId
-    navigationTaskId = $navigationTaskId
-    navigationSkipped = $navigationSkipped
+    startupTaskId = $null
+    navigationTaskId = $null
+    navigationSkipped = $true
+    practiceVerified = $true
+    alreadyInPracticeFormation = $alreadyInPracticeFormation
+    taskCompleted = ($null -ne $copilotTaskId)
     closedProxy = $closedProxy
     practiceCallId = $practiceCallId
     copilotTaskId = $copilotTaskId

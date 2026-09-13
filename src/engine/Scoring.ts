@@ -1,9 +1,10 @@
 import corpusJson from "../data/corpusPrior.v1.json";
 import copilotPriorJson from "../data/copilotPrior.v1.json";
-import type { BattleScript, BattleScriptAction } from "../types";
+import type { BattleScript, BattleScriptAction, MapData } from "../types";
 import { getCombatModelInfo } from "./CombatModel";
 import { clamp } from "./helpers";
-import { temporalCoverageScore } from "./TemporalCoverage";
+import { canTargetAir, coversTemporalCell, temporalCoverageScore } from "./TemporalCoverage";
+import { planDeploymentTimeline } from "./TimelinePlanner";
 import type { EncounterContext, EnginePick, ScoreBreakdown, StageFacts } from "./types";
 
 interface CorpusStats {
@@ -42,9 +43,11 @@ function contexts(facts: StageFacts): string[] {
   ].filter(name => corpusModel.contexts[name]);
 }
 
-function rangeCoverage(action: BattleScriptAction, pick: EnginePick, encounter: EncounterContext): number {
+function rangeCoverage(action: BattleScriptAction, pick: EnginePick, encounter: EncounterContext, time: number, endTime: number): number {
   if (!action.location) return 0;
-  const score = temporalCoverageScore(pick, { row: action.location[0], col: action.location[1] }, action.direction || "Right", encounter.temporalPressure);
+  const pressure = { ...encounter.temporalPressure,
+    buckets: encounter.temporalPressure.buckets.filter(bucket => bucket.time >= time && bucket.time < endTime) };
+  const score = temporalCoverageScore(pick, { row: action.location[0], col: action.location[1] }, action.direction || "Right", pressure);
   return score / (score + 50);
 }
 
@@ -58,69 +61,68 @@ function stageDps(pick: EnginePick, defense: number, resistance: number, modeled
   return normalAtDefense * modeledDps / Math.max(1, profile.metrics.normalDps) * confidenceFactor;
 }
 
-function deployedPairs(script: BattleScript, picks: EnginePick[]): Array<{ action: BattleScriptAction; pick: EnginePick }> {
+function deployedPairs(script: BattleScript, picks: EnginePick[], mapData: MapData): Array<{
+  action: BattleScriptAction; pick: EnginePick; time: number; endTime: number;
+}> {
   const byName = new Map(picks.map(pick => [pick.name, pick]));
-  return script.actions
-    .filter(action => action.type === "Deploy" && action.name && !(action.cooling && action.cooling > 0))
-    .map(action => ({ action, pick: byName.get(action.name!) }))
-    .filter((pair): pair is { action: BattleScriptAction; pick: EnginePick } => Boolean(pair.pick));
+  const timeline = new Map(planDeploymentTimeline(script, mapData.options).deployments
+    .filter(deployment => deployment.affordable)
+    .map(deployment => [deployment.actionIndex, deployment]));
+  return script.actions.flatMap((action, actionIndex) => {
+    const pick = action.type === "Deploy" && action.name && !action.cooling ? byName.get(action.name) : undefined;
+    const deployment = timeline.get(actionIndex);
+    return pick && deployment && action.location ? [{ action, pick, time: deployment.time, endTime: deployment.endTime }] : [];
+  });
 }
 
 function engagementScore(
   script: BattleScript,
   picks: EnginePick[],
   facts: StageFacts,
-  encounter: EncounterContext
+  encounter: EncounterContext,
+  mapData: MapData,
 ): number {
-  const deployed = deployedPairs(script, picks).map(pair => ({
-    ...pair,
-    coverage: rangeCoverage(pair.action, pair.pick, encounter),
-  }));
+  const deployed = deployedPairs(script, picks, mapData);
   if (deployed.length === 0 || encounter.windows.length === 0) return 0;
-  const healing = deployed.reduce((sum, { pick }) => sum + pick.profile.metrics.healingHps, 0);
-  const durability = deployed.reduce((sum, { pick }) => sum
-    + (pick.profile.metrics.physicalEhp + pick.profile.metrics.artsEhp) / 2
-      * Math.max(1, pick.profile.attributes.block), 0);
-  const windowScores = encounter.windows.map(window => {
-    let availableDamage = 0;
-    for (const group of window.groups) {
-      const groupDamage = deployed.reduce((sum, { pick, coverage }) => {
-        if (group.motionMode === "fly" && pick.profile.position === "MELEE") return sum;
-        const cycle = pick.profile.metrics.cycleDps ?? pick.profile.metrics.normalDps;
-        const burstWeight = group.boss || group.elite ? 0.6 : encounter.demand.burst * 0.35;
-        const modeled = cycle * (1 - burstWeight) + pick.profile.metrics.burstDps * burstWeight;
-        const targets = Math.min(group.count, pick.profile.maxTargets);
-        return sum + stageDps(pick, group.def, group.res, modeled) * targets * (0.25 + coverage * 0.75);
-      }, 0);
-      availableDamage += groupDamage;
+  const windowScores = facts.criticalWindows.map(window => {
+    const buckets = facts.temporalPressure.buckets.filter(bucket => bucket.time >= window.start && bucket.time < window.end);
+    let groundDamage = 0;
+    let airDamage = 0;
+    let healing = 0;
+    let durability = 0;
+    let control = 0;
+    for (const bucket of buckets) {
+      const available = deployed.filter(deployment => deployment.time <= bucket.time && bucket.time < deployment.endTime);
+      healing += available.reduce((sum, { pick }) => sum + pick.profile.metrics.healingHps, 0) / Math.max(1, buckets.length);
+      durability += available.reduce((sum, { pick }) => sum
+        + (pick.profile.metrics.physicalEhp + pick.profile.metrics.artsEhp) / 2
+          * Math.max(1, pick.profile.attributes.block), 0) / Math.max(1, buckets.length);
+      control += available.reduce((sum, { pick }) => sum + pick.profile.metrics.controlSeconds, 0) / Math.max(1, buckets.length);
+      for (const deployment of available) {
+        const dps = stageDps(deployment.pick, encounter.averageDefense, encounter.averageResistance,
+          deployment.pick.profile.metrics.cycleDps ?? deployment.pick.profile.metrics.normalDps);
+        const covers = (air: boolean) => bucket.cells.some(cell => (air ? cell.airHp : cell.groundHp) > 0
+          && coversTemporalCell(deployment.pick, { row: deployment.action.location![0], col: deployment.action.location![1] },
+            deployment.action.direction || "Right", cell));
+        if (covers(false)) groundDamage += dps * facts.temporalPressure.bucketSeconds;
+        if (canTargetAir(deployment.pick) && covers(true)) airDamage += dps * facts.temporalPressure.bucketSeconds;
+      }
     }
-    const requiredDps = window.totalHp / 15;
-    const damageFit = Math.min(1, availableDamage / Math.max(1, requiredDps));
-    const incoming = window.totalAttack * 0.2;
+    const groundFit = window.groundHp ? Math.min(1, groundDamage / window.groundHp) : 1;
+    const airFit = window.airHp ? Math.min(1, airDamage / window.airHp) : 1;
+    const damageFit = (groundFit * window.groundHp + airFit * window.airHp) / Math.max(1, window.groundHp + window.airHp);
+    const incoming = window.incomingAttack * 0.2;
     const survivalFit = Math.min(1, (durability + healing * 15) / Math.max(1, incoming * 15));
-    const control = deployed.reduce((sum, { pick }) => sum + pick.profile.metrics.controlSeconds, 0);
-    const controlFit = Math.min(1, control / Math.max(1, window.groups.length * 2));
+    const controlFit = Math.min(1, control / Math.max(1, window.groundCount + window.airCount));
     return (damageFit * 0.62 + survivalFit * 0.30 + controlFit * 0.08) * 100;
   });
   return clamp(average(windowScores));
 }
 
-function cheapCombatScore(picks: EnginePick[], encounter: EncounterContext): number {
-  const damage = picks.reduce((sum, pick) => sum + stageDps(
-    pick,
-    encounter.averageDefense,
-    encounter.averageResistance,
-    pick.profile.metrics.cycleDps ?? pick.profile.metrics.normalDps
-  ), 0);
-  const peak = Math.max(1, ...encounter.windows.map(window => window.totalHp / 15));
-  const healing = picks.reduce((sum, pick) => sum + pick.profile.metrics.healingHps, 0);
-  return clamp(Math.min(1, damage / peak) * 75 + Math.min(1, healing / 1200) * 25);
-}
-
-function positionScore(script: BattleScript, picks: EnginePick[], facts: StageFacts, encounter: EncounterContext): number {
-  const deployed = deployedPairs(script, picks);
+function positionScore(script: BattleScript, picks: EnginePick[], facts: StageFacts, encounter: EncounterContext, mapData: MapData): number {
+  const deployed = deployedPairs(script, picks, mapData);
   if (!deployed.length) return 0;
-  const coverage = average(deployed.map(({ action, pick }) => rangeCoverage(action, pick, encounter)));
+  const coverage = average(deployed.map(({ action, pick, time, endTime }) => rangeCoverage(action, pick, encounter, time, endTime)));
   const routeFit = average(deployed.map(({ action }) => Math.max(0, 1 - nearest(
     { row: action.location![0], col: action.location![1] }, facts.routeCells
   ) / 4)));
@@ -128,16 +130,10 @@ function positionScore(script: BattleScript, picks: EnginePick[], facts: StageFa
   return clamp((coverage * 0.45 + routeFit * 0.35 + unique * 0.20) * 100);
 }
 
-function timingScore(script: BattleScript, facts: StageFacts): number {
-  let available = facts.initialCost;
-  let wait = 0;
-  for (const action of script.actions.filter(action => action.type === "Deploy" && !(action.cooling && action.cooling > 0))) {
-    const cost = action.costs || 0;
-    if (cost > available) wait += cost - available;
-    available = Math.max(0, available - cost) + 10;
-    wait += (action.pre_delay || 0) / 1000;
-  }
-  return clamp(100 - wait * 2.5);
+function timingScore(script: BattleScript, mapData: MapData): number {
+  const deployments = planDeploymentTimeline(script, mapData.options).deployments;
+  const lastDeployment = deployments.length ? Math.max(...deployments.map(deployment => deployment.time)) : 0;
+  return clamp(100 - lastDeployment * 2.5);
 }
 
 function corpusScore(script: BattleScript, facts: StageFacts): number {
@@ -210,12 +206,12 @@ function breakdown(
   picks: EnginePick[],
   facts: StageFacts,
   encounter: EncounterContext,
-  full: boolean
+  mapData: MapData,
 ): ScoreBreakdown {
   return {
-    combat: full ? engagementScore(script, picks, facts, encounter) : cheapCombatScore(picks, encounter),
-    position: positionScore(script, picks, facts, encounter),
-    timing: timingScore(script, facts),
+    combat: engagementScore(script, picks, facts, encounter, mapData),
+    position: positionScore(script, picks, facts, encounter, mapData),
+    timing: timingScore(script, mapData),
     corpus: corpusScore(script, facts),
     tasks: taskScore(picks, encounter),
     automation: automationScore(script),
@@ -226,23 +222,25 @@ export function cheapScoreCandidate(
   script: BattleScript,
   picks: EnginePick[],
   facts: StageFacts,
-  encounter: EncounterContext
+  encounter: EncounterContext,
+  mapData: MapData,
 ): ScoreBreakdown {
-  return breakdown(script, picks, facts, encounter, false);
+  return breakdown(script, picks, facts, encounter, mapData);
 }
 
 export function scoreCandidate(
   script: BattleScript,
   picks: EnginePick[],
   facts: StageFacts,
-  encounter: EncounterContext
+  encounter: EncounterContext,
+  mapData: MapData,
 ): { breakdown: ScoreBreakdown; coverage: number; skillCoverage: number; coverageGaps: string[] } {
-  const deployed = deployedPairs(script, picks).map(pair => pair.pick);
+  const deployed = deployedPairs(script, picks, mapData).map(pair => pair.pick);
   const skillCoverage = deployed.length
     ? average(deployed.map(pick => pick.profile.confidence === "exact" ? 1 : pick.profile.confidence === "partial" ? 0.5 : 0.25))
     : 0;
   return {
-    breakdown: breakdown(script, picks, facts, encounter, true),
+    breakdown: breakdown(script, picks, facts, encounter, mapData),
     coverage: deployed.length ? 1 : 0,
     skillCoverage,
     coverageGaps: [...new Set(deployed.flatMap(pick => pick.profile.modelCoverageGaps))].sort(),

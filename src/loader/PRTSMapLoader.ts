@@ -1,8 +1,14 @@
 import * as https from "https";
 import * as fs from "fs";
 import * as path from "path";
+import { createHash } from "crypto";
 import type { PRTSLevelData } from "../types";
 import { resolveStage } from "./levelIndex";
+import { unavailableStageReason } from "./stageMetadata";
+import stageIndexData from "../data/stage_index.json";
+
+const GAME_DATA_SOURCE = (stageIndexData as any).source as { repository: string; commit: string };
+export const DEFAULT_LEVEL_DATA_URL = `https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData/${GAME_DATA_SOURCE.commit}/zh_CN/gamedata`;
 
 export interface EnemyDatabaseEntry {
   name: string;
@@ -40,31 +46,42 @@ interface EnemyDbFile {
 }
 
 export class PRTSMapLoader {
-  private enemyDb: Map<string, EnemyDatabaseEntry> | null = null;
+  private enemyDb: Map<string, Map<number, EnemyDatabaseEntry>> | null = null;
   private cacheDir: string;
   private baseUrl: string;
+  private pinnedSource: boolean;
+  private snapshotCache: boolean;
 
   constructor(cacheDir?: string, baseUrl?: string) {
     this.cacheDir = cacheDir || path.join(__dirname, "..", "..", "cache", "levels");
-    this.baseUrl = baseUrl || "https://map.ark-nights.com";
+    this.baseUrl = (baseUrl || DEFAULT_LEVEL_DATA_URL).replace(/\/$/, "");
+    this.pinnedSource = this.baseUrl === DEFAULT_LEVEL_DATA_URL;
+    const marker = path.join(this.cacheDir, ".maafight-source.json");
+    this.snapshotCache = false;
+    if (this.pinnedSource && fs.existsSync(marker)) {
+      const source = JSON.parse(fs.readFileSync(marker, "utf8"));
+      this.snapshotCache = source.commit === GAME_DATA_SOURCE.commit && source.repository === GAME_DATA_SOURCE.repository;
+    }
   }
 
   async load(stageId: string, options?: { noCache?: boolean }): Promise<PRTSLevelData> {
     const entry = resolveStage(stageId);
     if (!entry) {
+      const unavailableReason = unavailableStageReason(stageId);
+      if (unavailableReason) throw new Error(unavailableReason);
       throw new Error(
         `Stage "${stageId}" not found in level index.\n` +
         `Try: maafight list --search "${stageId}" to find matching stages`
       );
     }
 
-    const cachePath = path.join(this.cacheDir, entry.filePath);
+    const cachePath = this.cachedPath(entry.filePath);
 
     if (!options?.noCache && fs.existsSync(cachePath)) {
       return JSON.parse(fs.readFileSync(cachePath, "utf-8")) as PRTSLevelData;
     }
 
-    const url = `${this.baseUrl}/data/levels/${entry.filePath}`;
+    const url = this.levelUrl(entry.filePath);
     const data = await this.httpGet(url);
     const parsed = JSON.parse(data) as PRTSLevelData;
 
@@ -78,8 +95,8 @@ export class PRTSMapLoader {
   }
 
   async loadEnemyDatabase(options?: { noCache?: boolean }): Promise<void> {
-    const cachePath = path.join(this.cacheDir, "..", "enemy_database.json");
-    const url = `${this.baseUrl}/data/levels/enemydata/enemy_database.json`;
+    const cachePath = this.cachedPath("enemydata/enemy_database.json", true);
+    const url = this.levelUrl("enemydata/enemy_database.json");
 
     let raw: string;
     if (!options?.noCache && fs.existsSync(cachePath)) {
@@ -96,32 +113,49 @@ export class PRTSMapLoader {
 
     for (const entry of db.enemies) {
       const key = entry.Key;
-      const firstLevel = entry.Value[0];
-      if (!firstLevel) continue;
-
-      const ed = firstLevel.enemyData;
-      const attrs = ed.attributes;
-      this.enemyDb.set(key, {
-        name: ed.name.m_defined ? ed.name.m_value : key,
-        description: ed.description.m_defined ? ed.description.m_value : "",
-        prefabKey: ed.prefabKey.m_defined ? ed.prefabKey.m_value : key,
-        attributes: {
-          maxHp: attrs.maxHp?.m_defined ? attrs.maxHp.m_value : 0,
-          atk: attrs.atk?.m_defined ? attrs.atk.m_value : 0,
-          def: attrs.def?.m_defined ? attrs.def.m_value : 0,
-          magicResistance: attrs.magicResistance?.m_defined ? attrs.magicResistance.m_value : 0,
-          moveSpeed: attrs.moveSpeed?.m_defined ? attrs.moveSpeed.m_value : 1,
-          attackSpeed: attrs.attackSpeed?.m_defined ? attrs.attackSpeed.m_value : 100,
-          massLevel: attrs.massLevel?.m_defined ? attrs.massLevel.m_value : 1,
-        },
-        enemyTags: ed.enemyTags?.m_defined ? ed.enemyTags.m_value : [],
-        levelType: ed.levelType?.m_defined ? ed.levelType.m_value : undefined,
-      });
+      const base = entry.Value.find(value => value.level === 0)?.enemyData;
+      if (!base) throw new Error(`Enemy ${key} has no level 0 database entry`);
+      const variants = new Map<number, EnemyDatabaseEntry>();
+      for (const variant of entry.Value) {
+        const ed = variant.enemyData;
+        const value = <T>(field: { m_defined: boolean; m_value: T } | null | undefined,
+          inherited: { m_defined: boolean; m_value: T } | null | undefined, fallback: T): T =>
+          field?.m_defined ? field.m_value : inherited?.m_defined ? inherited.m_value : fallback;
+        const attribute = (name: string, fallback = 0): number => value(ed.attributes[name], base.attributes[name], fallback);
+        variants.set(variant.level, {
+          name: value(ed.name, base.name, key),
+          description: value(ed.description, base.description, ""),
+          prefabKey: value(ed.prefabKey, base.prefabKey, key),
+          attributes: {
+            maxHp: attribute("maxHp"), atk: attribute("atk"), def: attribute("def"),
+            magicResistance: attribute("magicResistance"), moveSpeed: attribute("moveSpeed", 1),
+            attackSpeed: attribute("attackSpeed", 100), massLevel: attribute("massLevel", 1),
+          },
+          enemyTags: value(ed.enemyTags, base.enemyTags, []),
+          levelType: value(ed.levelType, base.levelType, undefined),
+        });
+      }
+      this.enemyDb.set(key, variants);
     }
   }
 
-  getEnemyInfo(enemyId: string): EnemyDatabaseEntry | null {
-    return this.enemyDb?.get(enemyId) || null;
+  getEnemyInfo(enemyId: string, level = 0): EnemyDatabaseEntry | null {
+    const variants = this.enemyDb?.get(enemyId);
+    if (variants && !variants.has(level)) throw new Error(`Enemy ${enemyId} level ${level} is missing from GameData`);
+    return variants?.get(level) || null;
+  }
+
+  private levelUrl(filePath: string): string {
+    return `${this.baseUrl}/${this.pinnedSource ? "levels" : "data/levels"}/${filePath}`;
+  }
+
+  private cachedPath(filePath: string, enemyDatabase = false): string {
+    if (!this.pinnedSource) {
+      const sourceKey = createHash("sha256").update(this.baseUrl).digest("hex");
+      return path.join(this.cacheDir, ".sources", sourceKey, filePath);
+    }
+    if (!this.snapshotCache) return path.join(this.cacheDir, ".revisions", GAME_DATA_SOURCE.commit, filePath);
+    return enemyDatabase ? path.join(this.cacheDir, "..", "enemy_database.json") : path.join(this.cacheDir, filePath);
   }
 
   private httpGet(url: string): Promise<string> {

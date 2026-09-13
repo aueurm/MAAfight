@@ -100,7 +100,7 @@ export function buildTemporalPressure(mapData: MapData, options: TemporalPressur
       coverageGaps.add(`unknown_route:${spawn.routeIndex}`);
       continue;
     }
-    const timeline = buildSpawnRouteTimeline(spawn, route, enemy, { bucketSeconds });
+    const timeline = buildSpawnRouteTimeline(spawn, route, enemy, { bucketSeconds, moveMultiplier: mapData.options.moveMultiplier });
     for (const gap of timeline.coverageGaps) coverageGaps.add(gap);
     for (const point of timeline.points) {
       const time = bucketTime(point.time, bucketSeconds);

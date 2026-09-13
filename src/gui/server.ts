@@ -6,12 +6,15 @@ import { registerGuiRoutes, type GuiRouteOptions } from "./routes";
 import { writeGuiLog } from "../runtime/logger";
 import { ensureRuntimeDirectories, getRuntimePaths } from "../runtime/paths";
 import { packageVersion } from "../runtime/packageInfo";
+import { startMumu } from "../runner/emulatorStartup";
+import type { EmulatorStartupStatus } from "../shared/emulatorStartup";
 
 export interface GuiServerOptions extends GuiRouteOptions {
   host?: string;
   startPort?: number;
   maxPortAttempts?: number;
   webRoot?: string;
+  startEmulator?: (signal: AbortSignal) => Promise<EmulatorStartupStatus>;
 }
 
 export interface StartedGuiServer {
@@ -31,7 +34,22 @@ function isPortInUse(err: unknown): boolean {
 export async function createGuiServer(options: GuiServerOptions = {}): Promise<FastifyInstance> {
   ensureRuntimeDirectories();
   const app = fastify({ logger: false });
-  await registerGuiRoutes(app, options);
+  let emulatorStatus: EmulatorStartupStatus = { state: options.startEmulator ? "starting" : "skipped" };
+  const startupAbort = new AbortController();
+  await registerGuiRoutes(app, { ...options, emulatorStatus: () => emulatorStatus });
+  if (options.startEmulator) {
+    app.addHook("onListen", async () => {
+      // Listening and opening the GUI must not wait for the emulator to boot.
+      void Promise.resolve().then(() => options.startEmulator!(startupAbort.signal)).then(status => {
+        emulatorStatus = status;
+        writeGuiLog("emulator_startup", { ...status });
+      }).catch(error => {
+        emulatorStatus = { state: "failed", message: `MuMu 启动失败：${error instanceof Error ? error.message : String(error)}` };
+        writeGuiLog("emulator_startup", { ...emulatorStatus });
+      });
+    });
+    app.addHook("onClose", async () => { startupAbort.abort(); });
+  }
 
   const webRoot = options.webRoot || defaultWebRoot();
   const indexPath = path.join(webRoot, "index.html");
@@ -62,7 +80,10 @@ export async function startGuiServer(options: GuiServerOptions = {}): Promise<St
 
   for (let offset = 0; offset < maxPortAttempts; offset++) {
     const port = startPort + offset;
-    const app = await createGuiServer(options);
+    const app = await createGuiServer({
+      ...options,
+      startEmulator: options.startEmulator || (signal => startMumu(options.configCwd || getRuntimePaths().homeDir, signal)),
+    });
     try {
       await app.listen({ host, port });
       const runtime = getRuntimePaths();

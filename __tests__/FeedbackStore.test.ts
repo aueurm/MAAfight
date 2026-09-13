@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { FeedbackStore, hashOperatorBox } from "../src/feedback/FeedbackStore";
+import { computeScriptHash } from "../src/engine";
 import type { BattleScript, PlayerOperator } from "../src/types";
 
 function script(): BattleScript {
@@ -53,6 +54,7 @@ describe("FeedbackStore", () => {
     });
     store.recordFeedback({ scriptHash: "hash-1", killed: 8, currentOperatorBoxHash: boxHash });
     expect(store.excludedHashes("stage-1", boxHash)).toContain("hash-1");
+    expect(store.excludedHashes("stage-1", boxHash)).toContain(computeScriptHash(base));
     expect(store.successfulGeneration("stage-1", boxHash)).toBeUndefined();
 
     store.recordFeedback({ scriptHash: "hash-1", killed: 10, currentOperatorBoxHash: boxHash });
@@ -83,6 +85,19 @@ describe("FeedbackStore", () => {
     expect(record.operatorBoxChanged).toBe(true);
     expect(record.usableForLearning).toBe(false);
     expect(store.successfulGeneration("stage-2", "old-box")).toBeUndefined();
+  });
+
+  it("keeps legacy failure hashes without exporting an unsupported timing field", () => {
+    const legacy = script();
+    legacy.actions.push({ type: "Skill", name: "芬", time_elapsed: 30 } as unknown as BattleScript["actions"][number]);
+    store.appendGeneration({
+      schemaVersion: 2, generationId: "legacy", scriptHash: "legacy-hash", stageId: "legacy-stage", stageName: "TEST-1",
+      operatorBoxHash: "box", engineVersion: "v2-temporal-v1", modelVersion: "model", combatDataVersion: "combat",
+      candidateScore: 70, scoreBreakdown: {}, combatCoverage: 0, enemyTotal: 10, outputPath: "", script: legacy,
+      createdAt: "2026-07-30T00:00:00.000Z",
+    });
+    store.recordFeedback({ scriptHash: "legacy-hash", killed: 5, currentOperatorBoxHash: "box" });
+    expect([...store.excludedHashes("legacy-stage", "box")]).toEqual(["legacy-hash"]);
   });
 
   it("persists v3 diagnostics and learns them only for the matching revision", () => {

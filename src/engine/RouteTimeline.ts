@@ -19,6 +19,7 @@ export interface SpawnRouteTimeline {
 
 export interface RouteTimelineOptions {
   bucketSeconds?: number;
+  moveMultiplier?: number;
 }
 
 function sameCell(left: Cell, right: Cell): boolean {
@@ -100,8 +101,12 @@ export function buildSpawnRouteTimeline(
   const bucketSeconds = Math.max(0.1, options.bucketSeconds || 1);
   const traversal = routeTraversal(route);
   const rawSpeed = Number(enemy.moveSpeed);
-  const speed = rawSpeed > 0 ? rawSpeed : 1;
-  const coverageGaps = [...traversal.coverageGaps, ...(rawSpeed > 0 ? [] : ["invalid_move_speed"])];
+  const moveMultiplier = options.moveMultiplier ?? 1;
+  if (!Number.isFinite(moveMultiplier) || moveMultiplier <= 0) throw new Error("Invalid route moveMultiplier");
+  const validSpeed = Number.isFinite(rawSpeed) && rawSpeed > 0;
+  // moveMultiplier defines tiles per game second; MAA SpeedUp only changes the wall clock.
+  const speed = (validSpeed ? rawSpeed : 1) * moveMultiplier;
+  const coverageGaps = [...traversal.coverageGaps, ...(validSpeed ? [] : ["invalid_move_speed"])];
   const points: RouteTimelinePoint[] = [];
   let time = Math.max(0, spawn.time);
   let cellIndex = 0;

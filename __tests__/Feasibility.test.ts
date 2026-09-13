@@ -40,8 +40,9 @@ describe("candidate feasibility", () => {
   it("rejects flying pressure without ranged anti-air coverage", () => {
     const data = mapData("fly");
     const facts = extractStageFacts(data);
-    expect(evaluateFeasibility(script(pick("MELEE")), [pick("MELEE")], facts, buildEncounterContext(data, facts), data).reasons)
-      .toContain("critical_window_missing_anti_air");
+    const result = evaluateFeasibility(script(pick("MELEE")), [pick("MELEE")], facts, buildEncounterContext(data, facts), data);
+    expect(result.feasible).toBe(false);
+    expect(result.reasons).toContain("critical_window_missing_anti_air");
   });
 
   it("rejects deployments that can never be afforded", () => {
@@ -49,6 +50,52 @@ describe("candidate feasibility", () => {
     const facts = extractStageFacts(data);
     expect(evaluateFeasibility(script(pick("RANGED", 100)), [pick("RANGED", 100)], facts, buildEncounterContext(data, facts), data).reasons)
       .toContain("cost_timeline_unaffordable");
+  });
+
+  it("rejects a ground route that never enters any active attack range", () => {
+    const data = mapData("walk");
+    const candidate = pick("MELEE");
+    const battle = script(candidate);
+    battle.actions[0].location = [4, 4];
+    const facts = extractStageFacts(data);
+    const result = evaluateFeasibility(battle, [candidate], facts, buildEncounterContext(data, facts), data);
+    expect(result.feasible).toBe(false);
+    expect(result.reasons).toContain("route_missing_ground_coverage");
+  });
+
+  it("does not keep anti-air coverage after the defender retreats before the wave", () => {
+    const data = mapData("fly");
+    data.spawnTimeline[0].time = 20;
+    const candidate = pick("RANGED");
+    const battle = script(candidate);
+    battle.actions.push({ type: "Retreat", name: candidate.name, pre_delay: 1000 });
+    const facts = extractStageFacts(data);
+    const result = evaluateFeasibility(battle, [candidate], facts, buildEncounterContext(data, facts), data);
+    expect(result.reasons).toContain("critical_window_missing_anti_air");
+  });
+
+  it("does not deploy during the wave using a fabricated one-second recovery tick", () => {
+    const data = mapData("fly");
+    data.options.initialCost = 0;
+    data.options.costIncreaseTime = 999999;
+    const candidate = pick("RANGED");
+    const facts = extractStageFacts(data);
+    const result = evaluateFeasibility(script(candidate), [candidate], facts, buildEncounterContext(data, facts), data);
+    expect(result.feasible).toBe(false);
+    expect(result.reasons).toContain("cost_recovery_not_modeled");
+  });
+
+  it("does not classify a scripted exit through a red door as an undefended blue box", () => {
+    const data = mapData("walk");
+    data.tiles = [["floor", "end", "start"].map((key, col) => ({
+      key, row: 0, col, heightType: "lowland", buildableType: "none",
+    }))];
+    const candidate = pick("MELEE");
+    const battle = script(candidate);
+    battle.actions[0].location = [4, 4];
+    const facts = extractStageFacts(data);
+    expect(evaluateFeasibility(battle, [candidate], facts, buildEncounterContext(data, facts), data).reasons)
+      .not.toContain("route_missing_ground_coverage");
   });
 
   it("evaluates a cost-ready deployment in the pressure buckets it can actually reach", () => {
@@ -64,5 +111,50 @@ describe("candidate feasibility", () => {
     candidate.profile.range = [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]];
     const facts = extractStageFacts(data);
     expect(evaluateFeasibility(script(candidate), [candidate], facts, buildEncounterContext(data, facts), data).feasible).toBe(true);
+  });
+
+  it("rejects a critical window with insufficient modeled damage", () => {
+    const data = mapData("walk");
+    const candidate = pick("MELEE");
+    candidate.profile.attributes.atk = 1;
+    const facts = extractStageFacts(data);
+    const result = evaluateFeasibility(script(candidate), [candidate], facts, buildEncounterContext(data, facts), data);
+    expect(result.feasible).toBe(false);
+    expect(result.reasons).toContain("critical_window_damage_shortfall");
+  });
+
+  it("does not turn a brief grazing contact into sufficient damage for the whole route", () => {
+    const data = mapData("walk");
+    const candidate = pick("MELEE");
+    candidate.profile.attributes.atk = 100;
+    candidate.profile.range = [[0, 0]];
+    const facts = extractStageFacts(data);
+    const result = evaluateFeasibility(script(candidate), [candidate], facts, buildEncounterContext(data, facts), data);
+    expect(result.reasons).not.toContain("critical_window_damage_shortfall");
+    expect(result.reasons).toContain("route_damage_shortfall");
+    expect(result.feasible).toBe(false);
+  });
+
+  it("keeps partial contact at a 15-second boundary consistent with the same full route", () => {
+    const candidate = pick("MELEE");
+    candidate.profile.attributes.atk = 200;
+    for (const spawnTime of [0, 14]) {
+      const data = mapData("walk");
+      data.spawnTimeline[0].time = spawnTime;
+      const facts = extractStageFacts(data);
+      const result = evaluateFeasibility(script(candidate), [candidate], facts, buildEncounterContext(data, facts), data);
+      expect(result.feasible).toBe(true);
+    }
+  });
+
+  it("reports a conservative exposure upper bound without treating it as proof of failure", () => {
+    const data = mapData("walk");
+    data.enemyDetails[0].atk = 10_000;
+    const candidate = pick("MELEE");
+    const facts = extractStageFacts(data);
+    const result = evaluateFeasibility(script(candidate), [candidate], facts, buildEncounterContext(data, facts), data);
+    expect(result.feasible).toBe(true);
+    expect(result.coverageGaps).toContain("survival_exposure_upper_bound");
+    expect(result.reasons).not.toContain("critical_window_missing_survival");
   });
 });

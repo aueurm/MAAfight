@@ -22,6 +22,14 @@ function makeScript(overrides: Partial<BattleScript> = {}): BattleScript {
 }
 
 describe("exportToCopilotFormat", () => {
+  it("preserves the current MAA Skill timeout", () => {
+    const result = JSON.parse(exportToCopilotFormat(makeScript({ actions: [{ type: "Skill", name: "test", timeout: 0 }] })));
+    expect(result.actions[0].timeout).toBe(0);
+  });
+  it("rejects the ignored legacy time_elapsed field instead of dropping its timing", () => {
+    const legacy = makeScript({ actions: [{ type: "Skill", name: "test", time_elapsed: 30 } as unknown as BattleScript["actions"][number]] });
+    expect(() => exportToCopilotFormat(legacy)).toThrow("regenerate");
+  });
   it("should export valid JSON", () => {
     const json = exportToCopilotFormat(makeScript());
     const parsed = JSON.parse(json);
@@ -104,7 +112,7 @@ describe("exportToCopilotFormat", () => {
           cost_changes: 3,
           kills: 4,
           cooling: 1,
-          time_elapsed: 5000,
+          elapsed_time: 5000,
           pre_delay: 100,
           post_delay: 200,
           skip_if_not_ready: false,
@@ -121,7 +129,7 @@ describe("exportToCopilotFormat", () => {
       cost_changes: 3,
       kills: 4,
       cooling: 1,
-      time_elapsed: 5000,
+      elapsed_time: 5000,
       pre_delay: 100,
       post_delay: 200,
       skip_if_not_ready: false,

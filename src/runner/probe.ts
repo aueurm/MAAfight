@@ -164,19 +164,20 @@ function powershellLiteral(value: string): string {
 }
 
 function readMaaGuiConnectConfig(installDir: string): { adbPath?: string; address?: string; connectConfig?: string } {
+  const configDir = path.join(installDir, "config");
   try {
-    const raw = fs.readFileSync(path.join(installDir, "config", "gui.json"), "utf8");
-    const parsed = JSON.parse(raw) as { Current?: string; Configurations?: Record<string, Record<string, string>> };
-    const current = parsed.Current || "Default";
-    const config = parsed.Configurations?.[current] ?? parsed.Configurations?.Default;
-    return {
-      adbPath: config?.["Connect.AdbPath"],
-      address: config?.["Connect.Address"],
-      connectConfig: config?.["Connect.ConnectConfig"],
+    const parsed = JSON.parse(fs.readFileSync(path.join(configDir, "gui.new.json"), "utf8").replace(/^\uFEFF/, "")) as {
+      Current?: string; Configurations?: Record<string, { Gui?: { ConnectSettings?: { AdbPath?: string; Address?: string; Config?: string } } }>;
     };
-  } catch {
-    return {};
-  }
+    const profile = parsed.Configurations?.[parsed.Current || "Default"] ?? parsed.Configurations?.Default;
+    const config = profile?.Gui?.ConnectSettings;
+    if (config?.AdbPath || config?.Address) return { adbPath: config.AdbPath, address: config.Address, connectConfig: config.Config };
+  } catch { /* MAA 5 and earlier use gui.json below. */ }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(configDir, "gui.json"), "utf8").replace(/^\uFEFF/, "")) as { Current?: string; Configurations?: Record<string, Record<string, string>> };
+    const config = parsed.Configurations?.[parsed.Current || "Default"] ?? parsed.Configurations?.Default;
+    return { adbPath: config?.["Connect.AdbPath"], address: config?.["Connect.Address"], connectConfig: config?.["Connect.ConnectConfig"] };
+  } catch { return {}; }
 }
 
 function runMaaCoreVersionProbe(corePath: string): Pick<MaaProbeResult, "maaCoreVersion" | "maaCoreProbeCommand" | "maaCoreExitCode"> & { warning?: string } {

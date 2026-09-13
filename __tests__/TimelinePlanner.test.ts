@@ -1,4 +1,4 @@
-import { buildTimelineEvents, planDeploymentTimeline } from "../src/engine/TimelinePlanner";
+import { buildTimelineEvents, costAt, planDeploymentTimeline } from "../src/engine/TimelinePlanner";
 import { extractStageFacts } from "../src/engine/StageFacts";
 import type { BattleScript, MapData } from "../src/types";
 
@@ -36,6 +36,71 @@ describe("event deployment timeline", () => {
       actions: [{ type: "Deploy", name: "operator", costs: 8, pre_delay: 2_000 }],
       doc: { title: "", details: "" }, generatedAt: "2026-01-01T00:00:00.000Z", metadata: { source: "test" }, version: 3,
     };
-    expect(planDeploymentTimeline(script, mapData().options).deployments[0]).toMatchObject({ time: 3, cost: 8, affordable: true });
+    // MAA 先等费用条件，再等 pre_delay。
+    expect(planDeploymentTimeline(script, mapData().options).deployments[0]).toMatchObject({ time: 5, cost: 8, affordable: true });
+  });
+
+  it("does not invent natural cost recovery in annihilation stages", () => {
+    const options = { ...mapData().options, initialCost: 0, costIncreaseTime: 999999 };
+    const timeline = planDeploymentTimeline({ actions: [{ type: "Deploy", name: "operator", costs: 20 }] }, options);
+    expect(costAt(120, options)).toBe(0);
+    expect(timeline.deployments[0].time).toBeGreaterThan(120);
+    expect(costAt(timeline.deployments[0].time, options)).toBe(20);
+  });
+
+  it("propagates skill timer conditions and post delays to later deployments", () => {
+    const timeline = planDeploymentTimeline({ actions: [
+      { type: "ResetStopwatch" },
+      { type: "Skill", name: "operator", elapsed_time: 90000, pre_delay: 1000, post_delay: 2000 },
+      { type: "Deploy", name: "reserve", costs: 20 },
+    ] }, mapData().options);
+    expect(timeline.deployments[0].time).toBe(93);
+  });
+
+  it("converts wall-clock waits to game seconds after SpeedUp and resets the stopwatch origin", () => {
+    const timeline = planDeploymentTimeline({ actions: [
+      { type: "SpeedUp" },
+      { type: "Output", post_delay: 5000 },
+      { type: "ResetStopwatch" },
+      { type: "Skill", name: "operator", elapsed_time: 10000 },
+      { type: "Deploy", name: "reserve", costs: 0 },
+    ] }, mapData().options);
+    expect(timeline.deployments[0].time).toBe(30);
+  });
+
+  it("honors cost conditions on Retreat before recording the deployment end", () => {
+    const timeline = planDeploymentTimeline({ actions: [
+      { type: "Deploy", name: "operator", location: [0, 0], costs: 5 },
+      { type: "Retreat", name: "operator", costs: 10, post_delay: 2000 },
+      { type: "Deploy", name: "reserve", location: [0, 0], costs: 1 },
+    ] }, mapData().options);
+    expect(timeline.deployments[0]).toMatchObject({ time: 0, endTime: 10 });
+    expect(timeline.deployments[1].time).toBe(12);
+  });
+
+  it("does not assign an early deployment after an unmodeled kill or cooling condition", () => {
+    for (const condition of [{ kills: 3 }, { cooling: 1 }]) {
+      const timeline = planDeploymentTimeline({ actions: [
+        { type: "Skill", name: "operator", ...condition },
+        { type: "Deploy", name: "reserve", costs: 1 },
+      ] }, mapData().options);
+      expect(timeline.deployments[0].affordable).toBe(false);
+      expect(timeline.reasons).toContain("action_condition_timing_unknown");
+    }
+  });
+
+  it("bases cost_changes on the cost at the start of the action", () => {
+    const timeline = planDeploymentTimeline({ actions: [
+      { type: "Output", cost_changes: 5, pre_delay: 2000, post_delay: 1000 },
+      { type: "Deploy", name: "operator", costs: 1 },
+    ] }, mapData().options);
+    expect(timeline.deployments[0].time).toBe(8);
+  });
+
+  it("keeps fractional recovery periods from losing a cost point to rounding", () => {
+    const options = { ...mapData().options, initialCost: 0, costIncreaseTime: 0.85 };
+    const timeline = planDeploymentTimeline({ actions: [{ type: "Deploy", name: "operator", costs: 13 }] }, options);
+    expect(timeline.deployments[0].affordable).toBe(true);
+    expect(costAt(13 * 0.85, options)).toBe(13);
   });
 });

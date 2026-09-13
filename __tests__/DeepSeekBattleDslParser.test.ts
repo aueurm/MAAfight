@@ -20,6 +20,8 @@ describe("DeepSeek BattleDSL parser", () => {
   });
 
   it.each([
+    ["unsupported deploy condition", `${operators}\ndeploy(干员1, 1, 2, Right, timeElapsed=30000)`],
+    ["unsupported deploy kills", `${operators}\ndeploy(干员1, 1, 2, Right, kills=10)`],
     ["unknown function", `${operators}\nwait(1000)`],
     ["duplicate argument", `${operators}\ndeploy(干员1, 1, 2, Right, delay=250, delay=500)`],
     ["bad integer", `${operators}\nskill(干员1, kills=1.5)`],

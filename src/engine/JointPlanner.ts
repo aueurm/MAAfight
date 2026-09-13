@@ -1,5 +1,4 @@
-import { coversTemporalCell } from "./TemporalCoverage";
-import { buildTimelineEvents, type TimelineEvent } from "./TimelinePlanner";
+import { canTargetAir, temporalRangeCells, temporalThreatWeight } from "./TemporalCoverage";
 import type { DeploymentPoint, MapData } from "../types";
 import type { Direction, EncounterContext, EnginePick, JointDecision, JointPlan, SearchBias, StageFacts } from "./types";
 
@@ -10,6 +9,7 @@ export interface JointPlannerOptions {
   beamWidth?: number;
   placementsPerPick?: number;
   searchBias?: SearchBias;
+  checkDeadline?: () => void;
 }
 
 interface PlacementCandidate {
@@ -38,22 +38,33 @@ function compatible(pick: EnginePick, point: DeploymentPoint): boolean {
     || point.buildableType === "ranged" && pick.profile.position === "RANGED";
 }
 
-function weight(cell: StageFacts["temporalPressure"]["buckets"][number]["cells"][number], bias?: SearchBias): number {
+function weight(pick: EnginePick, cell: StageFacts["temporalPressure"]["buckets"][number]["cells"][number], bias?: SearchBias): number {
   const routeWeight = Math.max(0, ...cell.routeIds.map(routeId => bias?.routeWeights[routeId] || 0));
-  return ((cell.groundHp + cell.airHp) / 1_000 + cell.incomingAttack / 200
-    + cell.goalThreat / 1_000 + cell.eliteWeight * 5 + cell.bossWeight * 10 + cell.mergeWeight * 2) * (1 + routeWeight);
+  return temporalThreatWeight(pick, cell) * (1 + routeWeight);
 }
 
-function candidatesFor(pick: EnginePick, facts: StageFacts, limit: number, bias?: SearchBias): PlacementCandidate[] {
+function candidatesFor(pick: EnginePick, facts: StageFacts, limit: number, bias?: SearchBias, checkDeadline?: () => void): PlacementCandidate[] {
+  const targetsAir = canTargetAir(pick);
+  const byCell = new Map<string, Array<{ key: string; time: number; weight: number }>>();
+  for (const bucket of facts.temporalPressure.buckets) {
+    checkDeadline?.();
+    for (const cell of bucket.cells) {
+      if (cell.groundHp <= 0 && cell.airHp > 0 && !targetsAir) continue;
+      const cellKey = key(cell.row, cell.col);
+      const entries = byCell.get(cellKey) || [];
+      entries.push({ key: `${bucket.time}:${cellKey}`, time: bucket.time, weight: weight(pick, cell, bias) });
+      byCell.set(cellKey, entries);
+    }
+  }
   const candidates = facts.deploymentPoints.flatMap(point => compatible(pick, point)
     ? DIRECTIONS.map(direction => {
+      checkDeadline?.();
       const coverage = new Map<string, number>();
       let firstCoverageTime = Number.POSITIVE_INFINITY;
-      for (const bucket of facts.temporalPressure.buckets) {
-        for (const cell of bucket.cells) {
-          if (!coversTemporalCell(pick, point, direction, cell)) continue;
-          coverage.set(`${bucket.time}:${key(cell.row, cell.col)}`, weight(cell, bias));
-          firstCoverageTime = Math.min(firstCoverageTime, bucket.time);
+      for (const cell of temporalRangeCells(pick, point, direction)) {
+        for (const entry of byCell.get(cell) || []) {
+          coverage.set(entry.key, entry.weight);
+          firstCoverageTime = Math.min(firstCoverageTime, entry.time);
         }
       }
       const score = [...coverage.values()].reduce((sum, value) => sum + value, 0);
@@ -65,11 +76,9 @@ function candidatesFor(pick: EnginePick, facts: StageFacts, limit: number, bias?
   return candidates.slice(0, limit);
 }
 
-function targetTime(candidate: PlacementCandidate, events: TimelineEvent[]): number {
-  const firstThreat = events.find(event => event.time >= candidate.firstCoverageTime
-    && (event.type === "fire_zone" || event.type === "flying_wave" || event.type === "boss_arrival"));
+function targetTime(candidate: PlacementCandidate): number {
   return Number.isFinite(candidate.firstCoverageTime)
-    ? Math.max(0, (firstThreat?.time ?? candidate.firstCoverageTime) - 1)
+    ? Math.max(0, candidate.firstCoverageTime - 1)
     : 0;
 }
 
@@ -91,22 +100,23 @@ export function buildJointPlan(
 ): JointPlan {
   const beamWidth = Math.max(1, options.beamWidth || 8);
   const placementsPerPick = Math.max(1, options.placementsPerPick || 6);
-  const events = buildTimelineEvents(mapData, facts);
   const candidateLimit = Math.min(options.picks.length, mapData.options.characterLimit, facts.deploymentPoints.length);
   let states: JointState[] = [{ decisions: [], occupied: new Set(), coverage: new Map(), score: 0, signature: "" }];
 
   for (const pick of options.picks.slice(0, candidateLimit)) {
-    const candidates = candidatesFor(pick, facts, placementsPerPick, options.searchBias);
+    options.checkDeadline?.();
+    const candidates = candidatesFor(pick, facts, placementsPerPick, options.searchBias, options.checkDeadline);
     if (!candidates.length) continue;
     const next: JointState[] = [];
     for (const state of states) {
+      options.checkDeadline?.();
       for (const candidate of candidates) {
         const locationKey = key(candidate.point.row, candidate.point.col);
         if (state.occupied.has(locationKey)) continue;
         const score = marginalScore(candidate, state.coverage);
         const decision: JointDecision = {
           pick, location: [candidate.point.row, candidate.point.col], direction: candidate.direction,
-          score, targetTime: targetTime(candidate, events),
+          score, targetTime: targetTime(candidate),
         };
         const coverage = new Map(state.coverage);
         for (const cell of candidate.coverage.keys()) coverage.set(cell, (coverage.get(cell) || 0) + 1);

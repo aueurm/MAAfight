@@ -4,6 +4,7 @@ import { getMaafightDir } from "../player/PlayerConfig";
 import { appendJsonLine, readJsonLines } from "../shared/jsonl";
 import type { PracticeTestResult } from "../shared/practiceResult";
 import type { BattleScript, EnemyMechanic, PlayerOperator } from "../types";
+import { computeScriptHash } from "../engine";
 import { deriveSearchBias, type SearchBias } from "./FeedbackLearning";
 
 export interface FeedbackRevision {
@@ -214,12 +215,19 @@ export class FeedbackStore {
   }
 
   excludedHashes(stageId: string, operatorBoxHash: string, stageContentHash?: string): Set<string> {
+    const generations = new Map(this.loadGenerations().records.map(record => [record.generationId, record]));
     return new Set(
       this.loadFeedback().records
         .filter(record => record.stageId === stageId && record.operatorBoxHash === operatorBoxHash
           && record.usableForLearning && record.ratio < 1
           && (!stageContentHash || record.stageContentHash === stageContentHash))
-        .map(record => record.scriptHash)
+        .flatMap(record => {
+          const script = record.generationId ? generations.get(record.generationId)?.script : undefined;
+          // Legacy time_elapsed was never an MAA condition and its units were inconsistent.
+          // Keep its recorded hash without exporting or silently rewriting an old battle plan.
+          if (!script || script.actions.some(action => "time_elapsed" in action)) return [record.scriptHash];
+          return [record.scriptHash, computeScriptHash(script)];
+        })
     );
   }
 

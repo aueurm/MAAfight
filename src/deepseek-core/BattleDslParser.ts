@@ -91,7 +91,8 @@ export function parseDeepSeekBattleDsl(source: unknown): BattleDslParseResult {
         else operators.push({ name, skill, skillUsage });
       }
     } else if (fn === "deploy") {
-      if (positional.length !== 4) errors.push(error(line, "deploy expects name, x, y, direction"));
+      if ([...named.keys()].some(key => key !== "delay")) errors.push(error(line, "deploy only accepts delay; conditions are only supported on skill and retreat"));
+      else if (positional.length !== 4) errors.push(error(line, "deploy expects name, x, y, direction"));
       else {
         const [operatorId, xText, yText, direction] = positional;
         const x = integer(xText, line, "x");

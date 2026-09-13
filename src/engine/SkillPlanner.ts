@@ -31,15 +31,17 @@ export function planSkillActions(
 ): SkillPlan {
   const windows = triggerWindows(encounter);
   if (!windows.length) return { actions: [], strategies: {}, coverageGaps: [], usesDaemon: true };
-  const deployedAt = new Map(planDeploymentTimeline({ actions }, options).deployments
+  const timeline = planDeploymentTimeline({ actions }, options);
+  const deployedAt = new Map(timeline.deployments
     .filter(deployment => deployment.affordable && deployment.name)
-    .map(deployment => [deployment.name!, deployment.time]));
+    .map(deployment => [deployment.name!, deployment]));
+  const lastActionTime = timeline.time;
   const coverageGaps = new Set<string>();
   const planned: Array<{ action: BattleScript["actions"][number]; strategy: SkillStrategy; benefit: number }> = [];
 
   for (const pick of picks) {
-    const deploymentTime = deployedAt.get(pick.name);
-    if (deploymentTime === undefined) continue;
+    const deployment = deployedAt.get(pick.name);
+    if (!deployment) continue;
     const skillType = pick.profile.skillType || "UNKNOWN";
     if (skillType !== "MANUAL") {
       if (skillType === "UNKNOWN") coverageGaps.add(`skill_type_unknown:${pick.operatorId}`);
@@ -54,10 +56,15 @@ export function planSkillActions(
       coverageGaps.add(`manual_skill_sp_unknown:${pick.operatorId}`);
       continue;
     }
-    const readyAt = deploymentTime + Math.max(0, pick.profile.spCost - pick.profile.initSp);
-    const window = windows.find(candidate => candidate.start >= readyAt);
+    const readyAt = deployment.time + Math.max(0, pick.profile.spCost - pick.profile.initSp);
+    const window = windows.find(candidate => candidate.start >= readyAt && candidate.start < deployment.endTime);
     if (!window) {
       coverageGaps.add(`manual_skill_window_unready:${pick.operatorId}`);
+      continue;
+    }
+    // ponytail: MAA serializes actions; add an interleaving scheduler only when a safe native condition supports it.
+    if (window.start < lastActionTime) {
+      coverageGaps.add(`manual_skill_ordering_unverified:${pick.operatorId}`);
       continue;
     }
     const strategy = strategyFor(pick, window);
@@ -65,13 +72,16 @@ export function planSkillActions(
       + pick.profile.metrics.healingHps + pick.profile.metrics.controlSeconds * 100
       + window.bossWeight * 1_000;
     planned.push({
-      action: { type: "Skill", name: pick.name, time_elapsed: Math.round(window.start) },
+      action: { type: "Skill", name: pick.name, elapsed_time: Math.round((timeline.wallTime
+        + (window.start - timeline.time) / timeline.speedMultiplier - (timeline.stopwatchWallTime || 0)) * 1000) },
       strategy,
       benefit,
     });
   }
   const selected = planned.sort((left, right) => right.benefit - left.benefit || String(left.action.name).localeCompare(String(right.action.name)))
-    .slice(0, 2);
+    .slice(0, 2)
+    .sort((left, right) => (left.action.elapsed_time || 0) - (right.action.elapsed_time || 0)
+      || String(left.action.name).localeCompare(String(right.action.name)));
   const strategies = Object.fromEntries(selected.map(item => [item.action.name!, item.strategy]));
   return {
     actions: selected.map(item => item.action),

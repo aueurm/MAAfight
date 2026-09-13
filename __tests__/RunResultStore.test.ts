@@ -250,6 +250,30 @@ describe("connectMaaEnvironment", () => {
     }
   });
 
+  it("resolves MAA 6 GUI connection settings without starting MaaCore", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-adb-capture-new-"));
+    try {
+      const maaDir = path.join(cwd, "maa");
+      const configDir = path.join(maaDir, "config");
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(maaDir, "MAA.exe"), "", "utf8");
+      const adbPath = path.join(cwd, "adb.exe");
+      fs.writeFileSync(adbPath, "", "utf8");
+      fs.writeFileSync(path.join(configDir, "gui.new.json"), JSON.stringify({
+        Configurations: { Default: { Gui: { ConnectSettings: {
+          AdbPath: adbPath, Address: "127.0.0.1:16384", Config: "MuMuEmulator12",
+        } } }, },
+      }), "utf8");
+      const spawn = jest.spyOn(childProcess, "spawnSync");
+
+      expect(resolveMaaAdbCaptureEnvironment({ maaPath: path.join(maaDir, "MAA.exe"), env: { MAAFIGHT_MAA_PATH: "" }, pathEnv: "" }))
+        .toMatchObject({ adbPath, address: "127.0.0.1:16384", connectConfig: "MuMuEmulator12" });
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("uses MAA GUI connection config and calls only MaaCore connect functions", () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "maafight-connect-"));
     try {

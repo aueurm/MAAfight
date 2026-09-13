@@ -108,7 +108,7 @@ function addOperation(stats, operation) {
     if (action.direction) increment(stats.directions, String(action.direction));
   }
   for (const key of ["kills", "costs", "cost_changes", "cooling", "time_elapsed"]) {
-    if (actions.some(action => action[key] !== undefined)) stats.conditionScripts[key]++;
+    if (actions.some(action => action[key] !== undefined || (key === "time_elapsed" && action.elapsed_time !== undefined))) stats.conditionScripts[key]++;
   }
   if (actions.some(action => action.pre_delay !== undefined || action.post_delay !== undefined)) {
     stats.conditionScripts.delay++;

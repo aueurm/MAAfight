@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { PRTSMapLoader } from "../loader/PRTSMapLoader";
+import { DEFAULT_LEVEL_DATA_URL, PRTSMapLoader } from "../loader/PRTSMapLoader";
 import { PRTSMapAdapter } from "../adapter/PRTSMapAdapter";
 import { resolveStage, searchStages } from "../loader/levelIndex";
 import { validateScript } from "../copilot/ScriptValidator";
@@ -115,11 +115,11 @@ export interface StageSuggestion {
 }
 
 export const DEFAULT_CACHE_DIR = getRuntimePaths().cacheLevelsDir;
-export const DEFAULT_DATA_URL = process.env.MAAFIGHT_DATA_URL || "https://map.ark-nights.com";
+export const DEFAULT_DATA_URL = process.env.MAAFIGHT_DATA_URL || DEFAULT_LEVEL_DATA_URL;
 export const DEFAULT_OUTPUT_DIR = getRuntimePaths().outputDir;
 
 export type GenerationCore = "rule-core" | "deepseek-core";
-const RULE_ENGINE_VERSION = "v2-temporal-v1";
+const RULE_ENGINE_VERSION = "v2-temporal-maa617-v2";
 
 function coreMode(value: unknown): GenerationCore {
   const mode = value || "rule-core";

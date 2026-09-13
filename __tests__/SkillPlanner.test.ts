@@ -38,7 +38,7 @@ describe("skill strategy planner", () => {
     const facts = extractStageFacts(data);
     const plan = planSkillActions(actions(), [pick("MANUAL", "INCREASE_WITH_TIME")], buildEncounterContext(data, facts), data.options);
 
-    expect(plan.actions).toContainEqual(expect.objectContaining({ type: "Skill", name: "operator", time_elapsed: 15 }));
+    expect(plan.actions).toContainEqual(expect.objectContaining({ type: "Skill", name: "operator", elapsed_time: 15000 }));
     expect(plan.usesDaemon).toBe(false);
   });
 
@@ -49,5 +49,35 @@ describe("skill strategy planner", () => {
 
     expect(plan.actions).toEqual([]);
     expect(plan.usesDaemon).toBe(true);
+  });
+
+  it("expresses a game-time trigger as wall-clock milliseconds at double speed", () => {
+    const data = mapData();
+    const facts = extractStageFacts(data);
+    const plan = planSkillActions([{ type: "SpeedUp" }, ...actions()], [pick("MANUAL", "INCREASE_WITH_TIME")], buildEncounterContext(data, facts), data.options);
+    expect(plan.actions).toContainEqual(expect.objectContaining({ type: "Skill", elapsed_time: 7500 }));
+  });
+
+  it("does not schedule a skill after its operator has already retreated", () => {
+    const data = mapData();
+    const facts = extractStageFacts(data);
+    const plan = planSkillActions([...actions(), { type: "Retreat", name: "operator", pre_delay: 1000 }],
+      [pick("MANUAL", "INCREASE_WITH_TIME")], buildEncounterContext(data, facts), data.options);
+    expect(plan.actions).toEqual([]);
+    expect(plan.usesDaemon).toBe(true);
+  });
+
+  it("falls back to daemon when queued deployments would miss a manual trigger window", () => {
+    const data = mapData();
+    const facts = extractStageFacts(data);
+    const delayed: BattleScript["actions"] = [
+      ...actions(),
+      { type: "Deploy", name: "reserve", location: [0, 1], direction: "Right", costs: 50 },
+    ];
+    const plan = planSkillActions(delayed, [pick("MANUAL", "INCREASE_WITH_TIME")], buildEncounterContext(data, facts), data.options);
+
+    expect(plan.actions).toEqual([]);
+    expect(plan.usesDaemon).toBe(true);
+    expect(plan.coverageGaps).toContain("manual_skill_ordering_unverified:operator");
   });
 });

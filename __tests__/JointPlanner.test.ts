@@ -52,4 +52,15 @@ describe("joint placement planner", () => {
     expect(plan.decisions.every(item => data.deploymentPoints.some(point => point.row === item.location[0]
       && point.col === item.location[1]))).toBe(true);
   });
+
+  it("does not delay first contact to a later coarse pressure window", () => {
+    const data = mapData();
+    data.deploymentPoints = [{ row: 1, col: 2, buildableType: "melee" }];
+    data.spawnTimeline.push({ time: 20, enemyId: "enemy", count: 1, routeIndex: 0 });
+    const facts = extractStageFacts(data);
+    const plan = buildJointPlan(data, facts, buildEncounterContext(data, facts), {
+      picks: [pick("blocker", "MELEE", [[0, 0]])],
+    });
+    expect(plan.decisions[0].targetTime).toBe(1);
+  });
 });
