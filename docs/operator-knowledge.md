@@ -1,6 +1,6 @@
 # Operator Knowledge v1
 
-知识层分为两个文件：`src/data/operatorKnowledge.generated.v1.json` 是从固定 GameData commit 的技能描述和 `operatorCombat.v2.json` 自动生成的 412 名当前干员知识；`src/data/operatorKnowledge.v1.json` 是手工覆盖层。加载时先读取生成层，再按 id 或 name 合并手工字段，因此刷新游戏数据不会抹掉手工策略选择。
+知识层分为两个文件：`src/data/operatorKnowledge.generated.v1.json` 是从固定 GameData commit 的技能描述和 `operatorCombat.v2.json` 自动生成的 419 名当前干员知识；`src/data/operatorKnowledge.v1.json` 是手工覆盖层。加载时先读取生成层，再按 id 或 name 合并手工字段，因此刷新游戏数据不会抹掉手工策略选择。
 
 生成层只保存描述标签、语义化空间属性和 12 维向量；职业、基础攻击范围、数值技能效果继续复用 `operatorCombat.v2.json`，避免两份模型漂移。加载时会拒绝 commit 或干员数不一致的生成层。
 

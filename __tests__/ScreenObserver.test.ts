@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as probe from "../src/runner/probe";
+import { titleFixture } from "./screenFixtures";
 import {
   isFailureContinueScreen,
   isSettlementTitleScreen,
@@ -43,7 +44,7 @@ function paintRectangle(buffer: Buffer, minX: number, maxX: number, minY: number
 }
 
 function paintSettlementTitle(buffer: Buffer): void {
-  paintRectangle(buffer, 45, 380, 176, 280, 255, 255, 255);
+  paintRectangle(buffer, 100, 250, 200, 250, 255, 255, 255);
 }
 
 function paintPauseTitle(buffer: Buffer): void {
@@ -124,7 +125,6 @@ describe("sampleSettlementStars", () => {
       recognized: false,
       outcome: "unknown",
     });
-    expect(isFailureContinueScreen(bgr)).toBe(false);
   });
 
   it("does not mistake diffuse grey artwork for unlit stars", () => {
@@ -132,13 +132,6 @@ describe("sampleSettlementStars", () => {
       recognized: false,
       outcome: "unknown",
     });
-  });
-
-  it("recognizes the mission-failed title as a terminal result", () => {
-    const bgr = blank();
-    paint(bgr, 150, 360, 255, 255, 255);
-
-    expect(isFailureContinueScreen(bgr)).toBe(true);
   });
 
   it("requires the result title in addition to recognized stars", () => {
@@ -259,7 +252,7 @@ describe("observeMaaBattle", () => {
       for (let x = 0; x < sourceWidth; x++) {
         const bgrX = Math.floor(x * width / sourceWidth);
         const source = (bgrY * width + bgrX) * 3;
-        const target = 12 + (y * sourceWidth + x) * 4;
+        const target = headerBytes + (y * sourceWidth + x) * 4;
         raw[target] = bgr[source + 2];
         raw[target + 1] = bgr[source + 1];
         raw[target + 2] = bgr[source];
@@ -295,9 +288,7 @@ describe("observeMaaBattle", () => {
   }
 
   function bgrWithMissionFailure(): Buffer {
-    const bgr = blank();
-    paint(bgr, 150, 360, 255, 255, 255);
-    return bgr;
+    return titleFixture("mission-failed");
   }
 
   function bgrWithPause(): Buffer {
@@ -306,9 +297,13 @@ describe("observeMaaBattle", () => {
     return bgr;
   }
 
-  it("normalizes a 1600x900 capture and saves frames until the settlement screen", () => {
+  it.each([12, 16])("normalizes a 1600x900 capture with a %i-byte header and saves frames", headerBytes => {
     let time = 1000;
-    const spawn = mockBattleFrames([blank(), bgrWithSettlement(2)], 1600, 900, 16);
+    const firstFrame = blank();
+    firstFrame[0] = 250;
+    firstFrame[1] = 40;
+    firstFrame[2] = 80;
+    const spawn = mockBattleFrames([firstFrame, bgrWithSettlement(2)], 1600, 900, headerBytes);
 
     const observation = observeMaaBattle({
       debugDir,
@@ -323,6 +318,9 @@ describe("observeMaaBattle", () => {
       { file: "1000.bmp", capturedAt: 1000 },
       { file: "6000.bmp", capturedAt: 6000 },
     ]);
+    const savedFrame = fs.readFileSync(path.join(observation.frameDir, "1000.bmp"));
+    const firstPixelOffset = 54 + (height - 1) * width * 3;
+    expect(savedFrame.subarray(firstPixelOffset, firstPixelOffset + 3)).toEqual(firstFrame.subarray(0, 3));
     expect(spawn.mock.calls[0][0]).toBe("C:\\MAA\\adb.exe");
     expect(spawn.mock.calls[0][1]).toEqual(["-s", "127.0.0.1:16384", "exec-out", "screencap"]);
     expect(spawn.mock.calls.flat().join("\n")).not.toMatch(/Asst|click|powershell/i);
@@ -334,7 +332,26 @@ describe("observeMaaBattle", () => {
     });
   });
 
-  it("records a mission failure terminally without controlling it", () => {
+  it("records a zero-star settlement terminally without controlling it", () => {
+    let time = 1000;
+    const spawn = mockBattleFrames([bgrWithSettlement(0)]);
+
+    const observation = observeMaaBattle({
+      debugDir,
+      now: () => time,
+      sleep: (milliseconds: number) => { time += milliseconds; },
+      maximumWaitMs: 0,
+    });
+
+    expect(observation).toMatchObject({ status: "settled", outcome: "failed", stars: 0 });
+    expect(observation.frames).toHaveLength(1);
+    expect(spawn.mock.calls.flat().join("\n")).not.toMatch(/Asst|click|powershell/i);
+  });
+
+  it("recognizes a real failure title on bright and dark maps without mistaking other screens", () => {
+    expect(isFailureContinueScreen(titleFixture("mission-failed", 160))).toBe(true);
+    expect(isFailureContinueScreen(titleFixture("login"))).toBe(false);
+    expect(isFailureContinueScreen(titleFixture("formation"))).toBe(false);
     let time = 1000;
     const spawn = mockBattleFrames([bgrWithMissionFailure()]);
 
@@ -348,6 +365,11 @@ describe("observeMaaBattle", () => {
     expect(observation).toMatchObject({ status: "settled", outcome: "failed", stars: 0 });
     expect(observation.frames).toHaveLength(1);
     expect(spawn.mock.calls.flat().join("\n")).not.toMatch(/Asst|click|powershell/i);
+
+    const formation = Buffer.alloc(width * height * 3, 160);
+    paintRectangle(formation, 45, 380, 176, 280, 255, 255, 255);
+    paintRectangle(formation, 100, 199, 340, 379, 255, 255, 255);
+    expect(isFailureContinueScreen(formation)).toBe(false);
   });
 
   it("does not settle when battle colors only match the star regions", () => {
@@ -380,6 +402,47 @@ describe("observeMaaBattle", () => {
     expect(observation).toMatchObject({ status: "timeout" });
     expect(observation.frames).toHaveLength(1);
     expect(spawn.mock.calls.flat().join("\n")).not.toMatch(/Asst|click|powershell/i);
+  });
+
+  it("retries one transient ADB capture failure before settling", () => {
+    let time = 1000;
+    const spawn = jest.spyOn(childProcess, "spawnSync")
+      .mockReturnValueOnce({ stdout: Buffer.alloc(0), stderr: Buffer.from("busy"), status: 1, signal: null, output: [] } as never)
+      .mockReturnValueOnce(adbResult(bgrWithSettlement(3)));
+
+    const observation = observeMaaBattle({
+      debugDir,
+      now: () => time,
+      sleep: (milliseconds: number) => { time += milliseconds; },
+      maximumWaitMs: 10_000,
+      intervalMs: 5_000,
+    });
+
+    expect(observation).toMatchObject({ status: "settled", outcome: "clear", stars: 3 });
+    expect(observation.warnings).toContain("Battle observer capture failed: adb screencap failed: busy");
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops after three consecutive capture failures", () => {
+    let time = 0;
+    const spawn = jest.spyOn(childProcess, "spawnSync")
+      .mockReturnValue({ stdout: Buffer.alloc(0), stderr: Buffer.from("offline"), status: 1, signal: null, output: [] } as never);
+    const observation = observeMaaBattle({ debugDir, now: () => time, sleep: ms => { time += ms; }, maximumWaitMs: 10_000, intervalMs: 1_000 });
+    expect(observation.status).toBe("capture_failed");
+    expect(observation.warnings).toHaveLength(3);
+    expect(spawn).toHaveBeenCalledTimes(3);
+  });
+
+  it("resets the consecutive capture failure count after a successful frame", () => {
+    let time = 0;
+    const error = { stdout: Buffer.alloc(0), stderr: Buffer.from("busy"), status: 1, signal: null, output: [] } as never;
+    const spawn = jest.spyOn(childProcess, "spawnSync")
+      .mockReturnValueOnce(error).mockReturnValueOnce(error).mockReturnValueOnce(adbResult(blank()))
+      .mockReturnValueOnce(error).mockReturnValueOnce(error).mockReturnValueOnce(adbResult(bgrWithSettlement(3)));
+    const observation = observeMaaBattle({ debugDir, now: () => time, sleep: ms => { time += ms; }, maximumWaitMs: 10_000, intervalMs: 1_000 });
+    expect(observation).toMatchObject({ status: "settled", stars: 3 });
+    expect(observation.frames).toHaveLength(2);
+    expect(spawn).toHaveBeenCalledTimes(6);
   });
 
   it("keeps captured frames when the observation times out", () => {

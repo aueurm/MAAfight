@@ -1,0 +1,187 @@
+{
+  "version": 3,
+  "minimum_required": "v6.0.0",
+  "stage_name": "12-12",
+  "opers": [
+    {
+      "name": "寻澜",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "银灰",
+      "skill": 3,
+      "skill_usage": 0
+    },
+    {
+      "name": "凯尔希",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "乌尔比安",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "佩佩",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "斥罪",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "归溟幽灵鲨",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "赤刃明霄陈",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "Mon3tr",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "斩业星熊",
+      "skill": 3,
+      "skill_usage": 1
+    },
+    {
+      "name": "逻各斯",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "新约能天使",
+      "skill": 2,
+      "skill_usage": 1
+    }
+  ],
+  "groups": [],
+  "actions": [
+    {
+      "type": "SpeedUp"
+    },
+    {
+      "type": "ResetStopwatch"
+    },
+    {
+      "type": "Deploy",
+      "name": "寻澜",
+      "location": [
+        7,
+        3
+      ],
+      "direction": "Down",
+      "pre_delay": 0,
+      "costs": 10
+    },
+    {
+      "type": "Deploy",
+      "name": "归溟幽灵鲨",
+      "location": [
+        9,
+        3
+      ],
+      "direction": "Left",
+      "pre_delay": 0,
+      "costs": 16
+    },
+    {
+      "type": "Deploy",
+      "name": "银灰",
+      "location": [
+        8,
+        3
+      ],
+      "direction": "Right",
+      "costs": 20
+    },
+    {
+      "type": "Skill",
+      "name": "银灰",
+      "elapsed_time": 30000
+    },
+    {
+      "type": "Deploy",
+      "name": "凯尔希",
+      "location": [
+        9,
+        4
+      ],
+      "direction": "Left",
+      "costs": 20
+    },
+    {
+      "type": "Deploy",
+      "name": "Mon3tr",
+      "location": [
+        8,
+        2
+      ],
+      "direction": "Right",
+      "costs": 18
+    },
+    {
+      "type": "Deploy",
+      "name": "乌尔比安",
+      "location": [
+        5,
+        3
+      ],
+      "direction": "Left",
+      "costs": 24
+    },
+    {
+      "type": "Deploy",
+      "name": "佩佩",
+      "location": [
+        7,
+        2
+      ],
+      "direction": "Down",
+      "costs": 20
+    },
+    {
+      "type": "Deploy",
+      "name": "斥罪",
+      "location": [
+        7,
+        1
+      ],
+      "direction": "Left",
+      "costs": 36
+    },
+    {
+      "type": "Retreat",
+      "name": "寻澜",
+      "costs": 21
+    },
+    {
+      "type": "Deploy",
+      "name": "赤刃明霄陈",
+      "location": [
+        7,
+        3
+      ],
+      "direction": "Down",
+      "costs": 21
+    },
+    {
+      "type": "Output",
+      "elapsed_time": 136500,
+      "doc": "保持自动技能至预计路线结束；实际结算另行核验"
+    }
+  ],
+  "doc": {
+    "title": "12-12 12-12-generator-v3c experiment",
+    "details": "2026-09-14 普通环境演习：2 星。防线与技能窗口改进后的规则生成器。仅代表该次账号条件；详见 results.json。编队与动作保留执行原样。"
+  }
+}

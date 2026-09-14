@@ -3,7 +3,15 @@ import * as path from "path";
 import { getMaafightDir } from "../player/PlayerConfig";
 import { appendJsonLine, readJsonLines } from "../shared/jsonl";
 import type { PracticeTestResult } from "../shared/practiceResult";
-import type { BattleScript, PlayerOperator } from "../types";
+import type { BattleScript, EnemyMechanic, PlayerOperator } from "../types";
+import { computeScriptHash } from "../engine";
+import { deriveSearchBias, type SearchBias } from "./FeedbackLearning";
+
+export interface FeedbackRevision {
+  engineVersion: string;
+  stageContentHash: string;
+  gameDataCommit: string;
+}
 
 export interface GenerationRecord {
   schemaVersion: 1 | 2;
@@ -29,7 +37,7 @@ export interface GenerationRecord {
 }
 
 export interface FeedbackRecord {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   feedbackId: string;
   generationId?: string;
   scriptHash: string;
@@ -43,6 +51,11 @@ export interface FeedbackRecord {
   notes?: string;
   usableForLearning: boolean;
   stageContentHash?: string;
+  firstLeak?: { time: number; routeId?: number; location?: [number, number] };
+  operatorDeaths?: Array<{ name: string; time: number }>;
+  deploymentFailures?: Array<{ name?: string; time?: number; reason: string }>;
+  remainingEnemyIds?: string[];
+  failureTags?: EnemyMechanic[];
   createdAt: string;
 }
 
@@ -61,6 +74,11 @@ export interface RecordFeedbackInput {
   total?: number;
   notes?: string;
   currentOperatorBoxHash: string;
+  firstLeak?: FeedbackRecord["firstLeak"];
+  operatorDeaths?: FeedbackRecord["operatorDeaths"];
+  deploymentFailures?: FeedbackRecord["deploymentFailures"];
+  remainingEnemyIds?: string[];
+  failureTags?: EnemyMechanic[];
 }
 
 export interface RecordPracticeTestInput {
@@ -131,7 +149,7 @@ export class FeedbackStore {
     const operatorBoxHash = generation?.operatorBoxHash || "unknown";
     const operatorBoxChanged = Boolean(generation && operatorBoxHash !== input.currentOperatorBoxHash);
     const record: FeedbackRecord = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       feedbackId: randomUUID(),
       generationId: generation?.generationId,
       scriptHash: input.scriptHash,
@@ -145,6 +163,11 @@ export class FeedbackStore {
       notes: input.notes?.trim() || undefined,
       usableForLearning: Boolean(generation && !operatorBoxChanged),
       stageContentHash: generation?.stageContentHash,
+      firstLeak: input.firstLeak,
+      operatorDeaths: input.operatorDeaths?.map(death => ({ ...death })),
+      deploymentFailures: input.deploymentFailures?.map(failure => ({ ...failure })),
+      remainingEnemyIds: input.remainingEnemyIds ? [...new Set(input.remainingEnemyIds)].sort() : undefined,
+      failureTags: input.failureTags ? [...new Set(input.failureTags)].sort() : undefined,
       createdAt: new Date().toISOString(),
     };
     appendJsonLine(this.feedbackPath, record);
@@ -192,12 +215,19 @@ export class FeedbackStore {
   }
 
   excludedHashes(stageId: string, operatorBoxHash: string, stageContentHash?: string): Set<string> {
+    const generations = new Map(this.loadGenerations().records.map(record => [record.generationId, record]));
     return new Set(
       this.loadFeedback().records
         .filter(record => record.stageId === stageId && record.operatorBoxHash === operatorBoxHash
           && record.usableForLearning && record.ratio < 1
           && (!stageContentHash || record.stageContentHash === stageContentHash))
-        .map(record => record.scriptHash)
+        .flatMap(record => {
+          const script = record.generationId ? generations.get(record.generationId)?.script : undefined;
+          // Legacy time_elapsed was never an MAA condition and its units were inconsistent.
+          // Keep its recorded hash without exporting or silently rewriting an old battle plan.
+          if (!script || script.actions.some(action => "time_elapsed" in action)) return [record.scriptHash];
+          return [record.scriptHash, computeScriptHash(script)];
+        })
     );
   }
 
@@ -205,12 +235,19 @@ export class FeedbackStore {
     stageId: string,
     operatorBoxHash: string,
     breakdown: Record<string, number>,
-    stageContentHash?: string
+    stageContentHash?: string,
+    revision?: FeedbackRevision
   ): number {
     const generations = new Map(this.loadGenerations().records.map(record => [record.generationId, record]));
     const records = this.loadFeedback().records.filter(record =>
       record.usableForLearning && record.stageId === stageId && record.operatorBoxHash === operatorBoxHash && record.generationId
       && (!stageContentHash || record.stageContentHash === stageContentHash)
+      && (!revision || (() => {
+        const generation = generations.get(record.generationId!);
+        return generation?.engineVersion === revision.engineVersion
+          && generation.stageContentHash === revision.stageContentHash
+          && generation.gameDataCommit === revision.gameDataCommit;
+      })())
     );
     if (records.length === 0) return 0;
     let weightedResidual = 0;
@@ -227,6 +264,18 @@ export class FeedbackStore {
     if (totalWeight === 0) return 0;
     const alpha = Math.min(0.35, records.length / (records.length + 10));
     return weightedResidual / totalWeight * alpha;
+  }
+
+  searchBias(stageId: string, operatorBoxHash: string, revision: FeedbackRevision): SearchBias {
+    const generations = new Map(this.loadGenerations().records.map(record => [record.generationId, record]));
+    const records = this.loadFeedback().records.filter(record => {
+      const generation = record.generationId ? generations.get(record.generationId) : undefined;
+      return record.usableForLearning && record.stageId === stageId && record.operatorBoxHash === operatorBoxHash
+        && generation?.engineVersion === revision.engineVersion
+        && generation.stageContentHash === revision.stageContentHash
+        && generation.gameDataCommit === revision.gameDataCommit;
+    });
+    return deriveSearchBias(records);
   }
 
   summary(stageId?: string): FeedbackSummary {

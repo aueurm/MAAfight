@@ -10,7 +10,7 @@ import { openUrl } from "./gui/openBrowser";
 import { getRuntimePaths } from "./runtime/paths";
 import { writeGuiLog } from "./runtime/logger";
 import { FeedbackStore, hashOperatorBox, hashScriptJson } from "./feedback/FeedbackStore";
-import { analyzeStage, generateStage, loadStageContext } from "./core/pipeline";
+import { analyzeStage, DEFAULT_DATA_URL, generateStage, loadStageContext } from "./core/pipeline";
 import { isSpawnActionType, normalizeBuildableType } from "./shared/prtsMap";
 import { RunResultStore } from "./runner/RunResultStore";
 import { connectMaaEnvironment, probeMaaEnvironment } from "./runner/probe";
@@ -19,7 +19,7 @@ import { observeMaaBattle } from "./runner/screenObserver";
 import type { BattleScript, PRTSLevelData } from "./types";
 
 const CACHE_DIR = getRuntimePaths().cacheLevelsDir;
-const DATA_URL = process.env.MAAFIGHT_DATA_URL || "https://map.ark-nights.com";
+const DATA_URL = DEFAULT_DATA_URL;
 
 interface Args {
   command: string;
@@ -285,7 +285,7 @@ Examples:
 
 Environment:
   MAAFIGHT_CACHE_DIR   Cache directory (default: ./cache/levels)
-  MAAFIGHT_DATA_URL    PRTS.Map data URL (default: https://map.ark-nights.com)
+  MAAFIGHT_DATA_URL    Override the pinned game-data source URL
   MAAFIGHT_LOG_LEVEL   Log level (default: info)`);
 }
 

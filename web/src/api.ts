@@ -1,3 +1,5 @@
+import type { EmulatorStartupStatus } from "../../src/shared/emulatorStartup";
+
 export type PracticeTestResult = "进入失败" | "失败" | "二星" | "三星";
 export type GenerationCoreMode = "rule-core" | "deepseek-core";
 
@@ -145,6 +147,11 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 export async function getConfig(): Promise<ConfigResponse> {
   const res = await fetch("/api/config");
   return res.json() as Promise<ConfigResponse>;
+}
+
+export async function getEmulatorStatus(): Promise<ApiBase & EmulatorStartupStatus> {
+  const res = await fetch("/api/emulator-status");
+  return res.json() as Promise<ApiBase & EmulatorStartupStatus>;
 }
 
 export async function searchStageSuggestions(query: string, limit = 24): Promise<StageSuggestionResponse> {

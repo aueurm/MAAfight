@@ -4,14 +4,18 @@
 
 GUI / pipeline 只提供两条显式路线：`rule-core` 使用 v2 确定性引擎；`deepseek-core` 使用 DeepSeek API 规划、再由本地确定性编译器校验。两者共用 copilot 导出与验证，任何 DeepSeek 候选都不能绕过本地校验或演习发布门槛。
 
+默认关卡、敌人、干员战斗数据与生成知识固定到同一 GameData commit。加载器按快照隔离旧缓存；上游缺失关卡文件或不支持的路径语义会明确报错。
+
 ```text
 Stage code / local JSON
   -> PRTSMapLoader
   -> PRTSMapAdapter
-  -> extractStageFacts
+  -> RouteTimeline + temporal StageFacts
   -> EncounterContext
   -> squad Beam (operator + skill)
-  -> deployment Beam + cheap scoring
+  -> joint deployment Beam (operator + skill + cell + direction)
+  -> manual Skill plan or SkillDaemon
+  -> final deployment timeline + feasibility gates
   -> bounded skill engagement scoring
   -> ScriptValidator + MAAProtocolValidator
   -> ScriptExporter
@@ -57,21 +61,24 @@ src/
 
 ## 引擎模块
 
-- `StageFacts.ts`：从 `MapData` 提取敌人数、HP、路线、15 秒压力窗口和部署资源。
+- `StageFacts.ts`、`RouteTimeline.ts`、`TemporalPressure.ts`：从 `MapData` 逐秒展开出生、移动和等待，汇总 15 秒关键压力窗口与未知路线覆盖缺口。
 - `CombatModel.ts`：严格加载 `operatorCombat.v2.json`，解析默认或玩家 E2 档案，并提供进程内缓存。
+- `SkillWindow.ts`：按部署、撤退、初始 SP、完整回转和显式开技时刻，计算窗口内常态 / 技能秒数及总伤；常态与技能范围分开使用，未知机制保留 gap。
 - `OperatorKnowledge.ts`：加载可选的 `operatorKnowledge.v1.json`，提供策略、空间、向量与相似回退；新干员可继承相似战斗档案而不改 planner。
-- `EncounterContext.ts`：保留 15 秒窗口内的敌人、路线、防御、法抗和移动模式，构造能力需求。
-- `CandidateBuilder.ts`：从完整模型目录按队伍边际收益搜索 `(operator, skill)`，再统一构造前线职责、医疗覆盖、点位、朝向、撤退、冷却救场和动作顺序。
-- `Scoring.ts`：计算基础交战与技能交战，以及点位、费用、语料、功能覆盖和自动化评分。
-- `index.ts`：使用宽度 32 的 squad Beam 和最多 256 个廉价完整候选；昂贵层按候选上限自适应预算评分。
+- `EncounterContext.ts`、`EnemyMechanics.ts`：从时序压力和敌人机制构造能力需求，不可建模的机制保留为 coverage gap。
+- `JointPlanner.ts`、`CandidateBuilder.ts`：先搜索不冲突的 `(operator, skill, cell, direction)` 联合位置，再编码前线职责、医疗覆盖、撤退、已知冷却的再部署和官方 MAA 动作。
+- `DefensePlanner.ts`：从实际 WALK 路径提取拦截点，保留同一蓝门的多个入口，按首敌到达时限、初始费用上限和自然回费预算安排防线；输出 `metadata.defensePlan` 供核查。1.5 真实秒的单次部署余量是规划假设。
+- `TimelinePlanner.ts`、`Feasibility.ts`：从出生、火力区、蓝门、飞行、Boss 和费用事件推导条件时间线；检查费用、位置与部分火力 / 路线门槛。生存风险和防线到位时限保留缺口，不作为精确战斗结论。
+- `SkillPlanner.ts`：仅在技能类型、SP 与关键窗口均可验证时输出条件 `Skill`；否则使用 `SkillDaemon`，两者互斥。
+- `Scoring.ts`、`index.ts`：对已通过硬约束的候选执行确定性排序；`candidateScore` 仅用于候选排序。
 
 引擎输出固定编队。任何候选若违反占位、声明干员、部署格或协议约束会被拒绝；所有候选均失败时抛出错误。
 
 ## 反馈
 
-`.maafight/generations.jsonl` 保存脚本 hash、stage 内容 hash、GameData commit、模型版本、分项评分和玩家库 hash。`.maafight/feedback.jsonl` 保存 `killed / total`。
+`.maafight/generations.jsonl` 保存脚本 hash、stage 内容 hash、GameData commit、模型版本、分项评分和玩家库 hash。`.maafight/feedback.jsonl` 的 v3 记录可额外保存首次漏怪、干员死亡、部署失败、剩余敌人与机制标签。
 
-只有同关卡内容、同玩家库和同 `v2-skill-v1` 引擎版本的 100% 结果可以复用；旧 v2 记录可读取但不会作为新引擎成功缓存。低于 100% 的脚本 hash 被排除。
+只有同关卡内容、同玩家库、同 GameData commit 和同 `v2-defense-skill-window-v3` 引擎版本的 100% 结果可以复用；旧记录仍可读取。相同 revision 的失败反馈只形成有限的开局、对空、爆发、治疗、费用和路线排序偏置，不能绕过可行性硬约束；低于 100% 的脚本 hash 被排除。
 
 ## 依赖边界
 
@@ -83,4 +90,4 @@ src/
 - CLI 和 GUI 不实现自己的生成分支，只调用同一 pipeline / engine。
 - DeepSeek 连接直接使用原生 `fetch` 和 `.env` 中的 `DEEPSEEK_API_KEY`，不引入 Provider 抽象或外部 SDK。
 - DeepSeek 的固定 Prompt 不接受用户自由战术要求；输入只包含关卡事实、合法部署点、路线、敌人和当前玩家干员 / 技能。
-- `deepseek-core` 将 `MANUAL`、`AUTO`、`PASSIVE` 技能类型提供给规划模型：仅手动技能可生成 `Skill`；条件撤退和手动技能条件使用 MAA 原生字段，含 `time_elapsed` 的候选在编译时自动从 `ResetStopwatch` 开始计时。
+- `deepseek-core` 将 `MANUAL`、`AUTO`、`PASSIVE` 技能类型提供给规划模型：仅手动技能可生成 `Skill`；条件撤退和手动技能条件使用 MAA 原生字段，含 `elapsed_time` 的候选在编译时自动从 `ResetStopwatch` 开始计时。

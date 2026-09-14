@@ -25,6 +25,9 @@ export function toCopilotObject(script: BattleScript): Record<string, unknown> {
       opers: (group.opers || []).map(cleanOperator),
     })),
     actions: script.actions.map(action => {
+      if ("time_elapsed" in action) {
+        throw new Error("Unsupported time_elapsed: regenerate the script using elapsed_time in milliseconds.");
+      }
       const output: Record<string, unknown> = { type: action.type };
       if (action.name !== undefined) output.name = action.name;
       if (action.location !== undefined) output.location = protocolLocation(action.location);
@@ -39,7 +42,8 @@ export function toCopilotObject(script: BattleScript): Record<string, unknown> {
       if (action.costs !== undefined) output.costs = action.costs;
       if (action.cost_changes !== undefined) output.cost_changes = action.cost_changes;
       if (action.kills !== undefined) output.kills = action.kills;
-      if (action.time_elapsed !== undefined) output.time_elapsed = action.time_elapsed;
+      if (action.elapsed_time !== undefined) output.elapsed_time = action.elapsed_time;
+      if (action.timeout !== undefined) output.timeout = action.timeout;
       if (action.cooling !== undefined) output.cooling = action.cooling;
       if (action.skip_if_not_ready !== undefined) output.skip_if_not_ready = action.skip_if_not_ready;
       if (action.distance !== undefined) output.distance = action.distance;

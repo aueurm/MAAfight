@@ -1,0 +1,128 @@
+{
+  "date": "2026-09-14",
+  "engineVersion": "v2-defense-skill-window-v3",
+  "sourceSha256": "0fa301dbc4f1f4c83390947a399ca908192ec31f76697800276fddedf8a948a2",
+  "sourceHashScope": "Sorted src/engine files, src/core/pipeline.ts, src/data/operatorCombat.v2.json; each path then UTF-8 file content separated by newlines.",
+  "checks": {
+    "nodeBuild": "passed",
+    "webBuild": "passed",
+    "jest": {
+      "suites": 44,
+      "tests": 474,
+      "failed": 0
+    },
+    "corpus": {
+      "scripts": 200,
+      "missingRequired": 0
+    }
+  },
+  "benchmark": {
+    "command": "node scripts/benchmark.js --skip-build",
+    "exitCode": 1,
+    "before": {
+      "total": 36,
+      "passed": 33,
+      "failed": 3,
+      "skipped": 0,
+      "averageMs": 1872,
+      "slowest": {
+        "label": "runtime: engine and GUI hot P95",
+        "durationMs": 27206
+      }
+    },
+    "after": {
+      "total": 32,
+      "passed": 27,
+      "failed": 5,
+      "skipped": 0,
+      "averageMs": 2311,
+      "slowest": {
+        "label": "runtime: engine and GUI hot P95",
+        "durationMs": 31442
+      }
+    },
+    "quality": {
+      "stages": 6,
+      "generated": 6,
+      "valid": 6,
+      "highConfidence": 0,
+      "mediumConfidence": 0,
+      "lowConfidence": 0,
+      "unsupported": 0,
+      "experimental": 0,
+      "protocolWarnings": 0,
+      "uniqueOperators": 32,
+      "uniqueSquads": 6,
+      "diversityPassed": false,
+      "coldCliP50Ms": 2195,
+      "coldCliP95Ms": 2370
+    },
+    "failures": [
+      {
+        "label": "stage generate: main_03-08",
+        "previouslyPassed": true,
+        "failureMessage": "Stage generation should produce a non-empty copilot script",
+        "diagnostic": "Error: V2 skill engine search deadline exceeded during joint placement; rejected 18 candidates: route_damage_shortfall"
+      },
+      {
+        "label": "stage generate: camp_01",
+        "previouslyPassed": false,
+        "failureMessage": "Stage generation should produce a non-empty copilot script",
+        "diagnostic": "Error: V2 skill engine search deadline exceeded during squad selection; rejected 4 candidates: cost_recovery_not_modeled, critical_window_missing_anti_air, route_damage_shortfall"
+      },
+      {
+        "label": "stage generate: act42side_10",
+        "previouslyPassed": false,
+        "failureMessage": "Stage generation should produce a non-empty copilot script",
+        "diagnostic": "Error: V2 skill engine search deadline exceeded during joint placement; rejected 1 candidates: route_missing_ground_coverage"
+      },
+      {
+        "label": "stage generate: a001_ex01",
+        "previouslyPassed": true,
+        "failureMessage": "Stage generation should produce a non-empty copilot script",
+        "diagnostic": "Error: V2 skill engine search deadline exceeded during joint placement; rejected 30 candidates: route_missing_ground_coverage"
+      },
+      {
+        "label": "diversity: 10-stage E2 fixture",
+        "previouslyPassed": false,
+        "failureMessage": "Expected >=38 operators and >=8 squads, got 32 operators and 6 squads"
+      }
+    ],
+    "notExecutedNow": [
+      {
+        "label": "stage validate: main_03-08",
+        "previouslyPassed": true
+      },
+      {
+        "label": "stage analyze: main_03-08",
+        "previouslyPassed": true
+      },
+      {
+        "label": "stage validate: a001_ex01",
+        "previouslyPassed": true
+      },
+      {
+        "label": "stage analyze: a001_ex01",
+        "previouslyPassed": true
+      }
+    ],
+    "runtime": {
+      "engine": {
+        "samples": 20,
+        "p50Ms": 835.64,
+        "p95Ms": 902.03
+      },
+      "guiHotPipeline": {
+        "samples": 10,
+        "p50Ms": 983.34,
+        "p95Ms": 1016.03
+      },
+      "thresholds": {
+        "engineP95Ms": 1200,
+        "guiHotP95Ms": 2000
+      },
+      "passed": true
+    }
+  },
+  "releaseStatus": "draft: benchmark failures and incomplete stage mechanics remain"
+}

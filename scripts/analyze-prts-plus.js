@@ -483,7 +483,7 @@ function extractOperationFeatures(operation) {
     cooling: actions.filter(action => action?.cooling !== undefined).length,
     elapsedTime: actions.filter(
       action =>
-        finiteNumber(action?.time_elapsed) !== null ||
+        finiteNumber(action?.elapsed_time) !== null || finiteNumber(action?.time_elapsed) !== null ||
         finiteNumber(action?.time) !== null
     ).length,
     preDelay: actions.filter(action => finiteNumber(action?.pre_delay) !== null).length,

@@ -27,8 +27,8 @@ const STAR_ROIS = [
 ] as const;
 const SETTLEMENT_TITLE_ROI = { minX: 45, maxX: 380, minY: 176, maxY: 280 };
 const SETTLEMENT_TITLE_BRIGHT_RATIO = 0.15;
-const FAILURE_TITLE_ROI = { minX: 100, maxX: 199, minY: 340, maxY: 379 };
-const FAILURE_TITLE_BRIGHT_RATIO = 0.15;
+const FAILURE_TITLE_ROI = { minX: 130, maxX: 411, minY: 315, maxY: 377 };
+const FAILURE_SUBTITLE_ROI = { minX: 130, maxX: 411, minY: 387, maxY: 414 };
 
 export interface StarSample {
   name: string;
@@ -156,6 +156,19 @@ function isBrightWhite(b: number, g: number, r: number): boolean {
   return b >= 220 && g >= 220 && r >= 220;
 }
 
+function brightWhiteRatio(bgr: Buffer, roi: { minX: number; maxX: number; minY: number; maxY: number }, width: number): number {
+  let brightPixels = 0;
+  let pixels = 0;
+  for (let y = roi.minY; y <= roi.maxY; y++) {
+    for (let x = roi.minX; x <= roi.maxX; x++) {
+      const offset = (y * width + x) * BYTES_PER_PIXEL;
+      if (isBrightWhite(bgr[offset], bgr[offset + 1], bgr[offset + 2])) brightPixels++;
+      pixels++;
+    }
+  }
+  return brightPixels / pixels;
+}
+
 function outcomeFromStars(stars: number): RunOutcome {
   if (stars === 3) return "clear";
   if (stars === 0) return "failed";
@@ -251,18 +264,8 @@ export function sampleSettlementStars(bgr: Buffer, width = WIDTH, height = HEIGH
 
 export function isSettlementTitleScreen(bgr: Buffer, width = WIDTH, height = HEIGHT): boolean {
   if (bgr.length < width * height * BYTES_PER_PIXEL) return false;
-
-  let brightPixels = 0;
-  let pixels = 0;
-  for (let y = SETTLEMENT_TITLE_ROI.minY; y <= SETTLEMENT_TITLE_ROI.maxY; y++) {
-    for (let x = SETTLEMENT_TITLE_ROI.minX; x <= SETTLEMENT_TITLE_ROI.maxX; x++) {
-      const offset = (y * width + x) * BYTES_PER_PIXEL;
-      if (isBrightWhite(bgr[offset], bgr[offset + 1], bgr[offset + 2])) brightPixels++;
-      pixels++;
-    }
-  }
   // ponytail: calibrated against real 11-20 result and battle frames; use OCR only if the client result layout changes.
-  return brightPixels / pixels >= SETTLEMENT_TITLE_BRIGHT_RATIO;
+  return brightWhiteRatio(bgr, SETTLEMENT_TITLE_ROI, width) >= SETTLEMENT_TITLE_BRIGHT_RATIO;
 }
 
 function isVerifiedSettlement(bgr: Buffer, sampled: StarObservation): boolean {
@@ -270,19 +273,12 @@ function isVerifiedSettlement(bgr: Buffer, sampled: StarObservation): boolean {
 }
 
 export function isFailureContinueScreen(bgr: Buffer, width = WIDTH, height = HEIGHT): boolean {
-  if (bgr.length < width * height * BYTES_PER_PIXEL) return false;
-
-  let brightPixels = 0;
-  let pixels = 0;
-  for (let y = FAILURE_TITLE_ROI.minY; y <= FAILURE_TITLE_ROI.maxY; y++) {
-    for (let x = FAILURE_TITLE_ROI.minX; x <= FAILURE_TITLE_ROI.maxX; x++) {
-      const offset = (y * width + x) * BYTES_PER_PIXEL;
-      if (isBrightWhite(bgr[offset], bgr[offset + 1], bgr[offset + 2])) brightPixels++;
-      pixels++;
-    }
-  }
-  // ponytail: fixed Official-client title ROI; add locale-aware image matching only if this screen changes.
-  return brightPixels / pixels >= FAILURE_TITLE_BRIGHT_RATIO;
+  if (bgr.length < width * height * BYTES_PER_PIXEL || width !== WIDTH || height !== HEIGHT) return false;
+  // Official-client title lines stay fixed while the blurred map behind them can be bright.
+  // Upper bounds reject solid white UI panels; both lines distinguish login and formation screens.
+  const title = brightWhiteRatio(bgr, FAILURE_TITLE_ROI, width);
+  const subtitle = brightWhiteRatio(bgr, FAILURE_SUBTITLE_ROI, width);
+  return title >= 0.18 && title <= 0.5 && subtitle >= 0.12 && subtitle <= 0.4;
 }
 
 function runMaaCoreScreencap(options: MaaCoreScreencapOptions): CaptureResult {
@@ -552,6 +548,7 @@ export function observeMaaBattle(options: BattleObserverOptions): BattleObservat
   const deadline = now() + Math.max(0, options.maximumWaitMs ?? BATTLE_FRAME_WAIT_MS);
   const interval = Math.max(1, options.intervalMs ?? BATTLE_FRAME_INTERVAL_MS);
   let lastCapturedAt = -1;
+  let consecutiveCaptureFailures = 0;
   const captureFrame = (): { bgr: Buffer; sampled: StarObservation } => {
     const capturedAt = Math.max(now(), lastCapturedAt + 1);
     lastCapturedAt = capturedAt;
@@ -565,6 +562,7 @@ export function observeMaaBattle(options: BattleObserverOptions): BattleObservat
   while (now() <= deadline) {
     try {
       const frame = captureFrame();
+      consecutiveCaptureFailures = 0;
       if (isVerifiedSettlement(frame.bgr, frame.sampled)) {
         return finish("settled", { outcome: frame.sampled.outcome, stars: frame.sampled.stars });
       }
@@ -575,7 +573,9 @@ export function observeMaaBattle(options: BattleObserverOptions): BattleObservat
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       warnings.push(`Battle observer capture failed: ${message}`);
-      return finish("capture_failed");
+      consecutiveCaptureFailures++;
+      if (consecutiveCaptureFailures >= 3) return finish("capture_failed");
+      writeBattleManifest(manifestPath, { status: "observing", frames, frameDir, manifestPath, warnings });
     }
 
     const remaining = deadline - now();

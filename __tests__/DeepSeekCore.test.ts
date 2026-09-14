@@ -12,7 +12,7 @@ import {
   type DeepSeekGenerationInput,
 } from "../src/deepseek-core/DeepSeekCompiler";
 import type { BattleAction } from "../src/deepseek-core/BattleDsl";
-import { getOperatorKnowledge as resolveKnowledge } from "../src/engine/OperatorKnowledge";
+import { getOperatorKnowledge as resolveKnowledge, getOperatorKnowledgeModelInfo } from "../src/engine/OperatorKnowledge";
 import type { StageFacts } from "../src/engine/types";
 import type { MapData, PlayerOperator } from "../src/types";
 
@@ -43,7 +43,7 @@ function mapData(): MapData {
 }
 
 function operators() {
-  return Array.from({ length: 12 }, (_, index) => ({ name: `干员${index + 1}`, skill: 1, skillUsage: 2 }));
+  return Array.from({ length: 12 }, (_, index) => ({ name: `干员${index + 1}`, skill: 1, skillUsage: 0 }));
 }
 
 function candidate(): { stageId: string; operators: ReturnType<typeof operators>; actions: BattleAction[] } {
@@ -53,7 +53,7 @@ function candidate(): { stageId: string; operators: ReturnType<typeof operators>
     actions: [
       { type: "SpeedUp", delay: 0 },
       { type: "Deploy", operatorId: "干员1", x: 1, y: 2, direction: "Right", delay: 0 },
-      { type: "SkillUse", operatorId: "干员1", skillIndex: 1, kills: 10, timeElapsed: 30, delay: 250 },
+      { type: "SkillUse", operatorId: "干员1", skillIndex: 1, kills: 10, timeElapsed: 30000, delay: 250 },
       { type: "Deploy", operatorId: "干员2", x: 2, y: 1, direction: "Right", delay: 500 },
       { type: "Retreat", operatorId: "干员1", costChanges: -1, delay: 0 },
       { type: "Deploy", operatorId: "干员3", x: 3, y: 1, direction: "Left", delay: 500 },
@@ -63,7 +63,7 @@ function candidate(): { stageId: string; operators: ReturnType<typeof operators>
 }
 
 function battleDsl(): string {
-  return `${operators().map(operator => `operator(${operator.name}, ${operator.skill}, ${operator.skillUsage})`).join("\n")}\n\ndeploy(干员1, 1, 2, Right)\nskill(干员1, kills=10, timeElapsed=30, delay=250)\ndeploy(干员2, 2, 1, Right, delay=500)\nretreat(干员1, costChanges=-1)\ndeploy(干员3, 3, 1, Left, delay=500)`;
+  return `${operators().map(operator => `operator(${operator.name}, ${operator.skill}, ${operator.skillUsage})`).join("\n")}\n\ndeploy(干员1, 1, 2, Right)\nskill(干员1, kills=10, timeElapsed=30000, delay=250)\ndeploy(干员2, 2, 1, Right, delay=500)\nretreat(干员1, costChanges=-1)\ndeploy(干员3, 3, 1, Left, delay=500)`;
 }
 
 function environment(selectedSkillType = "MANUAL") {
@@ -134,6 +134,9 @@ describe("DeepSeek core", () => {
     expect(systemPrompt).toContain("battleDsl");
     expect(systemPrompt).toContain("positionEffect");
     expect(systemPrompt).toContain("通关保证");
+    // The final instruction must agree with the compiler's explicit manual-skill gate.
+    expect(systemPrompt).toContain("operator 的 skillUsage=0");
+    expect(systemPrompt).not.toContain("skillUsage=2");
   });
 
   it("rejects missing keys and HTTP failures without including credentials", async () => {
@@ -211,7 +214,7 @@ describe("DeepSeek core", () => {
     };
     const operator = context.roster.find(item => item.name === "干员1")!;
 
-    expect(context.operatorKnowledgeModel).toMatchObject({ generatedCommit: expect.stringMatching(/^[a-f0-9]{40}$/), generatedOperatorCount: 412 });
+    expect(context.operatorKnowledgeModel).toMatchObject({ generatedCommit: expect.stringMatching(/^[a-f0-9]{40}$/), generatedOperatorCount: getOperatorKnowledgeModelInfo().generatedOperatorCount });
     expect(context.operatorKnowledgeModel.vectorAxes).toHaveLength(12);
     expect(resolver).toHaveBeenCalledWith("干员1", 2, input.players.get("干员1"));
     expect(operator.skills[1]).toMatchObject({ index: 2, knowledge: { tags: ["skill-2"], spatial: { range: [[0, 2]], skillRangeBehavior: "extends" } } });
@@ -284,7 +287,10 @@ describe("DeepSeek core", () => {
     expect(result.valid).toBe(true);
     expect(result.script?.actions[0]).toMatchObject({ type: "ResetStopwatch" });
     expect(result.script?.actions[2].location).toEqual([2, 1]);
-    expect(result.script?.actions[3]).toMatchObject({ type: "Skill", kills: 10, time_elapsed: 30 });
+    expect(result.script?.actions[3]).toMatchObject({ type: "Skill", kills: 10, elapsed_time: 30000 });
+    expect(result.script?.opers[0].skill_usage).toBe(0);
+    expect(JSON.parse(result.copilotJson!).actions[3]).toMatchObject({ elapsed_time: 30000 });
+    expect(result.copilotJson).not.toContain("time_elapsed");
     expect(JSON.parse(result.copilotJson!).actions[2].location).toEqual([1, 2]);
     expect(validateScript(result.script!, environment().mapData).valid).toBe(true);
     expect(validateMAAProtocol(result.script!).valid).toBe(true);
@@ -297,6 +303,26 @@ describe("DeepSeek core", () => {
       expect(result.valid).toBe(false);
       expect(result.errors.join("\n")).toContain("NON_MANUAL_SKILL_USE");
     }
+  });
+
+  it("rejects MAA auto activation on an explicitly timed manual skill", () => {
+    for (const skillUsage of [1, 2]) {
+      const automatic = candidate();
+      automatic.operators[0].skillUsage = skillUsage;
+      expect(compileDeepSeekCandidate(automatic, environment()).errors.join("\n")).toContain("must use skillUsage=0");
+    }
+  });
+
+  it("rejects raw timing aliases instead of silently losing a wait condition", () => {
+    const legacy = candidate();
+    legacy.actions[2] = { type: "SkillUse", operatorId: "干员1", time_elapsed: 30 } as unknown as BattleAction;
+    expect(compileDeepSeekCandidate(legacy, environment()).errors.join("\n")).toContain("INVALID_CONDITION_FIELD");
+  });
+
+  it("rejects the unimplemented MAA automatic timing mode", () => {
+    const unsupported = candidate();
+    unsupported.operators[1].skillUsage = 3;
+    expect(compileDeepSeekCandidate(unsupported, environment()).errors.join("\n")).toContain("INVALID_SKILL_USAGE");
   });
 
   it("allows automatic and passive skills to deploy without SkillUse", () => {

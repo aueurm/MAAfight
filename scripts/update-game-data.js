@@ -67,22 +67,25 @@ function collectLevelPaths(levelsRoot, current = levelsRoot, collected = []) {
   return collected.sort((left, right) => left.localeCompare(right));
 }
 
-function buildStageIndex(stageTable, levelPaths) {
+function buildStageIndex(stageTable, levelPaths, commit) {
   if (!stageTable || typeof stageTable !== "object" || !stageTable.stages || typeof stageTable.stages !== "object") {
     throw new Error("stage_table.json does not contain a stages object");
   }
 
   const availablePaths = new Set(levelPaths);
   const byStageId = {};
+  const unavailable = {};
   for (const [key, stage] of Object.entries(stageTable.stages)) {
     const stageId = String(stage?.stageId || key);
     const levelId = String(stage?.levelId || "");
-    if (!stageId || !levelId || !availablePaths.has(levelIdToPath(levelId))) continue;
-    byStageId[stageId] = {
+    if (!stageId || !levelId) continue;
+    const metadata = {
       code: String(stage.code || ""),
       name: String(stage.name || ""),
       levelId,
     };
+    if (availablePaths.has(levelIdToPath(levelId))) byStageId[stageId] = metadata;
+    else unavailable[stageId] = metadata;
   }
 
   const byCode = {};
@@ -92,8 +95,10 @@ function buildStageIndex(stageTable, levelPaths) {
 
   const orderedStages = sortedObject(Object.entries(byStageId));
   return {
+    source: { repository: "Kengxxiao/ArknightsGameData", commit },
     byStageId: orderedStages,
     byCode: sortedObject(Object.entries(byCode)),
+    unavailable: sortedObject(Object.entries(unavailable)),
     count: Object.keys(orderedStages).length,
   };
 }
@@ -105,6 +110,7 @@ function assertFile(filePath, description) {
 }
 
 function validateSnapshot({ levelsRoot, levelPaths, stageIndex, enemyDatabasePath, operatorModelPath, operatorKnowledgeModelPath, commit }) {
+  if (stageIndex.source?.commit !== commit) throw new Error("Stage index commit does not match downloaded source");
   if (levelPaths.length === 0) throw new Error("No level JSON files were found");
   if (stageIndex.count === 0) throw new Error("No stage metadata matched downloaded levels");
   assertFile(enemyDatabasePath, "Enemy database");
@@ -139,9 +145,10 @@ function replaceAll(replacements) {
       const state = { ...replacement, backup: null, installed: false };
       states.push(state);
       if (!fs.existsSync(state.target)) continue;
-      state.backup = `${state.target}.maafight-update-backup-${process.pid}-${index}`;
-      if (fs.existsSync(state.backup)) throw new Error(`Stale update backup exists: ${state.backup}`);
-      fs.renameSync(state.target, state.backup);
+      const backup = `${state.target}.maafight-update-backup-${process.pid}-${index}`;
+      if (fs.existsSync(backup)) throw new Error(`Stale update backup exists: ${backup}`);
+      fs.renameSync(state.target, backup);
+      state.backup = backup;
     }
 
     for (const state of states) {
@@ -162,16 +169,17 @@ function replaceAll(replacements) {
 }
 
 function checkoutSource(sourceRoot, ref) {
+  const git = args => run("git", ["-c", "core.autocrlf=false", ...args]);
   const cloneArgs = ["clone", "--depth", "1", "--filter=blob:none", "--sparse"];
   if (ref === "master") cloneArgs.push("--branch", ref);
   cloneArgs.push(SOURCE_REPOSITORY, sourceRoot);
-  run("git", cloneArgs);
+  git(cloneArgs);
   if (ref !== "master") {
-    run("git", ["-C", sourceRoot, "fetch", "--depth", "1", "--filter=blob:none", "origin", ref]);
-    run("git", ["-C", sourceRoot, "checkout", "--detach", "FETCH_HEAD"]);
+    git(["-C", sourceRoot, "fetch", "--depth", "1", "--filter=blob:none", "origin", ref]);
+    git(["-C", sourceRoot, "checkout", "--detach", "FETCH_HEAD"]);
   }
-  run("git", ["-C", sourceRoot, "sparse-checkout", "set", "--no-cone", ...SOURCE_PATHS]);
-  return run("git", ["-C", sourceRoot, "rev-parse", "HEAD"]);
+  git(["-C", sourceRoot, "sparse-checkout", "set", "--no-cone", ...SOURCE_PATHS]);
+  return git(["-C", sourceRoot, "rev-parse", "HEAD"]);
 }
 
 function main() {
@@ -195,7 +203,7 @@ function main() {
     assertFile(enemyDatabasePath, "Enemy database");
 
     const levelPaths = collectLevelPaths(levelsRoot);
-    const stageIndex = buildStageIndex(JSON.parse(fs.readFileSync(stageTablePath, "utf8")), levelPaths);
+    const stageIndex = buildStageIndex(JSON.parse(fs.readFileSync(stageTablePath, "utf8")), levelPaths, commit);
     const generatedRoot = path.join(temporaryRoot, "generated");
     const operatorModelPath = path.join(generatedRoot, "operatorCombat.v2.json");
     const operatorKnowledgeModelPath = path.join(generatedRoot, "operatorKnowledge.generated.v1.json");
@@ -221,6 +229,7 @@ function main() {
 
     const stagedLevels = path.join(temporaryRoot, "levels");
     fs.renameSync(levelsRoot, stagedLevels);
+    writeJson(path.join(stagedLevels, ".maafight-source.json"), stageIndex.source);
     const operatorCount = validateSnapshot({
       levelsRoot: stagedLevels,
       levelPaths,
@@ -244,6 +253,7 @@ function main() {
       commit: commit.toLowerCase(),
       operatorCount,
       stageCount: stageIndex.count,
+      unavailableStageCount: Object.keys(stageIndex.unavailable).length,
       levelCount: levelPaths.length,
       validation: "passed",
     }));
@@ -261,4 +271,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildStageIndex, collectLevelPaths, levelIdToPath, validateSnapshot };
+module.exports = { buildStageIndex, collectLevelPaths, levelIdToPath, replaceAll, validateSnapshot };

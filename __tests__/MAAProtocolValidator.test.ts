@@ -20,6 +20,14 @@ function makeScript(overrides: Partial<BattleScript> = {}): BattleScript {
 }
 
 describe("validateMAAProtocol", () => {
+  it("rejects legacy time_elapsed and invalid elapsed_time values", () => {
+    const legacy = makeScript({ actions: [{ type: "Skill", name: "test", time_elapsed: 30 } as unknown as BattleScript["actions"][number]] });
+    expect(validateMAAProtocol(legacy).errors.some(issue => issue.code === "UNSUPPORTED_TIME_ELAPSED")).toBe(true);
+    for (const elapsed_time of [-1, 0.5, NaN, Infinity]) {
+      const result = validateMAAProtocol(makeScript({ actions: [{ type: "ResetStopwatch" }, { type: "Skill", elapsed_time }] }));
+      expect(result.errors.some(issue => issue.code === "INVALID_ELAPSED_TIME")).toBe(true);
+    }
+  });
   it("should pass standard copilot actions", () => {
     const result = validateMAAProtocol(makeScript());
 
@@ -47,6 +55,15 @@ describe("validateMAAProtocol", () => {
     expect(result.errors.some(issue => issue.code === "MAA_INVALID_ACTION_TYPE")).toBe(true);
   });
 
+  it("should reject mixed manual and daemon skill control", () => {
+    const result = validateMAAProtocol(makeScript({
+      actions: [{ type: "Skill", name: "test" }, { type: "SkillDaemon" }],
+    }));
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(issue => issue.code === "MIXED_SKILL_CONTROL")).toBe(true);
+  });
+
   it("should fail unknown action types", () => {
     const result = validateMAAProtocol(makeScript({
       actions: [{ type: "BadAction" }],
@@ -65,23 +82,31 @@ describe("validateMAAProtocol", () => {
     expect(result.warnings.some(w => w.code === "REQUIREMENTS_RESERVED")).toBe(true);
   });
 
-  it("should warn when time_elapsed has no ResetStopwatch", () => {
+  it("rejects elapsed_time without ResetStopwatch to prevent an ignored wait", () => {
     const result = validateMAAProtocol(makeScript({
-      actions: [{ type: "Deploy", name: "test", location: [1, 1], direction: "Right", time_elapsed: 10 }],
+      actions: [{ type: "Deploy", name: "test", location: [1, 1], direction: "Right", elapsed_time: 10 }],
     }));
 
-    expect(result.warnings.some(w => w.code === "TIME_ELAPSED_WITHOUT_RESET")).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(w => w.code === "ELAPSED_TIME_WITHOUT_RESET")).toBe(true);
   });
 
-  it("should allow time_elapsed after ResetStopwatch", () => {
+  it("should allow elapsed_time after ResetStopwatch", () => {
     const result = validateMAAProtocol(makeScript({
       actions: [
         { type: "ResetStopwatch" },
-        { type: "Deploy", name: "test", location: [1, 1], direction: "Right", time_elapsed: 10 },
+        { type: "Deploy", name: "test", location: [1, 1], direction: "Right", elapsed_time: 10 },
       ],
     }));
 
-    expect(result.warnings.some(w => w.code === "TIME_ELAPSED_WITHOUT_RESET")).toBe(false);
+    expect(result.errors.some(w => w.code === "ELAPSED_TIME_WITHOUT_RESET")).toBe(false);
+  });
+
+  it("accepts a current Skill timeout and rejects conflicting legacy timeout controls", () => {
+    expect(validateMAAProtocol(makeScript({ actions: [{ type: "Skill", timeout: 0 }] })).valid).toBe(true);
+    expect(validateMAAProtocol(makeScript({ actions: [{ type: "Skill", timeout: -2 }] })).valid).toBe(false);
+    const result = validateMAAProtocol(makeScript({ actions: [{ type: "Skill", timeout: 0, skip_if_not_ready: true }] }));
+    expect(result.errors.some(issue => issue.code === "CONFLICTING_SKILL_TIMEOUT")).toBe(true);
   });
 
   it("should warn when MoveCamera has no delay", () => {

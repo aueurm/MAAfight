@@ -1,0 +1,1438 @@
+{
+  "stage": "12-12",
+  "version": "v3c",
+  "mode": "offline-only; existing logs and stored frames; no game control; no new screenshots",
+  "scriptSha256": "9aaee9e4d019d172393de081d9e9c454ac5e88ebedad29973e14f04c48c6594b",
+  "recordedScriptSha256": "9aaee9e4d019d172393de081d9e9c454ac5e88ebedad29973e14f04c48c6594b",
+  "hashMatches": true,
+  "outcome": {
+    "status": "settled",
+    "outcome": "partial_clear",
+    "stars": 2,
+    "source": "stored observer manifest; final kills not inferred from stars"
+  },
+  "firstVisibleHpLoss": {
+    "lastParsedFullHp": {
+      "file": "1789392193742.bmp",
+      "capturedAt": 1789392193742,
+      "time": "2026-09-14 21:23:13.742 +08:00",
+      "kills": 0,
+      "killsTotal": 67,
+      "hp": 3,
+      "evidenceState": "parsed-unverified"
+    },
+    "firstParsedLowerHp": {
+      "file": "1789392206235.bmp",
+      "capturedAt": 1789392206235,
+      "time": "2026-09-14 21:23:26.235 +08:00",
+      "kills": 8,
+      "killsTotal": 67,
+      "hp": 2,
+      "evidenceState": "parsed-unverified"
+    },
+    "intervalConvention": "(lastParsedFullHp, firstParsedLowerHp]",
+    "helperFinishedAt": "2026-09-14T13:25:06.453Z",
+    "secondsBeforeHelperFinish": 100.218,
+    "evidence": "Windows OCR preprocessing only; confidence unavailable; four repeated glyphs are copies of one observation, not independent votes"
+  },
+  "queue": {
+    "plannedActions": 14,
+    "observedActionNotifications": 14,
+    "allNotificationsMatchInOrder": true,
+    "deploymentHelperCalls": 9,
+    "actions": [
+      {
+        "index": 0,
+        "planned": {
+          "type": "SpeedUp"
+        },
+        "notification": {
+          "line": 2195,
+          "time": "2026-09-14 21:22:47.840",
+          "action": "SwitchSpeed",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": -1,
+          "target": ""
+        },
+        "helperCalls": [],
+        "match": true
+      },
+      {
+        "index": 1,
+        "planned": {
+          "type": "ResetStopwatch"
+        },
+        "notification": {
+          "line": 2211,
+          "time": "2026-09-14 21:22:48.195",
+          "action": "ResetStopwatch",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": -1,
+          "target": ""
+        },
+        "helperCalls": [],
+        "match": true
+      },
+      {
+        "index": 2,
+        "planned": {
+          "type": "Deploy",
+          "name": "寻澜",
+          "location": [
+            7,
+            3
+          ],
+          "direction": "Down",
+          "pre_delay": 0,
+          "costs": 10
+        },
+        "notification": {
+          "line": 2218,
+          "time": "2026-09-14 21:22:48.450",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 255,
+          "target": "寻澜"
+        },
+        "helperCalls": [
+          {
+            "line": 2273,
+            "time": "2026-09-14 21:22:49.695",
+            "phase": "enter"
+          },
+          {
+            "line": 2284,
+            "time": "2026-09-14 21:22:50.945",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 3,
+        "planned": {
+          "type": "Deploy",
+          "name": "归溟幽灵鲨",
+          "location": [
+            9,
+            3
+          ],
+          "direction": "Left",
+          "pre_delay": 0,
+          "costs": 16
+        },
+        "notification": {
+          "line": 2291,
+          "time": "2026-09-14 21:22:51.241",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 3045,
+          "target": "归溟幽灵鲨"
+        },
+        "helperCalls": [
+          {
+            "line": 2450,
+            "time": "2026-09-14 21:22:57.067",
+            "phase": "enter"
+          },
+          {
+            "line": 2461,
+            "time": "2026-09-14 21:22:58.335",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 4,
+        "planned": {
+          "type": "Deploy",
+          "name": "银灰",
+          "location": [
+            8,
+            3
+          ],
+          "direction": "Right",
+          "costs": 20
+        },
+        "notification": {
+          "line": 2468,
+          "time": "2026-09-14 21:22:58.708",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 10512,
+          "target": "银灰"
+        },
+        "helperCalls": [
+          {
+            "line": 2786,
+            "time": "2026-09-14 21:23:08.396",
+            "phase": "enter"
+          },
+          {
+            "line": 2798,
+            "time": "2026-09-14 21:23:09.601",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 5,
+        "planned": {
+          "type": "Skill",
+          "name": "银灰",
+          "elapsed_time": 30000
+        },
+        "notification": {
+          "line": 2805,
+          "time": "2026-09-14 21:23:09.881",
+          "action": "UseSkill",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 21686,
+          "target": "银灰"
+        },
+        "helperCalls": [
+          {
+            "line": 2989,
+            "time": "2026-09-14 21:23:18.363",
+            "phase": "enter"
+          },
+          {
+            "line": 3006,
+            "time": "2026-09-14 21:23:19.242",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 6,
+        "planned": {
+          "type": "Deploy",
+          "name": "凯尔希",
+          "location": [
+            9,
+            4
+          ],
+          "direction": "Left",
+          "costs": 20
+        },
+        "notification": {
+          "line": 3014,
+          "time": "2026-09-14 21:23:19.581",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 31385,
+          "target": "凯尔希"
+        },
+        "helperCalls": [
+          {
+            "line": 3056,
+            "time": "2026-09-14 21:23:20.275",
+            "phase": "enter"
+          },
+          {
+            "line": 3067,
+            "time": "2026-09-14 21:23:21.480",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 7,
+        "planned": {
+          "type": "Deploy",
+          "name": "Mon3tr",
+          "location": [
+            8,
+            2
+          ],
+          "direction": "Right",
+          "costs": 18
+        },
+        "notification": {
+          "line": 3074,
+          "time": "2026-09-14 21:23:21.801",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 33606,
+          "target": "Mon3tr"
+        },
+        "helperCalls": [
+          {
+            "line": 3402,
+            "time": "2026-09-14 21:23:30.442",
+            "phase": "enter"
+          },
+          {
+            "line": 3414,
+            "time": "2026-09-14 21:23:31.646",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 8,
+        "planned": {
+          "type": "Deploy",
+          "name": "乌尔比安",
+          "location": [
+            5,
+            3
+          ],
+          "direction": "Left",
+          "costs": 24
+        },
+        "notification": {
+          "line": 3421,
+          "time": "2026-09-14 21:23:31.934",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 43739,
+          "target": "乌尔比安"
+        },
+        "helperCalls": [
+          {
+            "line": 3939,
+            "time": "2026-09-14 21:23:43.740",
+            "phase": "enter"
+          },
+          {
+            "line": 3950,
+            "time": "2026-09-14 21:23:44.944",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 9,
+        "planned": {
+          "type": "Deploy",
+          "name": "佩佩",
+          "location": [
+            7,
+            2
+          ],
+          "direction": "Down",
+          "costs": 20
+        },
+        "notification": {
+          "line": 3957,
+          "time": "2026-09-14 21:23:45.305",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 57109,
+          "target": "佩佩"
+        },
+        "helperCalls": [
+          {
+            "line": 4421,
+            "time": "2026-09-14 21:23:54.878",
+            "phase": "enter"
+          },
+          {
+            "line": 4432,
+            "time": "2026-09-14 21:23:56.083",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 10,
+        "planned": {
+          "type": "Deploy",
+          "name": "斥罪",
+          "location": [
+            7,
+            1
+          ],
+          "direction": "Left",
+          "costs": 36
+        },
+        "notification": {
+          "line": 4439,
+          "time": "2026-09-14 21:23:56.334",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 68138,
+          "target": "斥罪"
+        },
+        "helperCalls": [
+          {
+            "line": 6580,
+            "time": "2026-09-14 21:24:33.860",
+            "phase": "enter"
+          },
+          {
+            "line": 6591,
+            "time": "2026-09-14 21:24:35.064",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 11,
+        "planned": {
+          "type": "Retreat",
+          "name": "寻澜",
+          "costs": 21
+        },
+        "notification": {
+          "line": 6598,
+          "time": "2026-09-14 21:24:35.331",
+          "action": "Retreat",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 107136,
+          "target": "寻澜"
+        },
+        "helperCalls": [
+          {
+            "line": 7278,
+            "time": "2026-09-14 21:24:45.967",
+            "phase": "enter"
+          },
+          {
+            "line": 7299,
+            "time": "2026-09-14 21:24:46.922",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 12,
+        "planned": {
+          "type": "Deploy",
+          "name": "赤刃明霄陈",
+          "location": [
+            7,
+            3
+          ],
+          "direction": "Down",
+          "costs": 21
+        },
+        "notification": {
+          "line": 7307,
+          "time": "2026-09-14 21:24:47.235",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 119040,
+          "target": "赤刃明霄陈"
+        },
+        "helperCalls": [
+          {
+            "line": 7339,
+            "time": "2026-09-14 21:24:47.543",
+            "phase": "enter"
+          },
+          {
+            "line": 7350,
+            "time": "2026-09-14 21:24:48.747",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 13,
+        "planned": {
+          "type": "Output",
+          "elapsed_time": 136500,
+          "doc": "保持自动技能至预计路线结束；实际结算另行核验"
+        },
+        "notification": {
+          "line": 7357,
+          "time": "2026-09-14 21:24:49.057",
+          "action": "Output",
+          "doc": "保持自动技能至预计路线结束；实际结算另行核验",
+          "doc_color": "",
+          "elapsed_time": 120862,
+          "target": ""
+        },
+        "helperCalls": [],
+        "match": true
+      }
+    ],
+    "automaticSkillAttempts": [
+      {
+        "operator": "归溟幽灵鲨",
+        "line": 2605,
+        "time": "2026-09-14 21:23:03.388",
+        "helperEnter": {
+          "line": 2606,
+          "time": "2026-09-14 21:23:03.388"
+        },
+        "helperLeave": {
+          "line": 2622,
+          "time": "2026-09-14 21:23:04.214"
+        }
+      },
+      {
+        "operator": "Mon3tr",
+        "line": 3514,
+        "time": "2026-09-14 21:23:33.939",
+        "helperEnter": {
+          "line": 3515,
+          "time": "2026-09-14 21:23:33.939"
+        },
+        "helperLeave": {
+          "line": 3531,
+          "time": "2026-09-14 21:23:34.792"
+        }
+      },
+      {
+        "operator": "归溟幽灵鲨",
+        "line": 4055,
+        "time": "2026-09-14 21:23:47.161",
+        "helperEnter": {
+          "line": 4056,
+          "time": "2026-09-14 21:23:47.161"
+        },
+        "helperLeave": {
+          "line": 4072,
+          "time": "2026-09-14 21:23:48.021"
+        }
+      },
+      {
+        "operator": "佩佩",
+        "line": 4778,
+        "time": "2026-09-14 21:24:02.090",
+        "helperEnter": {
+          "line": 4779,
+          "time": "2026-09-14 21:24:02.090"
+        },
+        "helperLeave": {
+          "line": 4795,
+          "time": "2026-09-14 21:24:02.955"
+        }
+      },
+      {
+        "operator": "佩佩",
+        "line": 6082,
+        "time": "2026-09-14 21:24:24.666",
+        "helperEnter": {
+          "line": 6083,
+          "time": "2026-09-14 21:24:24.666"
+        },
+        "helperLeave": {
+          "line": 6099,
+          "time": "2026-09-14 21:24:25.519"
+        }
+      },
+      {
+        "operator": "归溟幽灵鲨",
+        "line": 6330,
+        "time": "2026-09-14 21:24:29.066",
+        "helperEnter": {
+          "line": 6331,
+          "time": "2026-09-14 21:24:29.066"
+        },
+        "helperLeave": {
+          "line": 6347,
+          "time": "2026-09-14 21:24:29.944"
+        }
+      },
+      {
+        "operator": "Mon3tr",
+        "line": 6736,
+        "time": "2026-09-14 21:24:37.289",
+        "helperEnter": {
+          "line": 6737,
+          "time": "2026-09-14 21:24:37.289"
+        },
+        "helperLeave": {
+          "line": 6753,
+          "time": "2026-09-14 21:24:38.144"
+        }
+      },
+      {
+        "operator": "佩佩",
+        "line": 7369,
+        "time": "2026-09-14 21:24:49.336",
+        "helperEnter": {
+          "line": 7370,
+          "time": "2026-09-14 21:24:49.336"
+        },
+        "helperLeave": {
+          "line": 7386,
+          "time": "2026-09-14 21:24:50.178"
+        }
+      },
+      {
+        "operator": "赤刃明霄陈",
+        "line": 7502,
+        "time": "2026-09-14 21:24:51.853",
+        "helperEnter": {
+          "line": 7503,
+          "time": "2026-09-14 21:24:51.853"
+        },
+        "helperLeave": {
+          "line": 7519,
+          "time": "2026-09-14 21:24:52.688"
+        }
+      },
+      {
+        "operator": "赤刃明霄陈",
+        "line": 7570,
+        "time": "2026-09-14 21:24:53.488",
+        "helperEnter": {
+          "line": 7571,
+          "time": "2026-09-14 21:24:53.488"
+        },
+        "helperLeave": {
+          "line": 7587,
+          "time": "2026-09-14 21:24:54.350"
+        }
+      },
+      {
+        "operator": "赤刃明霄陈",
+        "line": 7640,
+        "time": "2026-09-14 21:24:55.251",
+        "helperEnter": {
+          "line": 7641,
+          "time": "2026-09-14 21:24:55.251"
+        },
+        "helperLeave": {
+          "line": 7657,
+          "time": "2026-09-14 21:24:56.112"
+        }
+      },
+      {
+        "operator": "赤刃明霄陈",
+        "line": 7706,
+        "time": "2026-09-14 21:24:56.919",
+        "helperEnter": {
+          "line": 7707,
+          "time": "2026-09-14 21:24:56.919"
+        },
+        "helperLeave": {
+          "line": 7723,
+          "time": "2026-09-14 21:24:57.769"
+        }
+      },
+      {
+        "operator": "赤刃明霄陈",
+        "line": 7775,
+        "time": "2026-09-14 21:24:58.606",
+        "helperEnter": {
+          "line": 7776,
+          "time": "2026-09-14 21:24:58.606"
+        },
+        "helperLeave": {
+          "line": 7792,
+          "time": "2026-09-14 21:24:59.472"
+        }
+      },
+      {
+        "operator": "赤刃明霄陈",
+        "line": 7843,
+        "time": "2026-09-14 21:25:00.294",
+        "helperEnter": {
+          "line": 7844,
+          "time": "2026-09-14 21:25:00.294"
+        },
+        "helperLeave": {
+          "line": 7860,
+          "time": "2026-09-14 21:25:01.130"
+        }
+      },
+      {
+        "operator": "赤刃明霄陈",
+        "line": 7915,
+        "time": "2026-09-14 21:25:01.944",
+        "helperEnter": {
+          "line": 7916,
+          "time": "2026-09-14 21:25:01.944"
+        },
+        "helperLeave": {
+          "line": 7932,
+          "time": "2026-09-14 21:25:02.795"
+        }
+      }
+    ],
+    "copilotCompleted": [
+      {
+        "line": 8071,
+        "time": "2026-09-14 21:25:05.607"
+      }
+    ],
+    "note": "Notification starts an action before waits/input. Helper entry/return demonstrates attempted input, not deployment success, survival, skill activation or settlement. Nested identical helper entries are deduplicated."
+  },
+  "postHelper": {
+    "lastReadableHud": {
+      "file": "1789392307289.bmp",
+      "capturedAt": 1789392307289,
+      "time": "2026-09-14 21:25:07.289 +08:00",
+      "kills": 64,
+      "killsTotal": 67,
+      "hp": 2,
+      "evidenceState": "parsed-unverified"
+    },
+    "secondsAfterHelperFinish": 0.836,
+    "settlementFrame": {
+      "file": "1789392319695.bmp",
+      "capturedAt": 1789392319695
+    },
+    "observation": "Stored battle HUD is still readable after helper exit. The bounded Output did not itself verify final settlement. This tail gap cannot explain HP loss already observed 100.218 seconds before helper exit."
+  },
+  "primaryHypothesis": {
+    "name": "归溟幽灵鲨 S2 自行转替身造成末端防线零阻挡空窗",
+    "status": "plausible and falsifiable; first leak not independently attributed",
+    "plannedDefenseFront": [
+      {
+        "routeIds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32
+        ],
+        "location": [
+          3,
+          9
+        ],
+        "operator": "归溟幽灵鲨",
+        "firstArrival": 35.75,
+        "readyTime": 24
+      }
+    ],
+    "automaticAttempt": {
+      "operator": "归溟幽灵鲨",
+      "line": 2605,
+      "time": "2026-09-14 21:23:03.388",
+      "helperEnter": {
+        "line": 2606,
+        "time": "2026-09-14 21:23:03.388"
+      },
+      "helperLeave": {
+        "line": 2622,
+        "time": "2026-09-14 21:23:04.214"
+      }
+    },
+    "clickSkillTemplate": {
+      "line": 2616,
+      "time": "2026-09-14 21:23:03.912",
+      "template": "BattleSkillReadyOnClick-TopView.png",
+      "score": 0.9867
+    },
+    "rawMechanism": {
+      "characterSource": "cache/game-data-audit/character_table.json",
+      "skillSource": "cache/game-data-audit/skill_table.json",
+      "professionDescription": "受到致命伤时不撤退，切换成<替身>作战（替身阻挡数为0），持续20秒后自身再次替换<替身>",
+      "skillId": "skchr_ghost2_2",
+      "description": "攻击力<@ba.vup>+{atk:0%}</>，攻击速度<@ba.vup>+{attack_speed}</>，技能持续期间内干员的生命值不会低于<@ba.vup>1</>\\n<@ba.rem>技能结束后视为被击倒</>",
+      "durationSecondsByRank": [
+        13,
+        13,
+        13,
+        15,
+        15,
+        15,
+        17,
+        18,
+        19,
+        20
+      ],
+      "rank10SpData": {
+        "spType": "INCREASE_WITH_TIME",
+        "levelUpCost": null,
+        "maxChargeTime": 1,
+        "spCost": 35,
+        "initSp": 25,
+        "increment": 1
+      },
+      "rank10DurationSeconds": 20,
+      "substituteDurationSecondsFromTrait": 20,
+      "substituteBlockFromTrait": 0
+    },
+    "timing": "If the 21:23:03.912 skill click activated S2, and battle ran continuously at 2x with rank 10, S2 would end near 21:23:13.912, followed by an approximately 10-wall-second substitute interval. This estimate overlaps the observed first HP-loss interval; pauses, skill rank, activation delay and module effects were not independently verified.",
+    "supported": [
+      "MAA explicitly names 归溟幽灵鲨 as ready immediately before the first automatic use_skill; it is not inferred from the current queued Deploy target.",
+      "Raw S2 description states that ending the skill counts as being defeated; dollkeeper trait states substitute block is zero.",
+      "Candidate defensePlan assigns 归溟幽灵鲨 at internal [3,9] as the single planned defense front."
+    ],
+    "unconfirmed": [
+      "Whether the skill actually activated and exactly when it ended.",
+      "Whether the stored frames show the substitute at the first loss and whether a particular enemy passed that tile.",
+      "Whether all deployments succeeded and all relevant blockers remained present.",
+      "Actual skill rank, module, clock speed/pauses and first escaping enemy identity."
+    ],
+    "falsification": [
+      "A first escaping enemy that never traverses this defense tile, or an independent observation of normal blocking form throughout its passage, would weaken this explanation.",
+      "A controlled rerun changing only this S2 auto-activation policy can test the predicted early leak, but altered damage/survival remain possible mediators.",
+      "Replacing the sole defense with a stable blocker is a broader safety experiment, not a single-factor proof of S2 causation."
+    ]
+  },
+  "previousRun": {
+    "version": "v3",
+    "dir": ".maafight\\experiments\\root\\hard-20260914\\12-12-generator-v3-run",
+    "scriptSha256": "3a6383aa0721ef8901a04bfa9b4600b26f633c6e399d2e3a3a36f6d2fd2391c5",
+    "recordedScriptSha256": "3a6383aa0721ef8901a04bfa9b4600b26f633c6e399d2e3a3a36f6d2fd2391c5",
+    "hashMatches": true,
+    "outcome": {
+      "status": "settled",
+      "outcome": "clear",
+      "stars": 3
+    },
+    "helperFinishedAt": "2026-09-14T12:51:17.715Z",
+    "firstAction": {
+      "line": 2176,
+      "time": "2026-09-14 20:49:12.960",
+      "action": "SwitchSpeed",
+      "doc": "",
+      "doc_color": "",
+      "elapsed_time": -1,
+      "target": ""
+    },
+    "actions": [
+      {
+        "index": 0,
+        "planned": {
+          "type": "SpeedUp"
+        },
+        "notification": {
+          "line": 2176,
+          "time": "2026-09-14 20:49:12.960",
+          "action": "SwitchSpeed",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": -1,
+          "target": ""
+        },
+        "helperCalls": [],
+        "match": true
+      },
+      {
+        "index": 1,
+        "planned": {
+          "type": "ResetStopwatch"
+        },
+        "notification": {
+          "line": 2192,
+          "time": "2026-09-14 20:49:13.316",
+          "action": "ResetStopwatch",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": -1,
+          "target": ""
+        },
+        "helperCalls": [],
+        "match": true
+      },
+      {
+        "index": 2,
+        "planned": {
+          "type": "Deploy",
+          "name": "可露希尔",
+          "location": [
+            9,
+            4
+          ],
+          "direction": "Left",
+          "pre_delay": 0,
+          "costs": 15
+        },
+        "notification": {
+          "line": 2199,
+          "time": "2026-09-14 20:49:13.652",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 336,
+          "target": "可露希尔"
+        },
+        "helperCalls": [
+          {
+            "line": 2305,
+            "time": "2026-09-14 20:49:17.797",
+            "phase": "enter"
+          },
+          {
+            "line": 2316,
+            "time": "2026-09-14 20:49:19.027",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 3,
+        "planned": {
+          "type": "Deploy",
+          "name": "歌蕾蒂娅",
+          "location": [
+            9,
+            3
+          ],
+          "direction": "Left",
+          "pre_delay": 0,
+          "costs": 16
+        },
+        "notification": {
+          "line": 2324,
+          "time": "2026-09-14 20:49:19.259",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 5943,
+          "target": "歌蕾蒂娅"
+        },
+        "helperCalls": [
+          {
+            "line": 2617,
+            "time": "2026-09-14 20:49:28.722",
+            "phase": "enter"
+          },
+          {
+            "line": 2628,
+            "time": "2026-09-14 20:49:29.952",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 4,
+        "planned": {
+          "type": "Deploy",
+          "name": "银灰",
+          "location": [
+            7,
+            3
+          ],
+          "direction": "Right",
+          "costs": 20
+        },
+        "notification": {
+          "line": 2636,
+          "time": "2026-09-14 20:49:30.189",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 16874,
+          "target": "银灰"
+        },
+        "helperCalls": [
+          {
+            "line": 2792,
+            "time": "2026-09-14 20:49:33.975",
+            "phase": "enter"
+          },
+          {
+            "line": 2803,
+            "time": "2026-09-14 20:49:35.178",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 5,
+        "planned": {
+          "type": "Skill",
+          "name": "银灰",
+          "elapsed_time": 37500
+        },
+        "notification": {
+          "line": 2810,
+          "time": "2026-09-14 20:49:35.401",
+          "action": "UseSkill",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 22085,
+          "target": "银灰"
+        },
+        "helperCalls": [
+          {
+            "line": 3210,
+            "time": "2026-09-14 20:49:50.947",
+            "phase": "enter"
+          },
+          {
+            "line": 3227,
+            "time": "2026-09-14 20:49:51.782",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 6,
+        "planned": {
+          "type": "Deploy",
+          "name": "Mon3tr",
+          "location": [
+            8,
+            4
+          ],
+          "direction": "Down",
+          "costs": 18
+        },
+        "notification": {
+          "line": 3235,
+          "time": "2026-09-14 20:49:52.023",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 38706,
+          "target": "Mon3tr"
+        },
+        "helperCalls": [
+          {
+            "line": 3347,
+            "time": "2026-09-14 20:49:54.801",
+            "phase": "enter"
+          },
+          {
+            "line": 3359,
+            "time": "2026-09-14 20:49:56.005",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 7,
+        "planned": {
+          "type": "Deploy",
+          "name": "黍",
+          "location": [
+            8,
+            3
+          ],
+          "direction": "Down",
+          "costs": 22
+        },
+        "notification": {
+          "line": 3366,
+          "time": "2026-09-14 20:49:56.247",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 42930,
+          "target": "黍"
+        },
+        "helperCalls": [
+          {
+            "line": 3632,
+            "time": "2026-09-14 20:50:02.337",
+            "phase": "enter"
+          },
+          {
+            "line": 3643,
+            "time": "2026-09-14 20:50:03.542",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 8,
+        "planned": {
+          "type": "Deploy",
+          "name": "乌尔比安",
+          "location": [
+            7,
+            2
+          ],
+          "direction": "Down",
+          "costs": 24
+        },
+        "notification": {
+          "line": 3650,
+          "time": "2026-09-14 20:50:03.785",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 50469,
+          "target": "乌尔比安"
+        },
+        "helperCalls": [
+          {
+            "line": 3990,
+            "time": "2026-09-14 20:50:09.987",
+            "phase": "enter"
+          },
+          {
+            "line": 4001,
+            "time": "2026-09-14 20:50:11.191",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 9,
+        "planned": {
+          "type": "Deploy",
+          "name": "斥罪",
+          "location": [
+            5,
+            3
+          ],
+          "direction": "Left",
+          "costs": 36
+        },
+        "notification": {
+          "line": 4008,
+          "time": "2026-09-14 20:50:11.423",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 58106,
+          "target": "斥罪"
+        },
+        "helperCalls": [
+          {
+            "line": 8672,
+            "time": "2026-09-14 20:50:51.468",
+            "phase": "enter"
+          },
+          {
+            "line": 8683,
+            "time": "2026-09-14 20:50:52.674",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 10,
+        "planned": {
+          "type": "Deploy",
+          "name": "佩佩",
+          "location": [
+            7,
+            4
+          ],
+          "direction": "Left",
+          "costs": 20
+        },
+        "notification": {
+          "line": 8690,
+          "time": "2026-09-14 20:50:52.893",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 99577,
+          "target": "佩佩"
+        },
+        "helperCalls": [
+          {
+            "line": 9569,
+            "time": "2026-09-14 20:51:06.643",
+            "phase": "enter"
+          },
+          {
+            "line": 9580,
+            "time": "2026-09-14 20:51:07.849",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 11,
+        "planned": {
+          "type": "Retreat",
+          "name": "可露希尔",
+          "costs": 21
+        },
+        "notification": {
+          "line": 9587,
+          "time": "2026-09-14 20:51:08.088",
+          "action": "Retreat",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 114772,
+          "target": "可露希尔"
+        },
+        "helperCalls": [
+          {
+            "line": 9964,
+            "time": "2026-09-14 20:51:13.509",
+            "phase": "enter"
+          },
+          {
+            "line": 9985,
+            "time": "2026-09-14 20:51:14.463",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      },
+      {
+        "index": 12,
+        "planned": {
+          "type": "Deploy",
+          "name": "赤刃明霄陈",
+          "location": [
+            7,
+            5
+          ],
+          "direction": "Left",
+          "costs": 21
+        },
+        "notification": {
+          "line": 9993,
+          "time": "2026-09-14 20:51:14.722",
+          "action": "Deploy",
+          "doc": "",
+          "doc_color": "",
+          "elapsed_time": 121406,
+          "target": "赤刃明霄陈"
+        },
+        "helperCalls": [
+          {
+            "line": 10023,
+            "time": "2026-09-14 20:51:15.029",
+            "phase": "enter"
+          },
+          {
+            "line": 10034,
+            "time": "2026-09-14 20:51:16.234",
+            "phase": "leave"
+          }
+        ],
+        "match": true
+      }
+    ],
+    "opers": [
+      {
+        "name": "可露希尔",
+        "skill": 3,
+        "skill_usage": 1
+      },
+      {
+        "name": "银灰",
+        "skill": 3,
+        "skill_usage": 0
+      },
+      {
+        "name": "黍",
+        "skill": 1,
+        "skill_usage": 1
+      },
+      {
+        "name": "乌尔比安",
+        "skill": 2,
+        "skill_usage": 1
+      },
+      {
+        "name": "斥罪",
+        "skill": 1,
+        "skill_usage": 1
+      },
+      {
+        "name": "佩佩",
+        "skill": 2,
+        "skill_usage": 1
+      },
+      {
+        "name": "Mon3tr",
+        "skill": 3,
+        "skill_usage": 1
+      },
+      {
+        "name": "赤刃明霄陈",
+        "skill": 2,
+        "skill_usage": 1
+      },
+      {
+        "name": "斩业星熊",
+        "skill": 3,
+        "skill_usage": 1
+      },
+      {
+        "name": "逻各斯",
+        "skill": 1,
+        "skill_usage": 1
+      },
+      {
+        "name": "新约能天使",
+        "skill": 2,
+        "skill_usage": 1
+      },
+      {
+        "name": "歌蕾蒂娅",
+        "skill": 1,
+        "skill_usage": 1
+      }
+    ],
+    "hasTailOutput": false,
+    "hasSkillDaemon": false,
+    "comparisonLimits": "The v3 three-star and v3c two-star observations differ in multiple operators, skills, deployment tiles/directions/order, explicit SilverAsh timing, and tail Output. They are not a one-factor experiment and do not identify a single regression cause.",
+    "allNotificationsMatchInOrder": true
+  },
+  "notEstablished": [
+    "Minimum-block requirement or enemy displacement caused this first HP loss.",
+    "Helper ending or tail Output caused the first HP loss.",
+    "The final kills count, enemy identity, exact disappearance time or all deployment success can be recovered from stars or queued action notifications."
+  ],
+  "frames": [
+    {
+      "file": "1789392168536.bmp",
+      "capturedAt": 1789392168536,
+      "time": "2026-09-14 21:22:48.536 +08:00",
+      "kills": 0,
+      "killsTotal": 67,
+      "hp": 3,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392181137.bmp",
+      "capturedAt": 1789392181137,
+      "time": "2026-09-14 21:23:01.137 +08:00",
+      "kills": 0,
+      "killsTotal": 67,
+      "hp": 3,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392193742.bmp",
+      "capturedAt": 1789392193742,
+      "time": "2026-09-14 21:23:13.742 +08:00",
+      "kills": 0,
+      "killsTotal": 67,
+      "hp": 3,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392206235.bmp",
+      "capturedAt": 1789392206235,
+      "time": "2026-09-14 21:23:26.235 +08:00",
+      "kills": 8,
+      "killsTotal": 67,
+      "hp": 2,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392219039.bmp",
+      "capturedAt": 1789392219039,
+      "time": "2026-09-14 21:23:39.039 +08:00",
+      "kills": 8,
+      "killsTotal": 67,
+      "hp": 2,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392231780.bmp",
+      "capturedAt": 1789392231780,
+      "time": "2026-09-14 21:23:51.780 +08:00",
+      "kills": 18,
+      "killsTotal": 67,
+      "hp": 2,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392244409.bmp",
+      "capturedAt": 1789392244409,
+      "time": "2026-09-14 21:24:04.409 +08:00",
+      "kills": 26,
+      "killsTotal": 67,
+      "hp": 2,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392256965.bmp",
+      "capturedAt": 1789392256965,
+      "time": "2026-09-14 21:24:16.965 +08:00",
+      "kills": 28,
+      "killsTotal": 67,
+      "hp": 2,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392269549.bmp",
+      "capturedAt": 1789392269549,
+      "time": "2026-09-14 21:24:29.549 +08:00",
+      "kills": 41,
+      "killsTotal": 67,
+      "hp": 2,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392282029.bmp",
+      "capturedAt": 1789392282029,
+      "time": "2026-09-14 21:24:42.029 +08:00",
+      "kills": 48,
+      "killsTotal": 67,
+      "hp": 2,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392294673.bmp",
+      "capturedAt": 1789392294673,
+      "time": "2026-09-14 21:24:54.673 +08:00",
+      "kills": 56,
+      "killsTotal": 67,
+      "hp": 2,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392307289.bmp",
+      "capturedAt": 1789392307289,
+      "time": "2026-09-14 21:25:07.289 +08:00",
+      "kills": 64,
+      "killsTotal": 67,
+      "hp": 2,
+      "evidenceState": "parsed-unverified"
+    },
+    {
+      "file": "1789392319695.bmp",
+      "capturedAt": 1789392319695,
+      "time": "2026-09-14 21:25:19.695 +08:00",
+      "kills": null,
+      "killsTotal": null,
+      "hp": null,
+      "evidenceState": "unknown"
+    }
+  ]
+}

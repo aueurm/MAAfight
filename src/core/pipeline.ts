@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { PRTSMapLoader } from "../loader/PRTSMapLoader";
+import { DEFAULT_LEVEL_DATA_URL, PRTSMapLoader } from "../loader/PRTSMapLoader";
 import { PRTSMapAdapter } from "../adapter/PRTSMapAdapter";
 import { resolveStage, searchStages } from "../loader/levelIndex";
 import { validateScript } from "../copilot/ScriptValidator";
@@ -115,10 +115,11 @@ export interface StageSuggestion {
 }
 
 export const DEFAULT_CACHE_DIR = getRuntimePaths().cacheLevelsDir;
-export const DEFAULT_DATA_URL = process.env.MAAFIGHT_DATA_URL || "https://map.ark-nights.com";
+export const DEFAULT_DATA_URL = process.env.MAAFIGHT_DATA_URL || DEFAULT_LEVEL_DATA_URL;
 export const DEFAULT_OUTPUT_DIR = getRuntimePaths().outputDir;
 
 export type GenerationCore = "rule-core" | "deepseek-core";
+const RULE_ENGINE_VERSION = "v2-defense-skill-window-v3";
 
 function coreMode(value: unknown): GenerationCore {
   const mode = value || "rule-core";
@@ -251,10 +252,9 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
   const operatorBoxHash = hashOperatorBox(parsedOperators.playerOperators);
   const stageContentHash = computeStageContentHash(mapData);
   const combatModel = getCombatModelInfo();
+  const revision = { engineVersion: RULE_ENGINE_VERSION, stageContentHash, gameDataCommit: combatModel.commit };
   const successful = requestedCore === "rule-core" && !input.newCandidate ? feedbackStore.successfulGeneration(stageId, operatorBoxHash, {
-    engineVersion: "v2-skill-v1",
-    stageContentHash,
-    gameDataCommit: combatModel.commit,
+    ...revision,
   }) : undefined;
 
   let script: BattleScript;
@@ -265,7 +265,7 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
   let candidateScore: number;
   let scoreBreakdown: Record<string, number>;
   let reusedFromGenerationId: string | undefined;
-  if (requestedCore === "rule-core" && successful?.engineVersion === "v2-skill-v1") {
+  if (requestedCore === "rule-core" && successful?.engineVersion === RULE_ENGINE_VERSION) {
     script = JSON.parse(JSON.stringify(successful.script)) as BattleScript;
     modelVersion = successful.modelVersion;
     combatDataVersion = successful.combatDataVersion;
@@ -279,8 +279,9 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     const result = generateCopilotScript(stageName, mapData, {
       playerOperators: parsedOperators.playerOperators,
       excludedHashes: feedbackStore.excludedHashes(stageId, operatorBoxHash, stageContentHash),
+      searchBias: feedbackStore.searchBias(stageId, operatorBoxHash, revision),
       feedbackAdjustment: (_script, _hash, breakdown) => feedbackStore.feedbackAdjustment(
-        stageId, operatorBoxHash, { ...breakdown }, stageContentHash
+        stageId, operatorBoxHash, { ...breakdown }, stageContentHash, revision
       ),
     });
     script = result.script;
@@ -351,7 +352,7 @@ export async function generateStage(input: GenerateStageInput, options: Pipeline
     stageId,
     stageName,
     operatorBoxHash,
-    engineVersion: requestedCore === "rule-core" ? "v2-skill-v1" : DEEPSEEK_MODEL,
+    engineVersion: requestedCore === "rule-core" ? RULE_ENGINE_VERSION : DEEPSEEK_MODEL,
     modelVersion,
     combatDataVersion,
     candidateScore,

@@ -18,6 +18,7 @@ export interface PRTSOptions {
   initialCost: number;
   maxCost: number;
   costIncreaseTime: number;
+  moveMultiplier?: number;
   isTrainingLevel: boolean;
   isHardTrainingLevel: boolean;
 }
@@ -30,7 +31,7 @@ export interface PRTSMapData {
 export interface PRTSTile {
   tileKey: string;
   heightType: "HIGHLAND" | "LOWLAND" | 0 | 1;
-  buildableType: "MELEE" | "RANGED" | "ALL" | "NONE" | 0 | 1 | 2;
+  buildableType: "MELEE" | "RANGED" | "ALL" | "NONE" | 0 | 1 | 2 | 3;
   passableMask: "ALL" | "FLY_ONLY" | number;
   playerSideMask: "ALL" | number;
   effects: PRTSTileEffect[] | null;
@@ -50,7 +51,7 @@ export interface PRTSRoute {
 }
 
 export interface PRTSCheckpoint {
-  type: "MOVE" | "WAIT_CURRENT_FRAGMENT_TIME" | "WAIT_FOR_SECONDS" | "DISAPPEAR" | "APPEAR_AT_POS" | 0 | 1 | 5 | 6;
+  type: "MOVE" | "WAIT_CURRENT_FRAGMENT_TIME" | "WAIT_FOR_SECONDS" | "DISAPPEAR" | "APPEAR_AT_POS" | 0 | 1 | 3 | 5 | 6;
   time: number;
   position: { row: number; col: number };
 }
@@ -74,6 +75,7 @@ export interface PRTSSpawnAction {
   preDelay: number;
   interval: number;
   routeIndex: number;
+  hiddenGroup?: string | null;
   blockFragment: boolean;
   randomType: "ALWAYS";
   refreshType: "ALWAYS";
@@ -173,8 +175,20 @@ export interface EnemyRoute {
   motionMode: "walk" | "fly";
   startPosition: { row: number; col: number };
   endPosition: { row: number; col: number };
-  checkpoints: { row: number; col: number }[];
+  checkpoints: RouteCheckpoint[];
 }
+
+export interface RouteCheckpoint {
+  row: number;
+  col: number;
+  type?: "MOVE" | "WAIT_CURRENT_FRAGMENT_TIME" | "WAIT_FOR_SECONDS" | "DISAPPEAR" | "APPEAR_AT_POS";
+  waitSeconds?: number;
+}
+
+export type EnemyMechanic = "stealth" | "unblockable" | "flying" | "invulnerable"
+  | "multiPhase" | "revive" | "split" | "summon" | "deathExplosion"
+  | "specialTargeting" | "antiHeal" | "elementalDamage" | "taunt"
+  | "shiftImmune" | "tileInteraction" | "blockAmplified" | "damageReflect";
 
 export interface WaveInfo {
   index: number;
@@ -186,11 +200,15 @@ export interface WaveInfo {
 export interface FragmentInfo {
   preDelay: number;
   enemySpawns: EnemySpawn[];
+  /** Raw SPAWN schedule span in game seconds, including disabled hidden groups. */
+  spawnScheduleDuration?: number;
 }
 
 export interface EnemySpawn {
   enemyId: string;
   count: number;
+  /** Game seconds from the start of the containing fragment; omitted means zero for legacy maps. */
+  preDelay?: number;
   interval: number;
   routeIndex: number;
 }
@@ -205,6 +223,7 @@ export interface EnemyDetail {
   moveSpeed: number;
   isBoss: boolean;
   isElite: boolean;
+  mechanics?: EnemyMechanic[];
 }
 
 export interface SpawnEvent {
@@ -219,7 +238,11 @@ export interface MapOptions {
   maxLifePoint: number;
   initialCost: number;
   maxCost: number;
+  /** Verified global starting DP cap; later unlock timing is not modeled. Does not replace maxCost. */
+  initialCostCap?: number;
   costIncreaseTime: number;
+  /** Multiplies raw enemy moveSpeed; legacy maps without it use 1. */
+  moveMultiplier?: number;
 }
 
 // ====================== 战斗脚本 (内部) ======================
@@ -242,6 +265,11 @@ export interface BattleScript {
     playerOperatorsUsed?: boolean;
     operatorGaps?: string[];
     deploymentReasons?: Record<string, string>;
+    defensePlan?: {
+      deploymentInteractionSeconds: number;
+      timingModel: string;
+      fronts: Array<{ routeIds: number[]; location: number[]; operator: string; firstArrival: number | null; readyTime: number | null }>;
+    };
     warnings?: string[];
     candidateScore?: number;
     candidateScoreBreakdown?: Record<string, number>;
@@ -302,7 +330,10 @@ export interface BattleScriptAction {
   costs?: number;
   cost_changes?: number;
   kills?: number;
-  time_elapsed?: number;
+  /** Wall-clock milliseconds since the latest ResetStopwatch. */
+  elapsed_time?: number;
+  /** MAA Skill timeout in wall-clock milliseconds; -1 means unlimited. */
+  timeout?: number;
   cooling?: number;
   skip_if_not_ready?: boolean;
   distance?: [number, number];

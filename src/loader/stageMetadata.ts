@@ -9,6 +9,15 @@ interface StageMeta {
 
 const _byStageId: Record<string, StageMeta> = (stageIndexData as any).byStageId || {};
 const _byCode: Record<string, string> = (stageIndexData as any).byCode || {};
+const _unavailable: Record<string, StageMeta> = (stageIndexData as any).unavailable || {};
+
+export function unavailableStageReason(id: string): string | undefined {
+  const normalized = id.toLowerCase();
+  const missing = Object.entries(_unavailable).find(([stageId, stage]) =>
+    stageId.toLowerCase() === normalized || stage.code.toLowerCase() === normalized);
+  if (!missing) return undefined;
+  return `关卡 ${missing[1].code || id} 的元数据仍在 GameData 中，但版本 ${(stageIndexData as any).source?.commit} 未提供关卡文件 ${levelIdToPath(missing[1].levelId)}`;
+}
 
 export function inferCategory(levelId: string): string {
   if (!levelId) return "other";

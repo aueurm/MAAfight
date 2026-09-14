@@ -1,4 +1,6 @@
 import type { MapData } from "../types";
+import { routePathCells } from "./RouteTimeline";
+import { buildTemporalPressure } from "./TemporalPressure";
 import type { PressureWindow, StageFacts } from "./types";
 
 function uniquePoints(points: Array<{ row: number; col: number }>): Array<{ row: number; col: number }> {
@@ -14,7 +16,7 @@ function uniquePoints(points: Array<{ row: number; col: number }>): Array<{ row:
 export function extractStageFacts(mapData: MapData): StageFacts {
   const enemies = new Map(mapData.enemyDetails.map(enemy => [enemy.id, enemy]));
   const routes = new Map(mapData.routes.map(route => [route.id, route]));
-  const windows = new Map<number, PressureWindow>();
+  const spawnWindows = new Map<number, PressureWindow>();
 
   let enemyCount = 0;
   let totalHp = 0;
@@ -38,7 +40,7 @@ export function extractStageFacts(mapData: MapData): StageFacts {
     if (enemy?.isBoss) bossCount += count;
 
     const start = Math.floor(Math.max(0, spawn.time) / 15) * 15;
-    const window = windows.get(start) || {
+    const window = spawnWindows.get(start) || {
       start,
       end: start + 15,
       enemyCount: 0,
@@ -54,20 +56,32 @@ export function extractStageFacts(mapData: MapData): StageFacts {
     if (routes.get(spawn.routeIndex)?.motionMode === "fly") window.flyingCount += count;
     if (enemy?.isElite) window.eliteCount += count;
     if (enemy?.isBoss) window.bossCount += count;
-    windows.set(start, window);
+    spawnWindows.set(start, window);
   }
 
-  const routeCells = uniquePoints(mapData.routes.flatMap(route => [
-    route.startPosition,
-    ...(route.checkpoints || []),
-    route.endPosition,
-  ]));
-  const goalCells = uniquePoints(mapData.routes.map(route => route.endPosition));
+  const temporalPressure = buildTemporalPressure(mapData);
+  const temporalWindows = temporalPressure.criticalWindows.map(window => ({
+    start: window.start,
+    end: window.end,
+    enemyCount: window.groundCount + window.airCount,
+    totalHp: window.groundHp + window.airHp,
+    totalAttack: window.incomingAttack,
+    flyingCount: window.airCount,
+    eliteCount: Math.round(window.eliteWeight / 2),
+    bossCount: Math.round(window.bossWeight / 3),
+  }));
+  const pressureWindows = temporalWindows.length
+    ? temporalWindows
+    : [...spawnWindows.values()].sort((left, right) => left.start - right.start);
+
+  const routeCells = uniquePoints(mapData.routes.flatMap(route => routePathCells(route)));
+  const goalTiles = mapData.tiles.flatMap(row => row.filter(tile => tile.key === "end"));
+  const goalCells = uniquePoints(goalTiles.length ? goalTiles.map(({ row, col }) => ({ row, col })) : mapData.routes.map(route => route.endPosition));
   const chokeCells = uniquePoints(mapData.strategicPoints
     .filter(point => point.type === "chokepoint")
     .map(point => ({ row: point.row, col: point.col })));
   const starts = new Set(mapData.routes.map(route => `${route.startPosition.row},${route.startPosition.col}`));
-  const pressure = totalHp / Math.max(1, windows.size);
+  const pressure = Math.max(0, ...pressureWindows.map(window => window.totalHp));
   const difficulty = bossCount > 0 || pressure >= 150000
     ? "extreme"
     : pressure >= 60000
@@ -96,7 +110,10 @@ export function extractStageFacts(mapData: MapData): StageFacts {
     deploymentPoints: [...mapData.deploymentPoints],
     initialCost: mapData.options.initialCost,
     characterLimit: mapData.options.characterLimit,
-    pressureWindows: [...windows.values()].sort((a, b) => a.start - b.start),
+    pressureWindows,
+    temporalPressure,
+    criticalWindows: temporalPressure.criticalWindows,
+    coverageGaps: temporalPressure.coverageGaps,
     difficulty,
     summary: `${enemyCount} enemies, ${starts.size} lanes, ${difficulty} pressure`,
   };

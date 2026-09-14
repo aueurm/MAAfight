@@ -19,6 +19,7 @@ export interface BattleAction {
   costs?: number;
   costChanges?: number;
   cooling?: number;
+  /** Wall-clock milliseconds since the initial ResetStopwatch, independent of battle speed. */
   timeElapsed?: number;
 }
 
@@ -47,6 +48,9 @@ export function validateBattleDsl(script: BattleDslScript): ValidationResult {
 
   let endCount = 0;
   for (const [index, action] of (script.actions || []).entries()) {
+    if ("time_elapsed" in action || "elapsed_time" in action || "cost_changes" in action) {
+      errors.push(issue("INVALID_CONDITION_FIELD", "BattleDSL conditions use timeElapsed (milliseconds) and costChanges; raw MAA aliases are not accepted", index));
+    }
     if (!ACTION_TYPES.includes(action.type)) errors.push(issue("INVALID_ACTION_TYPE", `Invalid action type: ${action.type}`, index));
     if (!DELAY_BUCKETS.includes((action.delay ?? 0) as DelayBucket)) errors.push(issue("INVALID_DELAY_BUCKET", `Invalid delay bucket: ${action.delay}`, index));
     if (action.type === "End") {

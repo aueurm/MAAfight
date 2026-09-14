@@ -1,0 +1,165 @@
+{
+  "version": 3,
+  "minimum_required": "v6.0.0",
+  "stage_name": "11-11",
+  "opers": [
+    {
+      "name": "伊内丝",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "逻各斯",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "风笛",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "夜莺",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "塞雷娅",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "黍",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "白面鸮",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "维什戴尔",
+      "skill": 3,
+      "skill_usage": 1
+    },
+    {
+      "name": "桃金娘",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "提丰",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "澄闪",
+      "skill": 3,
+      "skill_usage": 1
+    },
+    {
+      "name": "砾",
+      "skill": 2,
+      "skill_usage": 1
+    }
+  ],
+  "groups": [],
+  "actions": [
+    {
+      "type": "SpeedUp"
+    },
+    {
+      "type": "Deploy",
+      "name": "伊内丝",
+      "location": [
+        8,
+        3
+      ],
+      "direction": "Left",
+      "costs": 11
+    },
+    {
+      "type": "Deploy",
+      "name": "逻各斯",
+      "location": [
+        6,
+        4
+      ],
+      "direction": "Right",
+      "costs": 21
+    },
+    {
+      "type": "Deploy",
+      "name": "风笛",
+      "location": [
+        9,
+        3
+      ],
+      "direction": "Up",
+      "costs": 13
+    },
+    {
+      "type": "Deploy",
+      "name": "夜莺",
+      "location": [
+        7,
+        4
+      ],
+      "direction": "Right",
+      "costs": 18
+    },
+    {
+      "type": "Deploy",
+      "name": "塞雷娅",
+      "location": [
+        8,
+        5
+      ],
+      "direction": "Left",
+      "costs": 22
+    },
+    {
+      "type": "Retreat",
+      "name": "伊内丝",
+      "costs": 22
+    },
+    {
+      "type": "Deploy",
+      "name": "黍",
+      "location": [
+        8,
+        3
+      ],
+      "direction": "Left",
+      "costs": 22
+    },
+    {
+      "type": "Deploy",
+      "name": "白面鸮",
+      "location": [
+        6,
+        2
+      ],
+      "direction": "Down",
+      "costs": 17
+    },
+    {
+      "type": "Deploy",
+      "name": "维什戴尔",
+      "location": [
+        5,
+        2
+      ],
+      "direction": "Right",
+      "costs": 25
+    },
+    {
+      "type": "SkillDaemon"
+    }
+  ],
+  "doc": {
+    "title": "11-11 11-11-manual-v1b experiment",
+    "details": "2026-09-14 普通环境演习：3 星。人工战术实验。仅代表该次账号条件；详见 results.json。编队与动作保留执行原样。"
+  }
+}

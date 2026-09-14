@@ -1,0 +1,178 @@
+{
+  "version": 3,
+  "minimum_required": "v6.0.0",
+  "stage_name": "12-12",
+  "opers": [
+    {
+      "name": "德克萨斯",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "伊内丝",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "古米",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "浊心斯卡蒂",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "白面鸮",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "新约能天使",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "银灰",
+      "skill": 3,
+      "skill_usage": 1
+    },
+    {
+      "name": "蛇屠箱",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "拉普兰德",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "风笛",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "逻各斯",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "黍",
+      "skill": 1,
+      "skill_usage": 1
+    }
+  ],
+  "groups": [],
+  "actions": [
+    {
+      "type": "SpeedUp",
+      "doc": "A00：开启倍速；本候选不依赖固定时间。"
+    },
+    {
+      "type": "Deploy",
+      "name": "德克萨斯",
+      "location": [
+        7,
+        3
+      ],
+      "direction": "Left",
+      "doc": "A01：先占汇合点，二阻挡接住初始平民；自动剑雨回复费用。"
+    },
+    {
+      "type": "Deploy",
+      "name": "伊内丝",
+      "location": [
+        7,
+        4
+      ],
+      "direction": "Down",
+      "doc": "A02：下侧分流阻挡，拦截右下密探；自动二技能。"
+    },
+    {
+      "type": "Deploy",
+      "name": "古米",
+      "location": [
+        9,
+        3
+      ],
+      "direction": "Left",
+      "doc": "A03：末端三阻挡，与 [7,3] 相隔 2 格；一技能自疗。"
+    },
+    {
+      "type": "Deploy",
+      "name": "浊心斯卡蒂",
+      "location": [
+        8,
+        2
+      ],
+      "direction": "Down",
+      "doc": "A04：覆盖 [7,3] 与 [9,3] 的持续恢复和增益。"
+    },
+    {
+      "type": "Deploy",
+      "name": "白面鸮",
+      "location": [
+        8,
+        4
+      ],
+      "direction": "Up",
+      "doc": "A05：常规治疗同时覆盖两个阻挡点、伊内丝、银灰与后续新约能天使。"
+    },
+    {
+      "type": "Deploy",
+      "name": "新约能天使",
+      "location": [
+        9,
+        4
+      ],
+      "direction": "Left",
+      "doc": "A06：医疗先落地，再布置持续掉血的物理火力；一技能不偷取队友攻速。"
+    },
+    {
+      "type": "Deploy",
+      "name": "银灰",
+      "location": [
+        7,
+        2
+      ],
+      "direction": "Down",
+      "doc": "A07：上方纵向火力与反隐；三技能自动开启，覆盖时机需实战观察。"
+    },
+    {
+      "type": "Retreat",
+      "name": "德克萨斯",
+      "costs": 19,
+      "doc": "A08：当前费用达到 19 后撤先锋，准备同格替换；不依赖费用上限提高。"
+    },
+    {
+      "type": "Deploy",
+      "name": "蛇屠箱",
+      "location": [
+        7,
+        3
+      ],
+      "direction": "Left",
+      "doc": "A09：前线换为三阻挡防御单位；二技能防御自疗。"
+    },
+    {
+      "type": "Deploy",
+      "name": "拉普兰德",
+      "location": [
+        8,
+        3
+      ],
+      "direction": "Left",
+      "doc": "A10：补充前线物法输出；后备古米仍在 [9,3] 接位移后的敌人。"
+    },
+    {
+      "type": "SkillDaemon",
+      "doc": "A11：持续自动技能并等待战斗结束；独立 observer 判定结算。"
+    }
+  ],
+  "doc": {
+    "title": "12-12 12-12-manual-v1 experiment",
+    "details": "2026-09-14 普通环境演习：3 星。人工战术实验。仅代表该次账号条件；详见 results.json。编队与动作保留执行原样。"
+  }
+}

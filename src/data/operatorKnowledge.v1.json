@@ -16,6 +16,7 @@
     "mobility"
   ],
   "operators": [
+    { "id": "char_172_svrash", "name": "银灰", "capabilities": ["stealth-reveal"] },
     { "name": "凛御银灰", "deployment": { "selectionBias": 8.5 }, "skills": { "2": { "preferred": true } } },
     { "name": "忍冬", "deployment": { "selectionBias": 8.5 }, "skills": { "3": { "preferred": true } } },
     { "name": "怒潮凛冬", "deployment": { "selectionBias": 8.5 }, "skills": { "2": { "preferred": true } } },

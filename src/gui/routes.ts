@@ -1,6 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
-import { spawn } from "child_process";
+import { randomUUID } from "crypto";
+import { execFile, spawn, type ChildProcess } from "child_process";
+import { StringDecoder } from "string_decoder";
 import type { FastifyInstance } from "fastify";
 import {
   analyzeStage,
@@ -24,12 +26,15 @@ import { writeGuiLog } from "../runtime/logger";
 import { getRuntimePaths } from "../runtime/paths";
 import { packageVersion } from "../runtime/packageInfo";
 import { normalizePracticeTestResult } from "../shared/practiceResult";
-import { FeedbackStore, hashOperatorBox } from "../feedback/FeedbackStore";
+import { FeedbackStore, hashOperatorBox, hashScriptJson } from "../feedback/FeedbackStore";
+import { resolveStage } from "../loader/levelIndex";
+import type { EmulatorStartupStatus } from "../shared/emulatorStartup";
 import type { AnalyzeRequest, EnterPracticeRequest, FeedbackRequest, GenerateRequest, OpenOutputDirRequest, SaveOperatorsRequest, ValidateRequest } from "./types";
 
 export interface GuiRouteOptions {
   openDir?: (outputDir: string) => Promise<void>;
   configCwd?: string;
+  emulatorStatus?: () => EmulatorStartupStatus;
 }
 
 function errorMessage(err: unknown): string {
@@ -44,7 +49,46 @@ function enterPracticeScriptPath(): string {
   return path.resolve(__dirname, "..", "..", "scripts", "enter-practice.ps1");
 }
 
-function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: string): Promise<unknown> {
+const EMULATOR_STARTUP_WAIT_MS = 195_000;
+// StartUp (300 s), navigation (300 s), Copilot (600 s), and connection/exit overhead.
+const PRACTICE_HELPER_TIMEOUT_MS = (300 + 300 + 600 + 60) * 1_000;
+const PROCESS_TREE_STOP_TIMEOUT_MS = 10_000;
+
+async function waitForEmulatorStartup(getStatus?: () => EmulatorStartupStatus): Promise<void> {
+  let status = getStatus?.();
+  // A previous failure may already have been resolved by starting MuMu manually.
+  if (status?.state !== "starting") return;
+  const deadline = Date.now() + EMULATOR_STARTUP_WAIT_MS;
+  while (status?.state === "starting") {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("等待 MuMu 启动超时（195 秒），请处理模拟器窗口中的提示后重试演习。");
+    await new Promise(resolve => setTimeout(resolve, Math.min(500, remaining)));
+    status = getStatus?.();
+  }
+  if (status?.state === "failed") {
+    throw new Error(`MuMu 启动未完成：${status.message || "未确认 Android 和 ADB 就绪，请检查模拟器窗口后重试。"}`);
+  }
+}
+
+function stopPracticeProcessTree(child: ChildProcess): Promise<void> {
+  if (process.platform !== "win32" || child.pid === undefined) {
+    child.kill();
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    execFile("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+      windowsHide: true,
+      timeout: PROCESS_TREE_STOP_TIMEOUT_MS,
+    }, error => {
+      if (error) {
+        child.kill();
+        reject(new Error("未能确认演习子进程已全部停止，请先检查进程和游戏画面再重试。"));
+      } else resolve();
+    });
+  });
+}
+
+function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: string, difficulty?: "Normal" | "Hard"): Promise<unknown> {
   const args = [
     "-NoProfile",
     "-ExecutionPolicy",
@@ -56,6 +100,7 @@ function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: str
   ];
   if (maaDir) args.push("-MaaDir", maaDir);
   if (scriptPath) args.push("-ScriptPath", scriptPath);
+  if (difficulty) args.push("-Difficulty", difficulty);
 
   return new Promise((resolve, reject) => {
     const child = spawn("powershell.exe", args, {
@@ -65,11 +110,15 @@ function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: str
 
     let stdout = "";
     let stderr = "";
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     let settled = false;
-    const timer = setTimeout(() => {
-      child.kill();
-      finish(() => reject(new Error("enter practice timed out after 900 seconds")));
-    }, 900_000);
+    const timer = setTimeout(() => finish(() => {
+      void stopPracticeProcessTree(child).then(
+        () => reject(new Error("进入演习超时（21 分钟，含唤醒、导航和战斗），已停止本次演习进程，请检查游戏当前画面后重试。")),
+        error => reject(new Error(`进入演习超时（21 分钟，含唤醒、导航和战斗）。${errorMessage(error)}`)),
+      );
+    }), PRACTICE_HELPER_TIMEOUT_MS);
 
     function finish(done: () => void): void {
       if (settled) return;
@@ -79,37 +128,77 @@ function runEnterPracticeScript(stage: string, maaDir?: string, scriptPath?: str
     }
 
     child.stdout.on("data", chunk => {
-      stdout += String(chunk);
+      stdout += stdoutDecoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
     child.stderr.on("data", chunk => {
-      stderr += String(chunk);
+      stderr += stderrDecoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
     child.on("error", err => finish(() => reject(err)));
     child.on("close", code => finish(() => {
+      stdout += stdoutDecoder.end();
+      stderr += stderrDecoder.end();
+      const jsonLine = stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+      let result: { ok?: boolean; error?: string } | undefined;
+      try { result = jsonLine ? JSON.parse(jsonLine) : undefined; } catch { /* Report malformed output below. */ }
       if (code !== 0) {
-        reject(new Error((stderr || stdout || `enter practice exited with code ${code}`).trim()));
+        const diagnostic = result?.error || (stderr || stdout).trim().split(/\r?\n/)[0] || `进程退出码 ${code}`;
+        reject(new Error(`进入演习失败：${diagnostic}`));
         return;
       }
 
-      const jsonLine = stdout.trim().split(/\r?\n/).filter(Boolean).pop();
       if (!jsonLine) {
-        reject(new Error("enter practice returned empty output"));
+        reject(new Error("演习入口没有返回执行结果。"));
         return;
       }
-      try {
-        resolve(JSON.parse(jsonLine));
-      } catch (err) {
-        reject(new Error(`enter practice returned invalid JSON: ${errorMessage(err)}`));
-      }
+      if (!result || typeof result !== "object") reject(new Error("演习入口返回了无法读取的结果。"));
+      else if (result.ok === false) reject(new Error(`进入演习失败：${result.error || "请检查游戏当前画面。"}`));
+      else resolve(result);
     }));
   });
 }
 
-export function publishThreeStarCandidate(scriptPath: string): string | undefined {
+interface PracticeScriptSnapshot {
+  originalPath: string;
+  runPath: string;
+  json: string;
+  contentHash: string;
+  scriptHash: string;
+  stageName: string;
+}
+
+function preparePracticeScript(scriptPath: string, stage: string, cwd: string, expectedHash?: string): PracticeScriptSnapshot {
+  const originalPath = path.resolve(scriptPath);
+  const json = fs.readFileSync(originalPath, "utf8");
+  const parsed = JSON.parse(json) as Record<string, unknown>;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)
+    || typeof parsed.stage_name !== "string" || !Array.isArray(parsed.actions)) {
+    throw new Error("scriptPath must contain a copilot JSON object with stage_name and actions");
+  }
+  const requestedStage = resolveStage(stage)?.code || stage;
+  if (parsed.stage_name.trim().toUpperCase() !== requestedStage.trim().toUpperCase()) {
+    throw new Error(`Script stage ${parsed.stage_name} does not match requested stage ${stage}`);
+  }
+  // This is already exported MAA JSON: hash it without metadata, without swapping coordinates again.
+  const { metadata: _metadata, ...strategy } = parsed;
+  const scriptHash = hashScriptJson(JSON.stringify(strategy));
+  if (expectedHash && expectedHash !== scriptHash) {
+    throw new Error("scriptHash does not match the script file; regenerate or reload the candidate before rehearsal");
+  }
+  const runDir = path.join(cwd, ".maafight", "copilot-run");
+  fs.mkdirSync(runDir, { recursive: true });
+  const runPath = path.join(runDir, `${randomUUID()}.json`);
+  fs.writeFileSync(runPath, json, { encoding: "utf8", flag: "wx" });
+  return { originalPath, runPath, json, contentHash: hashScriptJson(json), scriptHash, stageName: parsed.stage_name.trim() };
+}
+
+export function publishThreeStarCandidate(scriptPath: string, expectedJson: string): string | undefined {
   const candidatePath = path.resolve(scriptPath);
   const candidateDir = path.dirname(candidatePath);
   if (path.basename(candidateDir) !== ".candidates") return undefined;
-  const candidate = JSON.parse(fs.readFileSync(candidatePath, "utf8")) as {
+  if (hashScriptJson(fs.readFileSync(candidatePath, "utf8")) !== hashScriptJson(expectedJson)) {
+    throw new Error("Candidate changed during rehearsal; publication was refused");
+  }
+  const candidate = JSON.parse(expectedJson) as {
     doc?: { details?: unknown };
     metadata?: { source?: unknown };
   };
@@ -123,6 +212,11 @@ export function publishThreeStarCandidate(scriptPath: string): string | undefine
 export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteOptions = {}): Promise<void> {
   const openDir = options.openDir || openOutputDirectory;
   const configCwd = options.configCwd;
+
+  app.get("/api/emulator-status", async () => ({
+    success: true,
+    ...(options.emulatorStatus?.() || { state: "skipped" }),
+  }));
 
   app.get("/api/health", async () => ({
     success: true,
@@ -256,10 +350,26 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
         return { success: false, warnings, errors: ["scriptPath must be absolute"] };
       }
 
-      const scriptResult = await runEnterPracticeScript(body.stage.trim(), maaProbe?.maaInstallDir || undefined, scriptPath || undefined);
+      const requestedHash = body.scriptHash?.trim();
+      if (requestedHash && !scriptPath) throw new Error("scriptPath is required to verify scriptHash");
+      const snapshot = scriptPath ? preparePracticeScript(scriptPath, body.stage.trim(), cwd, requestedHash) : undefined;
+      const requestedStage = resolveStage(body.stage.trim());
+      const navigationStage = snapshot?.stageName || requestedStage?.code || body.stage.trim();
+      const chapter = /^(H?)(\d+)-\d+$/i.exec(navigationStage);
+      const difficulty = requestedStage?.stageId.startsWith("tough_") ? "Hard"
+        : chapter && Number(chapter[2]) >= 10 ? (chapter[1] ? "Hard" : "Normal") : undefined;
+      await waitForEmulatorStartup(options.emulatorStatus);
+      const scriptResult = await runEnterPracticeScript(navigationStage, maaProbe?.maaInstallDir || undefined, snapshot?.runPath, difficulty);
       const result = scriptResult && typeof scriptResult === "object" ? scriptResult as Record<string, unknown> : {};
-      if (result.navigationSkipped) {
-        warnings.push("MAA 未配置该关卡自动导航；已按当前关卡详情页继续执行演习。");
+      if (snapshot) {
+        if (hashScriptJson(fs.readFileSync(snapshot.runPath, "utf8")) !== snapshot.contentHash) {
+          throw new Error("Rehearsal snapshot changed; publication and feedback were refused");
+        }
+        result.originalScriptPath = snapshot.originalPath;
+        result.scriptHash = snapshot.scriptHash;
+      }
+      if (result.navigationSkipped && result.stageVerified !== true) {
+        warnings.push("已从当前关卡详情页进入演习；请确认游戏关卡与所选关卡一致。");
       }
       if (result.copilotTaskId) {
         const observedMaaPath = typeof result.maaDir === "string" ? result.maaDir : maaProbe?.maaInstallDir || undefined;
@@ -274,18 +384,22 @@ export async function registerGuiRoutes(app: FastifyInstance, options: GuiRouteO
       }
       const testResult = normalizePracticeTestResult(result);
       if (testResult) result.testResult = testResult;
-      if (testResult === "三星" && scriptPath) {
-        const publishedOutputPath = publishThreeStarCandidate(scriptPath);
-        if (publishedOutputPath) {
-          result.publishedOutputPath = publishedOutputPath;
-          warnings.push(`DeepSeek candidate published after three-star rehearsal: ${publishedOutputPath}`);
+      if (testResult === "三星" && snapshot) {
+        try {
+          const publishedOutputPath = publishThreeStarCandidate(snapshot.originalPath, snapshot.json);
+          if (publishedOutputPath) {
+            result.publishedOutputPath = publishedOutputPath;
+            warnings.push(`DeepSeek candidate published after three-star rehearsal: ${publishedOutputPath}`);
+          }
+        } catch (err) {
+          warnings.push(`三星结果属于运行时固定副本，候选未发布：${errorMessage(err)}`);
         }
       }
-      if (body.scriptHash?.trim() && testResult) {
+      if (snapshot && testResult) {
         try {
           const configured = loadConfiguredOperatorBox(cwd);
           const feedbackRecord = new FeedbackStore(cwd).recordPracticeTestResult({
-            scriptHash: body.scriptHash.trim(),
+            scriptHash: snapshot.scriptHash,
             testResult,
             currentOperatorBoxHash: hashOperatorBox(configured?.box.playerMap),
           });

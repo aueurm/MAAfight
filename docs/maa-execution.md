@@ -1,6 +1,6 @@
 # MAA 执行评估层
 
-> 状态：分阶段落地中。当前 v2 已有 dry-run skeleton、MAA callback import、结算页与战斗过程截图观察、结果 summary、本机 MAA / ADB probe、MaaCore 连接握手和 GUI 演习执行 helper。`run` 本身仍不会启动 MAA 任务或开始作战；GUI `enter-practice` 会导航到关卡详情页、点击演习入口，并在传入生成脚本路径时执行 MAA `Copilot` 作业。
+> 状态：分阶段落地中。当前 v2 已有 dry-run skeleton、MAA callback import、结算页与战斗过程截图观察、结果 summary、本机 MAA / ADB probe、MaaCore 连接握手和 GUI 演习执行 helper。`run` 本身仍不会启动 MAA 任务或开始作战；GUI `enter-practice` 可用经过检查的 MAA 导航任务进入目标详情页，再点击演习入口，并在传入生成脚本路径时执行 MAA `Copilot` 作业。
 
 ## 目标
 
@@ -35,7 +35,19 @@ MAA 回调中的 `SubTaskExtraInfo.what = "StageDrops"` 包含 `stage`、`drops`
 
 当前 `run observe-battle` 只观察已经进入战斗画面的演习：每 5 秒通过 ADB 原始 `exec-out screencap` 保存 1280x720 BMP，最多 10 分钟；结果标题与星星同时命中时记录结算，也识别战斗失败提示页。帧和 `manifest.json` 保留在 `.maafight/battle-observer/<runId>/`，用于人工查看漏怪前后的路线和站位。它只读取画面，不创建 MaaCore 连接、不发送点击、不启动任务、不识别敌人计数、不修改候选评分，也不写入学习反馈。不要在关卡导航或编队阶段提前启动：这些画面不属于识别契约，产生的 manifest 不能作为战斗结果；失败和超时仍保留已采样帧并以非零退出码返回。
 
-当前 `scripts/start-mumu.ps1` 复用 MAA GUI 的 `Start.EmulatorPath` 和 `Start.OpenEmulatorAfterLaunch` 配置，可在 `npm run gui` 前启动 MuMu；MAA 路径优先来自 GUI 保存的 `maaPath`、`MAAFIGHT_MAA_PATH` 或脚本参数。`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口：先执行 MAA 日常 `StartUp` 唤醒明日方舟，再通过 MAA `Fight times=0` 复用关卡导航，确认 1280x720 关卡详情页后，若代理指挥开关亮起则先关闭，再点击演习按钮。传入生成脚本路径时，它会继续追加 MAA `Copilot` 任务执行该作业文件，并在结束后复用截图观察器读取结算星级。
+当前 `scripts/start-mumu.ps1` 读取 MAA 6 的 `Gui.StartUpSettings`，并兼容旧版 `Start.EmulatorPath` 和 `Start.OpenEmulatorAfterLaunch` 配置。GUI 服务监听成功后异步启动 helper，打开界面不等待 MuMu 完成启动；后台通过 ADB 连接和 `sys.boot_completed` 确认就绪，失败或超时通过 `/api/emulator-status` 在界面顶部显示。MAA 路径优先来自 GUI 保存的 `maaPath`、`MAAFIGHT_MAA_PATH` 或脚本参数。
+
+`scripts/enter-practice.ps1` 和 GUI `/api/enter-practice` 是实验性演习入口。GUI 独立打开；点击演习时，若后台 MuMu 启动仍在进行，则有界等待 Android / ADB 就绪。随后独立 PowerShell 进程执行 MAA `StartUp`，显式设置 `start_game_enabled=true`，等待完整唤醒任务完成后才导航。唤醒和导航各有 300 秒上限；GUI 总预算含默认 600 秒演习与退出余量，超时终止本次进程树。
+
+导航复用 MAA 原生 `Fight` 的选关代码，包括通用主线、资源关及已有活动单关任务，不再要求存在 `Stage<code>` 专用叶节点。资源按 MAA 顺序加载：本体、本体热更新缓存，以及配置客户端的资源和缓存。第 10 章起显式传递 Normal / Hard，GUI 保留 `tough_` 与 H 关的难度身份；关卡解锁、活动开放和演习入口仍由实际页面决定。
+
+MAA 6.17.5 的 `times=0` 会跳过整个 Fight，因此导航进程使用 `times=1`，但在排队前加载项目目录内的临时资源覆盖：`FightBegin` 被完整替换为无点击的 Stop，普通开战、药、石和代理入口及其点击别名也被阻断。覆盖保留导航需要的 OCR 类型，并清空危险分支；药、石、掉落上报和倍率调整均关闭。安装目录保持只读。`SSReopen-*` 是独立的批量刷关入口，不接受为单个演习关卡；任意 MAA task 名也不能作为关卡输入。
+
+自动导航必须同时收到本次 Fight 完成和受保护停止点的回调，再用独立只读 OCR 精确核对目标编号和详情页。导航进程退出后，演习进程重新加载原始资源，再次 OCR 核对目标；临时战斗屏障不会污染 Copilot。原生别名可能跳到别关，例如 CE-5 → CE-6，此时核对失败并停止，不会冒充目标成功。缺少原生导航路线时，仍可手动打开详情页，但同样必须通过精确 OCR。
+
+仅验证唤醒与导航、停在详情页而不进入演习：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/enter-practice.ps1 -Stage 11-11 -NavigateOnly`。可用 `-Difficulty Hard` 指定支持该难度的主线关卡。能导航不等于关卡提供演习模式。
+
+确认详情后，若代理指挥开关亮起则先关闭，再点击演习按钮。官方 PLAN 编队验证通过后才交给 MAA `Copilot`；作业完成后观察结算星级。helper 的异常以单行 UTF-8 JSON 返回，GUI 显示原因，不再展示本地代码页编码的 PowerShell 堆栈。
 
 参考：
 
