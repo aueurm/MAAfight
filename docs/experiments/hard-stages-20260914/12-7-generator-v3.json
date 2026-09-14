@@ -1,0 +1,169 @@
+{
+  "version": 3,
+  "minimum_required": "v6.0.0",
+  "stage_name": "12-7",
+  "opers": [
+    {
+      "name": "银灰",
+      "skill": 3,
+      "skill_usage": 0
+    },
+    {
+      "name": "归溟幽灵鲨",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "黍",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "乌尔比安",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "涤火杰西卡",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "歌蕾蒂娅",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "赤刃明霄陈",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "塞雷娅",
+      "skill": 1,
+      "skill_usage": 1
+    },
+    {
+      "name": "斩业星熊",
+      "skill": 3,
+      "skill_usage": 1
+    },
+    {
+      "name": "遥",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "新约能天使",
+      "skill": 2,
+      "skill_usage": 1
+    },
+    {
+      "name": "Mon3tr",
+      "skill": 3,
+      "skill_usage": 1
+    }
+  ],
+  "groups": [],
+  "actions": [
+    {
+      "type": "SpeedUp"
+    },
+    {
+      "type": "ResetStopwatch"
+    },
+    {
+      "type": "Deploy",
+      "name": "银灰",
+      "location": [
+        7,
+        2
+      ],
+      "direction": "Right",
+      "pre_delay": 0,
+      "costs": 20
+    },
+    {
+      "type": "Skill",
+      "name": "银灰",
+      "elapsed_time": 22500
+    },
+    {
+      "type": "Deploy",
+      "name": "归溟幽灵鲨",
+      "location": [
+        5,
+        6
+      ],
+      "direction": "Up",
+      "pre_delay": 0,
+      "costs": 16
+    },
+    {
+      "type": "Deploy",
+      "name": "黍",
+      "location": [
+        7,
+        5
+      ],
+      "direction": "Up",
+      "pre_delay": 0,
+      "costs": 22
+    },
+    {
+      "type": "Deploy",
+      "name": "歌蕾蒂娅",
+      "location": [
+        7,
+        6
+      ],
+      "direction": "Up",
+      "pre_delay": 0,
+      "costs": 16
+    },
+    {
+      "type": "Deploy",
+      "name": "乌尔比安",
+      "location": [
+        5,
+        5
+      ],
+      "direction": "Down",
+      "costs": 24
+    },
+    {
+      "type": "Deploy",
+      "name": "涤火杰西卡",
+      "location": [
+        7,
+        4
+      ],
+      "direction": "Down",
+      "costs": 23
+    },
+    {
+      "type": "Deploy",
+      "name": "赤刃明霄陈",
+      "location": [
+        5,
+        3
+      ],
+      "direction": "Left",
+      "costs": 21
+    },
+    {
+      "type": "Deploy",
+      "name": "塞雷娅",
+      "location": [
+        8,
+        6
+      ],
+      "direction": "Down",
+      "costs": 22
+    }
+  ],
+  "doc": {
+    "title": "12-7 12-7-generator-v3 experiment",
+    "details": "2026-09-14 普通环境演习：0 星。防线与技能窗口改进后的规则生成器。仅代表该次账号条件；详见 results.json。编队与动作保留执行原样。"
+  }
+}

@@ -20,6 +20,12 @@ interface SkillLevelRecord {
   spCost: number;
   initSp: number;
   duration: number;
+  rawDuration?: number;
+  durationType?: string;
+  durationSemantics?: ResolvedOperatorProfile["durationSemantics"];
+  normalAttackSuppressed?: boolean;
+  normalAttackEvidence?: string | null;
+  spIncrement?: number;
   rangeId: string | null;
   maxTargets: number;
   metrics: CombatMetrics;
@@ -152,6 +158,14 @@ function metricsAtAttributes(base: CombatMetrics, source: CombatAttributes, reso
     burstDps: base.burstDps * attackRatio,
     cycleDps: base.cycleDps === null ? null : base.cycleDps * attackRatio,
     healingHps: base.healingHps * attackRatio,
+    ...(base.normalHps !== undefined ? { normalHps: base.normalHps * attackRatio } : {}),
+    ...(base.skillHps !== undefined ? { skillHps: base.skillHps === null ? null : base.skillHps * attackRatio } : {}),
+    ...(base.healPerTrigger !== undefined ? { healPerTrigger: base.healPerTrigger === null ? null : base.healPerTrigger * attackRatio } : {}),
+    ...(base.conditionalHpsUpperBound !== undefined ? {
+      conditionalHpsUpperBound: base.conditionalHpsUpperBound === null ? null : base.conditionalHpsUpperBound * attackRatio,
+    } : {}),
+    healingMode: base.healingMode,
+    healingEvidence: base.healingEvidence,
     physicalEhp: base.physicalEhp * hpRatio,
     artsEhp: base.artsEhp * hpRatio,
     controlSeconds: base.controlSeconds,
@@ -236,12 +250,19 @@ export function resolveOperatorProfile(
     skill,
     skillRank,
     skillDuration: Math.max(0, levelRecord?.duration || 0),
+    rawDuration: levelRecord?.rawDuration,
+    durationType: levelRecord?.durationType,
+    durationSemantics: levelRecord?.durationSemantics,
+    normalAttackSuppressed: levelRecord?.normalAttackSuppressed,
+    normalAttackEvidence: levelRecord?.normalAttackEvidence,
+    spIncrement: levelRecord?.spIncrement,
     skillType: levelRecord?.skillType || "UNKNOWN",
     spType: levelRecord?.spType || "UNKNOWN",
     spCost: Math.max(0, levelRecord?.spCost || 0),
     initSp: Math.max(0, levelRecord?.initSp || 0),
     respawnTime,
     baseRangeId: record.e2.rangeId,
+    baseRange: getKnowledgeRangeOverride(record, 0)?.range || model.ranges[record.e2.rangeId || ""] || [[0, 0]],
     skillRangeId: knowledgeRange?.source === "skill" ? `knowledge:${record.id}:skill:${skill}` : levelRecord?.rangeId || null,
     range: knowledgeRange?.range || model.ranges[levelRecord?.rangeId || record.e2.rangeId || ""] || [[0, 0]],
     attributes: moduleResolved.attributes,

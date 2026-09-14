@@ -1,0 +1,233 @@
+{
+  "scriptSha256": "fdb058a8503bc883be11dbb17dcf533796da4bba139fda25bd0c85463c8b523a",
+  "recordedScriptSha256": "fdb058a8503bc883be11dbb17dcf533796da4bba139fda25bd0c85463c8b523a",
+  "outcome": {
+    "status": "settled",
+    "outcome": "partial_clear",
+    "stars": 2,
+    "source": "stored observer manifest"
+  },
+  "firstVisibleHpLoss": {
+    "lastParsedFullHp": {
+      "file": "1789391870118.bmp",
+      "time": "2026-09-14 21:17:50.118 +08:00",
+      "hp": 3
+    },
+    "firstParsedLowerHp": {
+      "file": "1789391882575.bmp",
+      "time": "2026-09-14 21:18:02.575 +08:00",
+      "hp": 2,
+      "kills": 16,
+      "killsTotal": 41
+    },
+    "helperFinishedAt": "2026-09-14T13:19:15.915Z",
+    "secondsBeforeHelperFinish": 73.34,
+    "evidence": "Windows OCR preprocessing only; confidence unavailable; repeated-glyph copies are not independent observations"
+  },
+  "queue": {
+    "plannedActions": 10,
+    "observedActionNotifications": 10,
+    "allNotificationsMatchInOrder": true,
+    "deploymentHelperCalls": 8,
+    "actions": [
+      {
+        "line": 2171,
+        "time": "2026-09-14 21:16:58.924",
+        "action": "SwitchSpeed",
+        "doc": "",
+        "doc_color": "",
+        "elapsed_time": -1,
+        "target": "",
+        "helperEnter": null,
+        "helperLeave": null
+      },
+      {
+        "line": 2187,
+        "time": "2026-09-14 21:16:59.303",
+        "action": "Deploy",
+        "doc": "",
+        "doc_color": "",
+        "elapsed_time": -1,
+        "target": "银灰",
+        "helperEnter": {
+          "line": 2293,
+          "time": "2026-09-14 21:17:04.048"
+        },
+        "helperLeave": {
+          "line": 2304,
+          "time": "2026-09-14 21:17:05.253"
+        }
+      },
+      {
+        "line": 2311,
+        "time": "2026-09-14 21:17:05.530",
+        "action": "Deploy",
+        "doc": "",
+        "doc_color": "",
+        "elapsed_time": -1,
+        "target": "赫默",
+        "helperEnter": {
+          "line": 2560,
+          "time": "2026-09-14 21:17:15.242"
+        },
+        "helperLeave": {
+          "line": 2571,
+          "time": "2026-09-14 21:17:16.447"
+        }
+      },
+      {
+        "line": 2578,
+        "time": "2026-09-14 21:17:16.741",
+        "action": "Deploy",
+        "doc": "",
+        "doc_color": "",
+        "elapsed_time": -1,
+        "target": "佩佩",
+        "helperEnter": {
+          "line": 2898,
+          "time": "2026-09-14 21:17:26.178"
+        },
+        "helperLeave": {
+          "line": 2909,
+          "time": "2026-09-14 21:17:27.386"
+        }
+      },
+      {
+        "line": 2916,
+        "time": "2026-09-14 21:17:27.675",
+        "action": "Deploy",
+        "doc": "",
+        "doc_color": "",
+        "elapsed_time": -1,
+        "target": "Mon3tr",
+        "helperEnter": {
+          "line": 3232,
+          "time": "2026-09-14 21:17:36.991"
+        },
+        "helperLeave": {
+          "line": 3244,
+          "time": "2026-09-14 21:17:38.196"
+        }
+      },
+      {
+        "line": 3251,
+        "time": "2026-09-14 21:17:38.532",
+        "action": "Deploy",
+        "doc": "",
+        "doc_color": "",
+        "elapsed_time": -1,
+        "target": "乌尔比安",
+        "helperEnter": {
+          "line": 3705,
+          "time": "2026-09-14 21:17:49.627"
+        },
+        "helperLeave": {
+          "line": 3716,
+          "time": "2026-09-14 21:17:50.832"
+        }
+      },
+      {
+        "line": 3723,
+        "time": "2026-09-14 21:17:51.120",
+        "action": "Deploy",
+        "doc": "",
+        "doc_color": "",
+        "elapsed_time": -1,
+        "target": "傀影",
+        "helperEnter": {
+          "line": 3972,
+          "time": "2026-09-14 21:17:56.580"
+        },
+        "helperLeave": {
+          "line": 3984,
+          "time": "2026-09-14 21:17:57.779"
+        }
+      },
+      {
+        "line": 3991,
+        "time": "2026-09-14 21:17:58.089",
+        "action": "Deploy",
+        "doc": "",
+        "doc_color": "",
+        "elapsed_time": -1,
+        "target": "史尔特尔",
+        "helperEnter": {
+          "line": 4473,
+          "time": "2026-09-14 21:18:08.686"
+        },
+        "helperLeave": {
+          "line": 4485,
+          "time": "2026-09-14 21:18:09.884"
+        }
+      },
+      {
+        "line": 4492,
+        "time": "2026-09-14 21:18:10.221",
+        "action": "Deploy",
+        "doc": "",
+        "doc_color": "",
+        "elapsed_time": -1,
+        "target": "涤火杰西卡",
+        "helperEnter": {
+          "line": 5156,
+          "time": "2026-09-14 21:18:22.167"
+        },
+        "helperLeave": {
+          "line": 5167,
+          "time": "2026-09-14 21:18:23.373"
+        }
+      },
+      {
+        "line": 5174,
+        "time": "2026-09-14 21:18:23.648",
+        "action": "SkillDaemon",
+        "doc": "",
+        "doc_color": "",
+        "elapsed_time": -1,
+        "target": "",
+        "helperEnter": null,
+        "helperLeave": null
+      }
+    ],
+    "actualPlacementsIndependentlyConfirmed": false
+  },
+  "minBlockEvidence": {
+    "enemyId": "enemy_1320_wdrrl",
+    "sourcePath": ".maafight/experiments/hard-stages-20260914/protocol/stage-12-7.json",
+    "sourceDescription": "只能被阻挡数大于等于3的单位阻挡，首次攻击时造成溅射伤害",
+    "firstSpawnGameSeconds": 85,
+    "firstRouteId": 10,
+    "plannedCoreFronts": [
+      {
+        "operator": "银灰",
+        "maaLocation": [
+          5,
+          6
+        ],
+        "normalBlock": 2
+      },
+      {
+        "operator": "佩佩",
+        "maaLocation": [
+          7,
+          6
+        ],
+        "normalBlock": 2
+      }
+    ],
+    "interpretation": "Supported planning-mechanism gap; the stored sparse frames do not establish which enemy caused the first life loss."
+  },
+  "lastParsedKills": {
+    "time": "2026-09-14 21:19:05.584 +08:00",
+    "kills": 39,
+    "total": 41
+  },
+  "exactFinalKills": null,
+  "limits": [
+    "No game input, new screenshots, network or image output performed.",
+    "Input calls and handler returns do not independently prove placement, identity or survival.",
+    "HP after the first lower reading is unreadable in remaining recorded battle frames; no carried-forward values.",
+    "First visible life loss precedes the final deployments, SkillDaemon entry and helper completion.",
+    "Final stars are not converted to final kills."
+  ]
+}

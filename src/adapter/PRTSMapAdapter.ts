@@ -33,6 +33,31 @@ function mapPosition(position: { row: number; col: number }, rows: number): { ro
   return { row: rows - 1 - position.row, col: position.col };
 }
 
+function initialCostCap(prts: PRTSLevelData): number | undefined {
+  const runes = (prts.runes || []).filter(rune => rune.key === "cbuff_max_cost");
+  if (!runes.length) return undefined;
+  let resolved: { cap: number; ceiling: number } | undefined;
+  for (const rune of runes) {
+    // Only the verified global form has an unambiguous starting-state meaning.
+    if (rune.difficultyMask !== "ALL" || rune.professionMask !== 1023 || rune.buildableMask !== "ALL"
+      || rune.position != null || !Array.isArray(rune.blackboard)) return undefined;
+    const blackboard = rune.blackboard;
+    const read = (name: string): unknown => {
+      const entries = blackboard.filter((entry: unknown) => entry && typeof entry === "object"
+        && (entry as { key?: unknown }).key === name);
+      return entries.length === 1 ? entries[0].value : undefined;
+    };
+    const cap = read("max_cost");
+    const ceiling = read("max_cost_ceil");
+    if (typeof cap !== "number" || !Number.isInteger(cap) || cap < 0
+      || typeof ceiling !== "number" || !Number.isInteger(ceiling) || ceiling < cap
+      || ceiling > prts.options.maxCost) return undefined;
+    if (resolved && (resolved.cap !== cap || resolved.ceiling !== ceiling)) return undefined;
+    resolved = { cap, ceiling };
+  }
+  return resolved?.cap;
+}
+
 function normalizeCheckpoint(checkpoint: PRTSCheckpoint, rows: number): RouteCheckpoint {
   const type = normalizeCheckpointType(checkpoint.type);
   return {
@@ -270,6 +295,7 @@ export class PRTSMapAdapter {
     const { routes, strategicPoints } = adaptRoutes(prtsData, excludedRouteIds);
     const spawnTimeline = buildSpawnTimeline(waves);
     const highThreatAreas = buildHighThreatAreas(spawnTimeline, routes);
+    const startingCostCap = initialCostCap(prtsData);
 
     // Resolve enemy details - use enemyDbRefs + loader if available
     const enemySet = new Set(spawnTimeline.map(spawn => spawn.enemyId));
@@ -313,6 +339,7 @@ export class PRTSMapAdapter {
         maxLifePoint: prtsData.options.maxLifePoint,
         initialCost: prtsData.options.initialCost,
         maxCost: prtsData.options.maxCost,
+        ...(startingCostCap !== undefined ? { initialCostCap: startingCostCap } : {}),
         costIncreaseTime: prtsData.options.costIncreaseTime,
         moveMultiplier,
       },

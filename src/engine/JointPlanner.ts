@@ -1,4 +1,5 @@
 import { canTargetAir, temporalRangeCells, temporalThreatWeight } from "./TemporalCoverage";
+import { extractDefenseFronts, type DefenseFront } from "./DefensePlanner";
 import type { DeploymentPoint, MapData } from "../types";
 import type { Direction, EncounterContext, EnginePick, JointDecision, JointPlan, SearchBias, StageFacts } from "./types";
 
@@ -18,6 +19,7 @@ interface PlacementCandidate {
   coverage: Map<string, number>;
   score: number;
   firstCoverageTime: number;
+  defensePriority: number;
 }
 
 interface JointState {
@@ -26,6 +28,7 @@ interface JointState {
   coverage: Map<string, number>;
   score: number;
   signature: string;
+  defensePriority: number;
 }
 
 function key(row: number, col: number): string {
@@ -43,7 +46,7 @@ function weight(pick: EnginePick, cell: StageFacts["temporalPressure"]["buckets"
   return temporalThreatWeight(pick, cell) * (1 + routeWeight);
 }
 
-function candidatesFor(pick: EnginePick, facts: StageFacts, limit: number, bias?: SearchBias, checkDeadline?: () => void): PlacementCandidate[] {
+function candidatesFor(pick: EnginePick, facts: StageFacts, limit: number, fronts: DefenseFront[], bias?: SearchBias, checkDeadline?: () => void): PlacementCandidate[] {
   const targetsAir = canTargetAir(pick);
   const byCell = new Map<string, Array<{ key: string; time: number; weight: number }>>();
   for (const bucket of facts.temporalPressure.buckets) {
@@ -68,12 +71,21 @@ function candidatesFor(pick: EnginePick, facts: StageFacts, limit: number, bias?
         }
       }
       const score = [...coverage.values()].reduce((sum, value) => sum + value, 0);
-      return { point, direction, coverage, score, firstCoverageTime };
+      const front = pick.profile.position === "MELEE" && pick.profile.attributes.block > 0 && pick.profile.subProfession !== "executor"
+        ? fronts.find(front => front.point.row === point.row && front.point.col === point.col) : undefined;
+      return { point, direction, coverage, score, firstCoverageTime,
+        defensePriority: front ? 1 + 1 / (1 + front.firstArrival) : 0 };
     })
     : [])
     .sort((left, right) => right.score - left.score || left.point.row - right.point.row || left.point.col - right.point.col
       || left.direction.localeCompare(right.direction));
-  return candidates.slice(0, limit);
+  // Keep one legal facing per terminal approach before pressure-score truncation.
+  const defensive = fronts.flatMap(front => {
+    const best = candidates.find(candidate => candidate.defensePriority > 0
+      && candidate.point.row === front.point.row && candidate.point.col === front.point.col);
+    return best ? [best] : [];
+  });
+  return [...new Set([...defensive, ...candidates.slice(0, limit)])];
 }
 
 function targetTime(candidate: PlacementCandidate): number {
@@ -101,11 +113,12 @@ export function buildJointPlan(
   const beamWidth = Math.max(1, options.beamWidth || 8);
   const placementsPerPick = Math.max(1, options.placementsPerPick || 6);
   const candidateLimit = Math.min(options.picks.length, mapData.options.characterLimit, facts.deploymentPoints.length);
-  let states: JointState[] = [{ decisions: [], occupied: new Set(), coverage: new Map(), score: 0, signature: "" }];
+  const fronts = extractDefenseFronts(mapData).fronts;
+  let states: JointState[] = [{ decisions: [], occupied: new Set(), coverage: new Map(), score: 0, signature: "", defensePriority: 0 }];
 
   for (const pick of options.picks.slice(0, candidateLimit)) {
     options.checkDeadline?.();
-    const candidates = candidatesFor(pick, facts, placementsPerPick, options.searchBias, options.checkDeadline);
+    const candidates = candidatesFor(pick, facts, placementsPerPick, fronts, options.searchBias, options.checkDeadline);
     if (!candidates.length) continue;
     const next: JointState[] = [];
     for (const state of states) {
@@ -127,10 +140,12 @@ export function buildJointPlan(
           coverage,
           score: state.score + score,
           signature: signature(decisions),
+          defensePriority: state.defensePriority + candidate.defensePriority,
         });
       }
     }
-    states = next.sort((left, right) => right.score - left.score || left.signature.localeCompare(right.signature)).slice(0, beamWidth);
+    states = next.sort((left, right) => right.defensePriority - left.defensePriority
+      || right.score - left.score || left.signature.localeCompare(right.signature)).slice(0, beamWidth);
     if (!states.length) break;
   }
   const best = states[0] || { decisions: [], score: 0, signature: "" };

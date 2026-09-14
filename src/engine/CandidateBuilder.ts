@@ -5,10 +5,12 @@ import {
   type CombatOperatorRecord,
 } from "./CombatModel";
 import { getOperatorKnowledge } from "./OperatorKnowledge";
+import { estimateSkillWindow } from "./SkillWindow";
 import { temporalCoverageScore, type TemporalDeployment } from "./TemporalCoverage";
 import { planSkillActions } from "./SkillPlanner";
 import { planDeploymentTimeline } from "./TimelinePlanner";
 import { routePathCells } from "./RouteTimeline";
+import { DEFENSE_DEPLOY_INTERACTION_SECONDS, extractDefenseFronts, orderDefenseDeployments, planDefenseOpening } from "./DefensePlanner";
 import { rotateDirection, squadSignature } from "./helpers";
 import type { BattleScript, BattleScriptOper, DeploymentPoint, MapData, PlayerOperator } from "../types";
 import type {
@@ -57,7 +59,6 @@ interface ActiveDeployment {
 const placementCache = new WeakMap<StageFacts, Map<string, RankedPlacement[]>>();
 const incomingDirectionCache = new WeakMap<MapData, Map<string, typeof DIRECTIONS[number] | undefined>>();
 const routeThreatCache = new WeakMap<MapData, Map<number, number>>();
-const goalFrontCache = new WeakMap<MapData, Map<string, string>>();
 const bossGoalCache = new WeakMap<MapData, Set<string>>();
 
 const AREA_SUBPROFESSIONS = new Set(["aoesniper", "bombarder", "splashcaster", "chain", "reaper", "centurion"]);
@@ -158,11 +159,22 @@ function maximumRouteCoverage(pick: EnginePick, facts: StageFacts): number {
 function capabilitiesForPick(pick: EnginePick, encounter: EncounterContext, facts: StageFacts): CapabilityDemand {
   const profile = pick.profile;
   const confidenceFactor = profile.confidence === "exact" ? 1 : profile.confidence === "partial" ? 0.9 : 0.75;
-  const spatialFit = maximumRouteCoverage(pick, facts);
+  const skillSpatialFit = maximumRouteCoverage(pick, facts);
+  const basePick = profile.baseRange ? { ...pick, profile: { ...profile, range: profile.baseRange } } : pick;
+  const baseSpatialFit = basePick === pick ? skillSpatialFit : maximumRouteCoverage(basePick, facts);
+  // Selection is optimistic about deployment at t=0; final scoring uses the actual planned deployment time.
+  const windows = facts.criticalWindows.length ? facts.criticalWindows : [{ start: 0, end: 15 }];
+  const estimates = windows.map(window => estimateSkillWindow(profile, { deployedAt: 0, windowStart: window.start, windowEnd: window.end }));
+  const totalSeconds = windows.reduce((sum, window) => sum + Math.max(0, window.end - window.start), 0);
+  const skillShare = estimates.reduce((sum, estimate) => sum + estimate.skillSeconds, 0) / Math.max(1, totalSeconds);
+  const spatialFit = baseSpatialFit * (1 - skillShare) + skillSpatialFit * skillShare;
   const effectiveCoverage = 0.2 + spatialFit * 0.8;
-  const normal = adjustedDps(pick, encounter, profile.metrics.normalDps) * effectiveCoverage * confidenceFactor;
-  const burst = adjustedDps(pick, encounter, profile.metrics.burstDps) * effectiveCoverage * confidenceFactor;
-  const cycle = adjustedDps(pick, encounter, profile.metrics.cycleDps ?? profile.metrics.normalDps) * effectiveCoverage * confidenceFactor;
+  const normalDps = profile.subProfession === "liberator" || profile.subProfession === "bard" || profile.normalAttackSuppressed
+    ? 0 : profile.metrics.normalDps;
+  const normal = adjustedDps(pick, encounter, normalDps) * (0.2 + baseSpatialFit * 0.8) * confidenceFactor;
+  const burst = adjustedDps(pick, encounter, Math.max(...estimates.map(estimate => estimate.averageDps))) * effectiveCoverage * confidenceFactor;
+  const cycle = adjustedDps(pick, encounter, estimates.reduce((sum, estimate) => sum + estimate.totalDamage, 0) / Math.max(1, totalSeconds))
+    * effectiveCoverage * confidenceFactor;
   const rangedAir = profile.position === "RANGED" && profile.range.some(([, col]) => col >= 2);
   const subclass = profile.subProfession || "";
   const capabilities: CapabilityDemand = {
@@ -187,7 +199,8 @@ function capabilitiesForPick(pick: EnginePick, encounter: EncounterContext, fact
     laneHold: (profile.position === "MELEE"
       ? cycle / 2200 + profile.attributes.block / 5 + profile.metrics.physicalEhp / 35000
       : 0) + Number(LANE_HOLD_SUBPROFESSIONS.has(subclass)) * 0.7,
-    support: (profile.metrics.healingHps / 1000 + profile.metrics.controlSeconds / 6) * confidenceFactor
+    support: ((profile.metrics.healingHps + (profile.metrics.conditionalHpsUpperBound || 0)) / 1000
+      + profile.metrics.controlSeconds / 6) * confidenceFactor
       + Number(SUPPORT_SUBPROFESSIONS.has(subclass)) * 0.7,
     deployment: Math.max(0, (30 - profile.attributes.cost) / 20),
   };
@@ -214,10 +227,12 @@ function squadSelectionAdjustment(pick: EnginePick): number {
 }
 
 function isSustainedHealer(pick: EnginePick): boolean {
-  return pick.role === "medic"
-    || (pick.profile.subProfession === "bard" || pick.profile.subProfession === "guardian")
-      && pick.profile.metrics.healingHps > 0 && pick.profile.skillDuration === 0
-    || knowledgeForPick(pick).sustainedHealingSkills.includes(pick.skill);
+  const metrics = pick.profile.metrics;
+  const verifiedSkill = knowledgeForPick(pick).sustainedHealingSkills.includes(pick.skill);
+  if (metrics.normalHps !== undefined) {
+    return metrics.normalHps > 0 || metrics.healingMode === "continuous" && verifiedSkill;
+  }
+  return pick.role === "medic" || verifiedSkill;
 }
 
 function cannotReceiveAllyHealing(pick: EnginePick): boolean {
@@ -323,7 +338,7 @@ export function buildSquadBeam(
   const stealthRevealers = stageHasStealth(facts)
     ? available.filter(isStealthRevealer)
     : [];
-  const openingHealers = demand.deployment >= 0.5 && facts.groundRouteCount > 0
+  const openingHealers = facts.groundRouteCount > 0
     ? available.filter(pick => pick.profile.position === "RANGED" && isSustainedHealer(pick))
     : [];
   // ponytail: cap at two healer slots; revisit only if rehearsals prove three separated goals need more.
@@ -334,9 +349,13 @@ export function buildSquadBeam(
   );
   const uniqueOperators = new Set(available.map(pick => pick.operatorId)).size;
   const targetSize = Math.min(12, uniqueOperators);
-  const stealthRevealerSlot = stealthRevealers.length
-    ? Math.min(targetSize - 1, (openingVanguards.length ? 1 : 0) + openingBlockerSlots)
-    : -1;
+  // Each setup responsibility owns a slot; overlapping index ranges could silently remove healing or reveal.
+  const reservedPools: Array<{ picks: EnginePick[]; count: number }> = [
+    { picks: openingVanguards.length ? openingVanguards : available, count: 1 },
+    ...Array.from({ length: openingBlockerSlots }, (_, index) => ({ picks: openingBlockers, count: index + 1 })),
+    ...(stealthRevealers.length ? [{ picks: stealthRevealers, count: 1 }] : []),
+    ...Array.from({ length: openingHealerSlots }, (_, index) => ({ picks: openingHealers, count: index + 1 })),
+  ];
   const deploymentCoreSize = Math.min(9, facts.characterLimit || 9, facts.deploymentPoints.length, targetSize);
   const beamWidth = Math.max(1, Math.floor(options.search?.squadBeamWidth ?? 32));
   const capabilityCache = new Map<EnginePick, { capabilities: CapabilityDemand; adjustment: number }>();
@@ -366,11 +385,9 @@ export function buildSquadBeam(
           return rightGap - leftGap || left.localeCompare(right);
         }) : [];
       const reserveFocus = reservePriorities[Math.min(slot - deploymentCoreSize, reservePriorities.length - 1)];
-      const slotOptions = slot === 0 && openingVanguards.length ? openingVanguards
-        : slot === stealthRevealerSlot ? stealthRevealers
-        : slot > 0 && slot <= openingBlockerSlots ? openingBlockers
-          : slot > openingBlockerSlots && slot <= openingBlockerSlots + openingHealerSlots ? openingHealers
-            : available;
+      const reservation = reservedPools[slot];
+      const filled = reservation && state.picks.filter(pick => reservation.picks.some(option => option.operatorId === pick.operatorId)).length;
+      const slotOptions = reservation && filled! < reservation.count ? reservation.picks : available;
       for (const pick of slotOptions) {
         if (used.has(pick.operatorId)) continue;
         const { capabilities: addition, adjustment } = capabilityCache.get(pick)!;
@@ -575,38 +592,9 @@ function preferredStealthDirection(mapData: MapData): typeof DIRECTIONS[number] 
 }
 
 function goalFrontByPoint(mapData: MapData): Map<string, string> {
-  const cached = goalFrontCache.get(mapData);
-  if (cached) return cached;
-  const fronts = new Map<string, string>();
-  const goalRoutes = new Map<string, typeof mapData.routes>();
-  const hasGoalTiles = mapData.tiles.some(row => row.some(tile => tile.key === "end"));
-  for (const route of mapData.routes.filter(route => route.motionMode === "walk")) {
-    if (hasGoalTiles && mapData.tiles[route.endPosition.row]?.[route.endPosition.col]?.key !== "end") continue;
-    const goalKey = `${route.endPosition.row},${route.endPosition.col}`;
-    goalRoutes.set(goalKey, [...(goalRoutes.get(goalKey) || []), route]);
-  }
-  const melee = mapData.deploymentPoints.filter(point => point.buildableType !== "ranged");
-  const roadMelee = melee.filter(point => mapData.tiles[point.row]?.[point.col]?.key === "road");
-  const candidates = roadMelee.length ? roadMelee : melee;
-  const claimed = new Set<string>();
-  for (const [goalKey, routes] of goalRoutes) {
-    const routeTails = routes.map(route => routePathCells(route).slice(-6));
-    // ponytail: rank against this goal's route tails so recessed goals cannot share an unrelated global nearest road tile.
-    const ranked = candidates.map(point => {
-      const distances = routeTails.map(tail => Math.min(...tail.map(cell => distance(point, cell))));
-      return { point, farthest: Math.max(...distances), total: distances.reduce((sum, value) => sum + value, 0),
-        goalDistance: distance(point, routes[0].endPosition) };
-    }).sort((left, right) => left.farthest - right.farthest || left.total - right.total
-      || left.goalDistance - right.goalDistance
-      || left.point.row - right.point.row || left.point.col - right.point.col);
-    const selected = ranked.find(({ point }) => !claimed.has(`${point.row},${point.col}`)) || ranked[0];
-    if (!selected) continue;
-    const pointKey = `${selected.point.row},${selected.point.col}`;
-    fronts.set(pointKey, goalKey);
-    claimed.add(pointKey);
-  }
-  goalFrontCache.set(mapData, fronts);
-  return fronts;
+  return new Map(extractDefenseFronts(mapData).fronts.map(front => [
+    `${front.point.row},${front.point.col}`, front.goalKeys[0],
+  ]));
 }
 
 function bossGoalKeys(mapData: MapData): Set<string> {
@@ -624,7 +612,10 @@ function bossGoalKeys(mapData: MapData): Set<string> {
 }
 
 function coversPoint(deployment: ActiveDeployment, point: DeploymentPoint): boolean {
-  return deployment.pick.profile.range.some(offset => {
+  const range = isSustainedHealer(deployment.pick)
+    ? deployment.pick.profile.baseRange || deployment.pick.profile.range
+    : deployment.pick.profile.range;
+  return range.some(offset => {
     const [row, col] = rotateDirection(offset, deployment.placement.direction);
     return deployment.placement.point.row + row === point.row
       && deployment.placement.point.col + col === point.col;
@@ -642,7 +633,7 @@ function placementPreference(
 ): number {
   if (pick.profile.position === "MELEE") {
     const goal = goalFronts.get(`${placement.point.row},${placement.point.col}`);
-    return Number(Boolean(goal && !securedGoals.has(goal))) * MELEE_GOAL_FRONT_BONUS
+    return Number(Boolean(goal && !securedGoals.has(`${placement.point.row},${placement.point.col}`))) * MELEE_GOAL_FRONT_BONUS
       + Number(placement.direction === preferredIncomingDirection(placement.point, mapData, threats)) * MELEE_INCOMING_BONUS;
   }
   if (meleeBlocks.length === 0) return 0;
@@ -682,44 +673,19 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
   // 候选固定以 SpeedUp 开局；模型时长是游戏秒，MAA 延时是真实毫秒。
   const gameSecondsToDelay = (seconds: number): number => Math.round(seconds * 1000 / 2);
   const deployLimit = Math.min(9, input.facts.characterLimit || 9, input.facts.deploymentPoints.length);
+  const defenseOpening = planDefenseOpening(input.mapData, input.picks, deployLimit, (pick, front) => {
+    if (front.goalKeys.some(goal => bossGoals.has(goal))) return Number(cannotReceiveAllyHealing(pick));
+    return Number(bossGoals.size > 0 && !cannotReceiveAllyHealing(pick) && input.picks.some(cannotReceiveAllyHealing));
+  });
+  const defenseAssignments = new Map(defenseOpening.assignments.map(assignment => [assignment.pick.operatorId, assignment]));
   const hasStealth = stageHasStealth(input.facts);
   const openingVanguard = input.openingPressure && input.picks[0]?.role === "vanguard"
     ? input.picks[0]
     : undefined;
-  const plansDefensiveFrontline = input.openingPressure || bossGoals.size > 0;
-  const permanentMelee = input.picks.filter(pick => pick.profile.position === "MELEE" && !isTemporaryPick(pick));
-  const frontlineCount = new Set(goalFronts.values()).size;
-  const laneHolder = (pick: EnginePick): boolean => LANE_HOLD_SUBPROFESSIONS.has(pick.profile.subProfession || "")
-    || knowledgeForPick(pick).capabilities.includes("lane-hold");
-  const orderedFrontliners = [
-    ...permanentMelee.filter(laneHolder),
-    ...permanentMelee.filter(pick => !laneHolder(pick)),
-  ];
-  const bossFrontliners = orderedFrontliners
-    .filter(pick => !cannotReceiveAllyHealing(pick))
-    .slice(0, Math.min(bossGoals.size, frontlineCount));
-  const bossFrontlinerIds = new Set(bossFrontliners.map(pick => pick.operatorId));
-  const remainingFrontliners = bossGoals.size
-    ? [
-      ...orderedFrontliners.filter(pick => cannotReceiveAllyHealing(pick)),
-      ...orderedFrontliners.filter(pick => !cannotReceiveAllyHealing(pick)),
-    ].filter(pick => !bossFrontlinerIds.has(pick.operatorId))
-    : orderedFrontliners;
-  // ponytail: boss lanes reserve healable blockers; unhealable lane holders take the remaining ordinary fronts.
-  const frontlinePicks = plansDefensiveFrontline
-    ? [...bossFrontliners, ...remainingFrontliners].slice(0, frontlineCount)
-    : [];
+  const plansDefensiveFrontline = defenseOpening.assignments.length > 0 || input.openingPressure || bossGoals.size > 0;
+  const frontlinePicks = defenseOpening.assignments.map(assignment => assignment.pick);
   const frontlineIds = new Set(frontlinePicks.map(pick => pick.operatorId));
-  const splitGroundOpening = input.facts.groundRouteCount >= 4 && input.facts.laneCount >= 4;
-  // ponytail: only wide split openings need two cheap permanent melee units before expensive tanks or support can arrive.
-  const openingBlockers = plansDefensiveFrontline
-    ? (splitGroundOpening
-      ? [...frontlinePicks, ...permanentMelee.filter(pick => !frontlineIds.has(pick.operatorId))]
-        .sort((left, right) => left.profile.attributes.cost - right.profile.attributes.cost
-          || left.operatorId.localeCompare(right.operatorId))
-        .slice(0, 2)
-      : frontlinePicks)
-    : [];
+  const openingBlockers = frontlinePicks;
   const openingHealers = plansDefensiveFrontline
     ? input.picks.filter(pick => pick.profile.position === "RANGED" && isSustainedHealer(pick))
     : [];
@@ -731,9 +697,9 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
   const openingStealthRevealer = hasStealth
     ? input.picks.filter(isStealthRevealer).slice(0, 1)
     : [];
-  const openingCore = openingAntiAir.length
-    ? [...openingBlockers, ...openingStealthRevealer, ...openingAntiAir]
-    : [...openingBlockers, ...openingStealthRevealer];
+  // Insert healing after the first contact; the deadline scheduler moves later fronts ahead when necessary.
+  const openingCore = [...openingBlockers.slice(0, 1), ...openingStealthRevealer, ...openingAntiAir,
+    ...openingHealers.slice(0, 1), ...openingBlockers.slice(1)];
   const prioritizedPicks = uniquePicks([openingVanguard, ...openingCore, ...openingHealers]);
   const prioritizedIds = new Set(prioritizedPicks.map(pick => pick.operatorId));
   const plannedDeploymentPicks = plansDefensiveFrontline
@@ -747,7 +713,7 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
     : [];
   const openingPriorityIds = new Set(openingPriority.map(pick => pick.operatorId));
   // ponytail: deploy blockers before ranged support, otherwise cost waiting leaks split opening ground lanes.
-  const deploymentPicks = openingPriority.length
+  const baseDeploymentPicks = openingPriority.length
     ? [
       ...openingPriority,
       ...plannedDeploymentPicks.slice(0, deployLimit)
@@ -757,8 +723,12 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
       ...plannedDeploymentPicks.slice(deployLimit),
     ]
     : plannedDeploymentPicks;
+  // Each terminal approach is independent even when several approaches share one blue box.
+  const deploymentPicks = orderDefenseDeployments(input.mapData, baseDeploymentPicks, defenseOpening.assignments);
   const jointDecisions = new Map(input.jointPlan?.decisions.map(decision => [decision.pick.operatorId, decision]));
   const jointPreDelay = (pick: EnginePick): number | undefined => {
+    if (defenseAssignments.has(pick.operatorId)) return 0;
+    if (defenseOpening.assignments.some(assignment => !active.has(assignment.pick.operatorId))) return 0;
     if (!input.jointPlan) return undefined;
     const targetTime = jointDecisions.get(pick.operatorId)?.targetTime || 0;
     if (targetTime <= 0) return undefined;
@@ -773,6 +743,7 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
   const removeActive = (deployment: ActiveDeployment): void => {
     active.delete(deployment.pick.operatorId);
     occupiedPositions.delete(`${deployment.placement.point.row},${deployment.placement.point.col}`);
+    securedGoals.delete(`${deployment.placement.point.row},${deployment.placement.point.col}`);
     const blockIndex = meleeBlocks.findIndex(point => point.row === deployment.placement.point.row
       && point.col === deployment.placement.point.col);
     if (blockIndex >= 0) meleeBlocks.splice(blockIndex, 1);
@@ -783,7 +754,7 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
     if (pick.profile.position === "MELEE") {
       meleeBlocks.push(placement.point);
       const goal = goalFronts.get(`${placement.point.row},${placement.point.col}`);
-      if (goal) securedGoals.add(goal);
+      if (goal && pick.profile.attributes.block > 0) securedGoals.add(`${placement.point.row},${placement.point.col}`);
     }
     actions.push({
       type: "Deploy",
@@ -798,30 +769,25 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
 
   for (const pick of deploymentPicks) {
     checkDeadline?.();
+    const pendingFronts = defenseOpening.assignments.filter(assignment => !active.has(assignment.pick.operatorId)).length;
+    // An affordable support deployment must still leave a slot for every unfinished front.
+    if (!defenseAssignments.has(pick.operatorId) && pendingFronts > 0
+      && active.size + pendingFronts >= deployLimit) continue;
     if (active.size >= deployLimit) {
       const vanguard = !isTemporaryPick(pick)
         ? [...active.values()].find(deployment => deployment.pick.role === "vanguard"
           && !goalFronts.has(`${deployment.placement.point.row},${deployment.placement.point.col}`))
         : undefined;
-      const ordinary = !isTemporaryPick(pick) && !vanguard
-        ? [...active.values()].find(deployment => !isTemporaryPick(deployment.pick)
-          && deployment.pick.profile.position !== "MELEE"
-          && !isSustainedHealer(deployment.pick)
-          && preferenceBonus(deployment.pick) === 0
-          && !goalFronts.has(`${deployment.placement.point.row},${deployment.placement.point.col}`))
-          || [...active.values()].find(deployment => !isTemporaryPick(deployment.pick)
-            && deployment.pick.profile.position !== "MELEE"
-            && !isSustainedHealer(deployment.pick)
-            && !goalFronts.has(`${deployment.placement.point.row},${deployment.placement.point.col}`))
-        : undefined;
-      const outgoing = vanguard || ordinary;
+      // A twelve-operator squad includes reserves. Without a replacement objective, keep the active damage/healing core.
+      const outgoing = vanguard;
       if (!outgoing) continue;
-      // ponytail: permanent melee preserve lane interception; rotate only a non-frontline ranged unit.
       actions.push({ type: "Retreat", name: outgoing.pick.name, costs: Math.round(pick.profile.attributes.cost) });
       removeActive(outgoing);
     }
     const ranked = rankedPlacements(pick, input.facts)
-      .filter(({ point }) => !occupiedPositions.has(`${point.row},${point.col}`));
+      .filter(({ point }) => !occupiedPositions.has(`${point.row},${point.col}`)
+        && !defenseOpening.assignments.some(assignment => assignment.pick.operatorId !== pick.operatorId
+          && !active.has(assignment.pick.operatorId) && assignment.front.point.row === point.row && assignment.front.point.col === point.col));
     const unreserved = isTemporaryPick(pick)
       ? ranked.filter(({ point }) => !goalFronts.has(`${point.row},${point.col}`))
       : ranked;
@@ -834,7 +800,7 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
     if (frontlineIds.has(pick.operatorId) && placements.length) {
       const roleFronts = placements.filter(({ point }) => {
         const goal = goalFronts.get(`${point.row},${point.col}`);
-        if (!goal || securedGoals.has(goal)) return false;
+        if (!goal || securedGoals.has(`${point.row},${point.col}`)) return false;
         return cannotReceiveAllyHealing(pick) ? !bossGoals.has(goal) : bossGoals.has(goal);
       });
       if (roleFronts.length) placements = roleFronts;
@@ -874,7 +840,12 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
       if (covered.length) placements = covered;
     }
     const joint = jointDecisions.get(pick.operatorId);
-    if (joint) {
+    const defense = defenseAssignments.get(pick.operatorId);
+    if (defense) {
+      // Use the actual path tile, not a nearby tile with a high aggregate pressure score.
+      placements = ranked.filter(({ point, direction }) => point.row === defense.front.point.row
+        && point.col === defense.front.point.col && direction === defense.front.direction);
+    } else if (joint) {
       const planned = placements.find(placement => placement.point.row === joint.location[0]
         && placement.point.col === joint.location[1] && placement.direction === joint.direction);
       if (planned) placements = [planned];
@@ -907,9 +878,12 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
   const stealthDeployIndex = stealthRevealer
     ? actions.map(action => action.type === "Deploy" && action.name === stealthRevealer.name).lastIndexOf(true)
     : -1;
+  const lastFrontlineDeployIndex = Math.max(-1, ...defenseOpening.assignments.map(assignment =>
+    actions.findIndex(action => action.type === "Deploy" && action.name === assignment.pick.name)));
+  const skillInsertionIndex = Math.max(stealthDeployIndex, lastFrontlineDeployIndex);
   const skillPlan = input.encounter
     ? planSkillActions(
-      stealthDeployIndex >= 0 ? actions.slice(0, stealthDeployIndex + 1) : actions,
+      stealthDeployIndex >= 0 ? actions.slice(0, skillInsertionIndex + 1) : actions,
       stealthRevealer ? [stealthRevealer] : input.picks,
       input.encounter,
       input.mapData.options,
@@ -918,19 +892,36 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
   if (skillPlan.usesDaemon) actions.push({ type: "SkillDaemon" });
   else {
     actions.splice(1, 0, { type: "ResetStopwatch" });
-    const skillDeployIndex = stealthRevealer
-      ? actions.map(action => action.type === "Deploy" && action.name === stealthRevealer.name).lastIndexOf(true)
-      : -1;
+    // Waiting for a support skill must not hold up an unfinished entrance defense.
+    const skillDeployIndex = stealthRevealer ? skillInsertionIndex + 1 : -1;
     if (skillDeployIndex >= 0) actions.splice(skillDeployIndex + 1, 0, ...skillPlan.actions);
     else actions.push(...skillPlan.actions);
+    const timeline = planDeploymentTimeline({ actions }, input.mapData.options);
+    const pressure = input.facts.temporalPressure;
+    const horizon = (pressure.buckets.at(-1)?.time || 0) + pressure.bucketSeconds;
+    if (Number.isFinite(timeline.time) && horizon > timeline.time) {
+      // Keep automatic strategies active for the modeled route horizon; blocked enemies may outlast this estimate.
+      const until = timeline.wallTime + (horizon - timeline.time) / timeline.speedMultiplier - (timeline.stopwatchWallTime || 0);
+      actions.push({ type: "Output", elapsed_time: Math.ceil(until * 1000), doc: "保持自动技能至预计路线结束；实际结算另行核验" });
+    }
   }
   const manualSkillNames = new Set(skillPlan.actions
     .map(action => action.name)
     .filter((name): name is string => Boolean(name)));
 
+  const finalTimeline = planDeploymentTimeline({ actions }, input.mapData.options,
+    { deploymentInteractionSeconds: DEFENSE_DEPLOY_INTERACTION_SECONDS });
+  const actualDefense = defenseOpening.assignments.map(assignment => ({ ...assignment,
+    readyTime: finalTimeline.deployments.find(deployment => deployment.name === assignment.pick.name)?.time ?? Number.POSITIVE_INFINITY,
+  }));
+  if (actualDefense.some(({ front, readyTime }) => !Number.isFinite(readyTime) || readyTime > front.firstArrival)) {
+    defenseOpening.coverageGaps = [...new Set([...defenseOpening.coverageGaps, "defense_opening_deadline_missed"])].sort();
+  }
+
   const warnings = [
     ...(input.picks.length < 12 ? [`Only ${input.picks.length} modeled elite 2 operators are available for the fixed squad.`] : []),
     ...skillPlan.coverageGaps,
+    ...defenseOpening.coverageGaps,
   ];
   const script: BattleScript = {
     stage_name: input.stageCode,
@@ -946,8 +937,17 @@ export function buildCandidate(input: CandidateBuildInput, checkDeadline?: () =>
       playerOperatorsUsed: Boolean(input.options.playerOperators?.size),
       operatorGaps: input.picks.length < 12 ? [`fixed squad missing ${12 - input.picks.length} operators`] : [],
       warnings: [...warnings],
+      defensePlan: {
+        deploymentInteractionSeconds: DEFENSE_DEPLOY_INTERACTION_SECONDS,
+        timingModel: "unblocked route arrival with natural DP only; deployment latency is an estimate",
+        fronts: actualDefense.map(({ front, pick, readyTime }) => ({
+          routeIds: front.routeIds, location: [front.point.row, front.point.col], operator: pick.name,
+          firstArrival: Number.isFinite(front.firstArrival) ? front.firstArrival : null,
+          readyTime: Number.isFinite(readyTime) ? readyTime : null,
+        })),
+      },
     },
     version: 3,
   };
-  return { script, picks: input.picks, warnings, coverageGaps: skillPlan.coverageGaps };
+  return { script, picks: input.picks, warnings, coverageGaps: [...new Set([...skillPlan.coverageGaps, ...defenseOpening.coverageGaps])].sort() };
 }

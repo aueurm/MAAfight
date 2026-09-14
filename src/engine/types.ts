@@ -126,10 +126,20 @@ export interface CombatAttributes {
 }
 
 export interface CombatMetrics {
+  /** Nominal attack rate; actual ordinary attacks may be disabled by the resolved skill state. */
   normalDps: number;
   burstDps: number;
   cycleDps: number | null;
+  /** Continuous healing only; conditional one-shot healing is recorded separately. */
   healingHps: number;
+  normalHps?: number;
+  skillHps?: number | null;
+  /** One target, one activation; not a per-second rate. */
+  healPerTrigger?: number | null;
+  /** Long-run natural-SP upper bound, before HP thresholds, charges and target conditions. */
+  conditionalHpsUpperBound?: number | null;
+  healingMode?: "none" | "continuous" | "triggered" | "unknown";
+  healingEvidence?: string;
   physicalEhp: number;
   artsEhp: number;
   controlSeconds: number;
@@ -145,6 +155,14 @@ export interface ResolvedOperatorProfile {
   skill: number;
   skillRank: number;
   skillDuration: number;
+  /** Raw GameData duration; zero/negative values do not establish indefinite duration. */
+  rawDuration?: number;
+  durationType?: string;
+  durationSemantics?: "finite" | "indefinite" | "ammo" | "unknown";
+  /** Verified skill description forbids ordinary attacks outside the active skill state. */
+  normalAttackSuppressed?: boolean;
+  normalAttackEvidence?: string | null;
+  spIncrement?: number;
   skillType?: string;
   spType?: string;
   spCost?: number;
@@ -152,6 +170,7 @@ export interface ResolvedOperatorProfile {
   respawnTime: number;
   baseRangeId: string | null;
   skillRangeId: string | null;
+  baseRange?: Array<[number, number]>;
   range: Array<[number, number]>;
   attributes: CombatAttributes;
   metrics: CombatMetrics;

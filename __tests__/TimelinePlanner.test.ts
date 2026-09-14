@@ -22,6 +22,13 @@ function mapData(): MapData {
 }
 
 describe("event deployment timeline", () => {
+  it("reports every action's game time and applies explicit deployment interaction allowances", () => {
+    const actions = [{ type: "SpeedUp" as const }, { type: "Deploy" as const, name: "operator", costs: 8 },
+      { type: "Skill" as const, name: "operator", pre_delay: 1000 }, { type: "Output" as const, kills: 1 }];
+    const timeline = planDeploymentTimeline({ actions }, mapData().options, { deploymentInteractionSeconds: 0.75 });
+    expect(timeline.actionTimes).toEqual([0, 3, 6.5, Number.POSITIVE_INFINITY]);
+    expect(timeline.deployments[0].time).toBe(4.5);
+  });
   it("derives spawn, air, boss and critical-zone events", () => {
     const data = mapData();
     const events = buildTimelineEvents(data, extractStageFacts(data));

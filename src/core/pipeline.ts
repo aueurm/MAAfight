@@ -119,7 +119,7 @@ export const DEFAULT_DATA_URL = process.env.MAAFIGHT_DATA_URL || DEFAULT_LEVEL_D
 export const DEFAULT_OUTPUT_DIR = getRuntimePaths().outputDir;
 
 export type GenerationCore = "rule-core" | "deepseek-core";
-const RULE_ENGINE_VERSION = "v2-temporal-maa617-v2";
+const RULE_ENGINE_VERSION = "v2-defense-skill-window-v3";
 
 function coreMode(value: unknown): GenerationCore {
   const mode = value || "rule-core";

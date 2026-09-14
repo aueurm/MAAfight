@@ -80,7 +80,7 @@ function hardConstraints(script: BattleScript, mapData: MapData): boolean {
 
 function engagementKey(candidate: Pick<ScoredCandidate, "scriptHash" | "squadSignature">, encounterHash: string, combatVersion: string): string {
   return createHash("sha256").update(JSON.stringify({
-    scorer: "skill-engagement-v2",
+    scorer: "defense-skill-window-v3",
     combatVersion,
     encounterHash,
     squad: candidate.squadSignature,

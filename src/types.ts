@@ -238,6 +238,8 @@ export interface MapOptions {
   maxLifePoint: number;
   initialCost: number;
   maxCost: number;
+  /** Verified global starting DP cap; later unlock timing is not modeled. Does not replace maxCost. */
+  initialCostCap?: number;
   costIncreaseTime: number;
   /** Multiplies raw enemy moveSpeed; legacy maps without it use 1. */
   moveMultiplier?: number;
@@ -263,6 +265,11 @@ export interface BattleScript {
     playerOperatorsUsed?: boolean;
     operatorGaps?: string[];
     deploymentReasons?: Record<string, string>;
+    defensePlan?: {
+      deploymentInteractionSeconds: number;
+      timingModel: string;
+      fronts: Array<{ routeIds: number[]; location: number[]; operator: string; firstArrival: number | null; readyTime: number | null }>;
+    };
     warnings?: string[];
     candidateScore?: number;
     candidateScoreBreakdown?: Record<string, number>;

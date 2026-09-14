@@ -80,4 +80,22 @@ describe("skill strategy planner", () => {
     expect(plan.usesDaemon).toBe(true);
     expect(plan.coverageGaps).toContain("manual_skill_ordering_unverified:operator");
   });
+
+  it("does not subtract nonexistent ordinary attacks when ranking a skill-only attacker", () => {
+    const data = mapData();
+    const candidates = ["skill-only", "ordinary-a", "ordinary-b"].map(name => {
+      const candidate = pick("MANUAL", "INCREASE_WITH_TIME");
+      candidate.name = candidate.operatorId = candidate.profile.name = candidate.profile.operatorId = name;
+      candidate.profile.normalAttackSuppressed = name === "skill-only";
+      candidate.profile.metrics.burstDps = name === "skill-only" ? 500 : 700;
+      return candidate;
+    });
+    const deployments: BattleScript["actions"] = candidates.map((candidate, col) => ({
+      type: "Deploy", name: candidate.name, location: [0, col], direction: "Right", costs: 1,
+    }));
+    const facts = extractStageFacts(data);
+    const plan = planSkillActions(deployments, candidates, buildEncounterContext(data, facts), data.options);
+    expect(plan.actions).toHaveLength(2);
+    expect(plan.actions.some(action => action.name === "skill-only")).toBe(true);
+  });
 });

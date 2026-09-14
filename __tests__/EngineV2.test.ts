@@ -277,7 +277,7 @@ describe("v2 skill engine", () => {
     expect([2, 3]).toContain(picks.find(pick => pick.name === "提丰")?.skill);
   });
 
-  it("opens high deployment demand with a vanguard without changing low-demand scoring", () => {
+  it("reserves an available vanguard for high deployment demand but allows a low-demand roster without one", () => {
     const records = ["德克萨斯", "佩佩", "塞雷娅"].map(name => getCombatOperatorByName(name)!);
     const players = new Map(records.map(record => [record.id, {
       id: record.id, name: record.name, rarity: record.rarity, own: true,
@@ -314,7 +314,8 @@ describe("v2 skill engine", () => {
     ];
     const lowFacts = extractStageFacts(lowMap);
     const lowEncounter = buildEncounterContext(lowMap, lowFacts);
-    const lowPicks = buildSquadBeam(lowFacts, lowEncounter, { playerOperators: players }).squads[0];
+    const withoutVanguard = new Map([...players].filter(([id]) => getCombatOperatorByName("德克萨斯")!.id !== id));
+    const lowPicks = buildSquadBeam(lowFacts, lowEncounter, { playerOperators: withoutVanguard }).squads[0];
 
     expect(lowEncounter.demand.deployment).toBeLessThan(0.5);
     expect(lowPicks[0].role).not.toBe("vanguard");
@@ -406,6 +407,26 @@ describe("v2 skill engine", () => {
     expect(picks.slice(0, 3).map(pick => pick.role)).toEqual(["vanguard", "medic", "medic"]);
   });
 
+  it.each([[5, 1, 3], [20, 1, 5], [20, 2, 6]])("keeps independent reveal and healer reservations at initial DP %i with %i healing slots", (initialCost, healerSlots, prefixSize) => {
+    const records = ["德克萨斯", "银灰", "赫默", "白面鸮", "佩佩", "塞雷娅", "山", "煌",
+      "维什戴尔", "逻各斯", "艾雅法拉", "能天使", "黑", "史尔特尔"].map(name => getCombatOperatorByName(name)!);
+    const players = new Map(records.map(record => [record.id, { id: record.id, name: record.name, rarity: record.rarity,
+      own: true, elite: 2, level: 60, potential: 1 }] as [string, PlayerOperator]));
+    const mapData = makeMapData();
+    mapData.enemyDetails[0].mechanics = ["stealth"];
+    mapData.options.initialCost = initialCost;
+    const facts = { ...extractStageFacts(mapData), initialCost, groundRouteCount: 4, laneCount: 4,
+      goalCells: Array.from({ length: healerSlots }, (_, row) => ({ row, col: 6 })) };
+    const base = buildEncounterContext(mapData, facts);
+    const encounter = { ...base, demand: { ...base.demand, deployment: 1 } };
+    const picks = buildSquadBeam(facts, encounter, { playerOperators: players, search: { squadBeamWidth: 4 } }).squads[0];
+    expect(picks).toHaveLength(12);
+    expect(picks[0].role).toBe("vanguard");
+    const setup = picks.slice(0, prefixSize);
+    expect(setup.some(pick => pick.name === "银灰")).toBe(true);
+    expect(setup.filter(pick => (pick.profile.metrics.normalHps || 0) > 0)).toHaveLength(healerSlots);
+  });
+
   it("excludes self-disabling skills while retaining the other skill choices", () => {
     const exclusions = new Map<string, { blocked: number[]; choices: number }>([
       ["阿米娅", { blocked: [2, 3], choices: 1 }],
@@ -476,6 +497,7 @@ describe("v2 skill engine", () => {
 
   it("prefers distinct melee blockers at each goal front before a shared central choke", () => {
     const mapData = makeMapData();
+    mapData.spawnTimeline.push({ time: 0, enemyId: "enemy", count: 1, routeIndex: 1 });
     mapData.routes = [
       { id: 0, motionMode: "walk", startPosition: { row: 2, col: 0 }, checkpoints: [{ row: 2, col: 2 }], endPosition: { row: 0, col: 6 } },
       { id: 1, motionMode: "walk", startPosition: { row: 2, col: 0 }, checkpoints: [{ row: 2, col: 2 }], endPosition: { row: 4, col: 6 } },
@@ -504,6 +526,7 @@ describe("v2 skill engine", () => {
 
   it("infers recessed goal fronts and spreads sustained healers across them", () => {
     const mapData = makeMapData();
+    mapData.spawnTimeline.push({ time: 0, enemyId: "enemy", count: 1, routeIndex: 1 });
     mapData.routes = [
       { id: 0, motionMode: "walk", startPosition: { row: 4, col: 3 }, checkpoints: [], endPosition: { row: 2, col: 0 } },
       { id: 1, motionMode: "walk", startPosition: { row: 4, col: 3 }, checkpoints: [], endPosition: { row: 2, col: 6 } },
@@ -536,9 +559,10 @@ describe("v2 skill engine", () => {
     });
     const deploys = built.script.actions.filter(action => action.type === "Deploy");
 
-    expect(deploys.map(action => action.name)).toEqual(["先锋", "左路主坦", "右路主坦", "医疗甲", "医疗乙"]);
-    expect(deploys.slice(1, 3).map(action => action.location)).toEqual(expect.arrayContaining([[2, 2], [2, 4]]));
-    for (const frontline of deploys.slice(1, 3)) {
+    // Both recessed fronts are reached at t=3: inserting the vanguard would miss one deadline.
+    expect(deploys.map(action => action.name)).toEqual(["左路主坦", "右路主坦", "先锋", "医疗甲", "医疗乙"]);
+    expect(deploys.slice(0, 2).map(action => action.location)).toEqual(expect.arrayContaining([[2, 2], [2, 4]]));
+    for (const frontline of deploys.slice(0, 2)) {
       expect(deploys.slice(3).some(healer => healingRange.some(offset => {
         const [row, col] = rotateDirection(offset, healer.direction!);
         return healer.location![0] + row === frontline.location![0]
@@ -628,6 +652,7 @@ describe("v2 skill engine", () => {
 
   it("builds a pressured opening in the nearest defensive zone before ranged support", () => {
     const mapData = makeMapData();
+    mapData.spawnTimeline.push({ time: 0, enemyId: "enemy", count: 1, routeIndex: 1 });
     mapData.routes = [
       { id: 0, motionMode: "walk", startPosition: { row: 2, col: 0 }, checkpoints: [{ row: 2, col: 2 }], endPosition: { row: 0, col: 6 } },
       { id: 1, motionMode: "walk", startPosition: { row: 2, col: 0 }, checkpoints: [{ row: 2, col: 2 }], endPosition: { row: 4, col: 6 } },
@@ -662,28 +687,34 @@ describe("v2 skill engine", () => {
     });
     const deploys = built.script.actions.filter(action => action.type === "Deploy");
 
-    expect(deploys.map(action => action.name)).toEqual(["先锋", "上路主坦", "下路主坦", "遥", "高台", "近卫"]);
+    expect(deploys.map(action => action.name)).toEqual(["上路主坦", "下路主坦", "先锋", "遥", "高台", "近卫"]);
     expect(deploys[0].location).not.toEqual([2, 2]);
-    expect(deploys.slice(1, 3).map(action => action.location)).toEqual(expect.arrayContaining([[0, 5], [4, 5]]));
-    expect(deploys[3].location).toEqual([2, 3]);
+    const blockers = deploys.filter(action => ["上路主坦", "下路主坦"].includes(action.name!));
+    const healer = deploys.find(action => action.name === "遥")!;
+    expect(blockers.map(action => action.location)).toEqual(expect.arrayContaining([[0, 5], [4, 5]]));
+    expect(healer.location).toEqual([2, 3]);
     expect(deploys[5].location).not.toEqual([2, 2]);
-    for (const action of [...deploys.slice(1, 3), deploys[5]]) {
+    for (const action of [...blockers, deploys[5]]) {
       expect(sustainedRange.some(offset => {
-        const [row, col] = rotateDirection(offset, deploys[3].direction!);
-        return deploys[3].location![0] + row === action.location![0]
-          && deploys[3].location![1] + col === action.location![1];
+        const [row, col] = rotateDirection(offset, healer.direction!);
+        return healer.location![0] + row === action.location![0]
+          && healer.location![1] + col === action.location![1];
       })).toBe(true);
     }
   });
 
   it("prioritizes measurable healing over a zero-healing bard in a pressured opening", () => {
     const mapData = makeMapData();
+    const conditionalMedic = testPick("伤害依赖治疗", "RANGED", [[0, 0]], { role: "medic" });
+    conditionalMedic.profile.metrics = { ...conditionalMedic.profile.metrics,
+      normalHps: 0, skillHps: null, healingHps: 0, healingMode: "unknown" };
     const built = buildCandidate({
       stageCode: "V2-1", mapData, facts: extractStageFacts(mapData), openingPressure: true,
       picks: [
         testPick("先锋", "MELEE", [[0, 0]], { role: "vanguard" }),
         testPick("前线", "MELEE", [[0, 0]], { role: "tank", subProfession: "protector" }),
         testPick("浊心斯卡蒂", "RANGED", [[0, 0]], { role: "support", subProfession: "bard" }),
+        conditionalMedic,
         testPick("医疗", "RANGED", [[0, 0]], { role: "medic" }),
       ],
       positionVariant: 0, timingVariant: 0, options: {},
@@ -691,6 +722,7 @@ describe("v2 skill engine", () => {
 
     const names = built.script.actions.filter(action => action.type === "Deploy").map(action => action.name);
     expect(names.indexOf("医疗")).toBeLessThan(names.indexOf("浊心斯卡蒂"));
+    expect(names.indexOf("医疗")).toBeLessThan(names.indexOf("伤害依赖治疗"));
   });
 
   it("deploys opening blockers and anti-air attackers before healers when fliers open the stage", () => {
@@ -719,9 +751,8 @@ describe("v2 skill engine", () => {
 
     const names = built.script.actions.filter(action => action.type === "Deploy").map(action => action.name);
     expect(names).toEqual(expect.arrayContaining(["对空", "医疗"]));
-    expect(names.indexOf("前线")).toBe(1);
-    expect(names.indexOf("对空")).toBe(2);
-    expect(names.indexOf("前线")).toBeLessThan(names.indexOf("医疗"));
+    const openingBlocker = built.script.metadata.defensePlan!.fronts[0].operator;
+    expect(names.indexOf(openingBlocker)).toBeLessThan(names.indexOf("医疗"));
     expect(names.indexOf("对空")).toBeLessThan(names.indexOf("医疗"));
   });
 
@@ -790,7 +821,7 @@ describe("v2 skill engine", () => {
     expect(validateMAAProtocol(built.script).valid).toBe(true);
   });
 
-  it("rotates a non-frontline operator when a reserve arrives after the vanguard", () => {
+  it("keeps a non-frontline damage core instead of rotating it merely to deploy a reserve", () => {
     const mapData = makeMapData();
     mapData.options.characterLimit = 2;
     mapData.deploymentPoints = [
@@ -810,9 +841,9 @@ describe("v2 skill engine", () => {
 
     expect(built.script.actions.map(action => [action.type, action.name])).toEqual([
       ["SpeedUp", undefined], ["Deploy", "前线"], ["Deploy", "非前线"],
-      ["Retreat", "非前线"], ["Deploy", "后备"], ["SkillDaemon", undefined],
+      ["SkillDaemon", undefined],
     ]);
-    expect(built.script.actions[3]).toMatchObject({ costs: 20 });
+    expect(built.script.opers.map(operator => operator.name)).toContain("后备");
     expect(built.script.actions.some(action => action.cooling)).toBe(false);
     expect(maximumActive(built.script.actions)).toBeLessThanOrEqual(mapData.options.characterLimit);
   });
@@ -864,11 +895,10 @@ describe("v2 skill engine", () => {
     });
 
     expect(built.script.actions.map(action => action.type)).toEqual([
-      "SpeedUp", "Deploy", "Deploy", "Retreat", "Deploy", "SkillDaemon",
+      "SpeedUp", "Deploy", "Deploy", "SkillDaemon",
     ]);
-    expect(built.script.actions.filter(action => action.type === "Retreat")).toEqual([
-      expect.objectContaining({ name: "先锋", costs: expect.any(Number) }),
-    ]);
+    expect(built.script.actions.some(action => action.type === "Retreat")).toBe(false);
+    expect(built.script.actions.some(action => action.type === "Deploy" && action.name === "前线")).toBe(true);
     expect(built.script.actions.some(action => action.cooling)).toBe(false);
     expect(validateMAAProtocol(built.script).valid).toBe(true);
   });
@@ -911,7 +941,7 @@ describe("v2 skill engine", () => {
     expect(validateMAAProtocol(built.script).valid).toBe(true);
   });
 
-  it("keeps temporary operators off an available goal front", () => {
+  it("uses a positive-block vanguard at the terminal front when no permanent blocker is available", () => {
     const mapData = makeMapData();
     mapData.deploymentPoints = [
       { row: 2, col: 5, buildableType: "melee" },
@@ -923,7 +953,7 @@ describe("v2 skill engine", () => {
       positionVariant: 0, timingVariant: 0, options: {},
     });
 
-    expect(built.script.actions.find(action => action.type === "Deploy")?.location).toEqual([2, 2]);
+    expect(built.script.actions.find(action => action.type === "Deploy")?.location).toEqual([2, 5]);
   });
 
   it("generates a deterministic fixed protocol-safe script", () => {
@@ -991,7 +1021,7 @@ describe("v2 skill engine", () => {
     expect(context(multiRoute).demand.coverage).toBeGreaterThan(context(makeMapData()).demand.coverage);
   });
 
-  it("builds deployment actions in marginal squad order", () => {
+  it("preserves the fixed squad while prioritizing the active defense and healing core", () => {
     const mapData = makeMapData();
     mapData.deploymentPoints = Array.from({ length: 12 }, (_, index) => ({
       row: 1 + Math.floor(index / 6), col: index % 6, buildableType: "all" as const,
@@ -1007,7 +1037,10 @@ describe("v2 skill engine", () => {
     const firstRetreat = built.script.actions.findIndex(action => action.type === "Retreat");
     const initialDeploys = built.script.actions.slice(0, firstRetreat < 0 ? undefined : firstRetreat)
       .filter(action => action.type === "Deploy").map(action => action.name);
-    expect(initialDeploys).toEqual(picks.slice(0, initialDeploys.length).map(pick => pick.name));
+    expect(built.script.opers.map(operator => operator.name)).toEqual(picks.map(pick => pick.name));
+    expect(initialDeploys.length).toBeLessThanOrEqual(mapData.options.characterLimit);
+    expect(initialDeploys).toEqual(expect.arrayContaining(built.script.metadata.defensePlan!.fronts.map(front => front.operator)));
+    expect(initialDeploys.some(name => picks.find(pick => pick.name === name)?.role === "medic")).toBe(true);
   });
 
   it("returns a fully scored best-so-far candidate at the deadline", () => {
@@ -1021,6 +1054,39 @@ describe("v2 skill engine", () => {
     expect(result.searchStats.terminationReason).toBe("deadline");
     expect(result.searchStats.fullyScoredCandidates).toBeGreaterThan(0);
     expect(result.script.metadata.candidateScore).toBeGreaterThanOrEqual(0);
+  });
+
+  it("finishes entrance deployments before a queued support skill and keeps automatic strategies through the modeled horizon", () => {
+    const mapData = makeMapData();
+    mapData.options.initialCost = 40;
+    mapData.deploymentPoints = [
+      { row: 0, col: 5, buildableType: "melee" },
+      { row: 4, col: 5, buildableType: "melee" },
+      { row: 2, col: 3, buildableType: "melee" },
+    ];
+    mapData.routes = [0, 4].map((row, id) => ({ id, motionMode: "walk" as const,
+      startPosition: { row, col: 0 }, checkpoints: [], endPosition: { row, col: 6 } }));
+    mapData.enemyDetails = [{ ...mapData.enemyDetails[0], isBoss: true, maxHp: 50_000, mechanics: ["stealth"] }];
+    mapData.spawnTimeline = [0, 1].map(routeIndex => ({ time: 20 + routeIndex * 30, enemyId: "enemy", count: 1, routeIndex }));
+    const revealer = testPick("银灰", "MELEE", [[0, 0], [0, 1], [0, 2]], {
+      skill: 3, skillType: "MANUAL", spType: "INCREASE_WITH_TIME", spCost: 0, initSp: 0, cost: 1,
+    });
+    revealer.operatorId = revealer.profile.operatorId = "char_172_svrash";
+    revealer.profile.attributes.block = 0;
+    const facts = extractStageFacts(mapData);
+    const built = buildCandidate({ stageCode: "V2-1", mapData, facts, openingPressure: false,
+      picks: [testPick("入口一", "MELEE", [[0, 0]], { cost: 5 }), revealer,
+        testPick("入口二", "MELEE", [[0, 0]], { cost: 6 })],
+      positionVariant: 0, timingVariant: 0, encounter: buildEncounterContext(mapData, facts), options: {} });
+    const skillIndex = built.script.actions.findIndex(action => action.type === "Skill");
+    expect(skillIndex).toBeGreaterThan(0);
+    for (const front of built.script.metadata.defensePlan!.fronts) {
+      expect(built.script.actions.findIndex(action => action.type === "Deploy" && action.name === front.operator)).toBeLessThan(skillIndex);
+    }
+    expect(built.script.actions.at(-1)?.type).toBe("Output");
+    expect(planDeploymentTimeline(built.script, mapData.options).time)
+      .toBeGreaterThanOrEqual(facts.temporalPressure.buckets.at(-1)!.time + facts.temporalPressure.bucketSeconds);
+    expect(validateMAAProtocol(built.script).valid).toBe(true);
   });
 
   it("enforces the deadline during squad construction before any candidate is produced", () => {

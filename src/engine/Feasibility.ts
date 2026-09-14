@@ -2,6 +2,7 @@ import type { BattleScript, MapData } from "../types";
 import { rotateDirection } from "./helpers";
 import { costTick, planDeploymentTimeline, type DeploymentTimeline } from "./TimelinePlanner";
 import { canTargetAir } from "./TemporalCoverage";
+import { estimateSkillWindow, type SkillWindowEstimate } from "./SkillWindow";
 import type { EncounterContext, EnginePick, StageFacts, TemporalCellPressure } from "./types";
 
 export interface FeasibilityResult {
@@ -15,46 +16,57 @@ interface DeploymentPair {
   pick: EnginePick;
   time: number;
   endTime: number;
+  skillUsage: number;
+  activationTimes: number[];
 }
+
+interface WindowDeployment extends SkillWindowEstimate { deployment: DeploymentPair }
 
 function key(row: number, col: number): string {
   return `${row},${col}`;
 }
 
-function covers(action: DeploymentPair["action"], pick: EnginePick, cell: TemporalCellPressure): boolean {
+function covers(action: DeploymentPair["action"], range: Array<[number, number]>, cell: TemporalCellPressure): boolean {
   if (!action.location) return false;
-  return pick.profile.range.some(offset => {
+  return range.some(offset => {
     const [row, col] = rotateDirection(offset, action.direction || "Right");
     return action.location![0] + row === cell.row && action.location![1] + col === cell.col;
   });
 }
 
-function stageDps(pick: EnginePick, encounter: EncounterContext): number {
+function normalRange(pick: EnginePick): Array<[number, number]> {
+  return pick.profile.baseRange ?? (pick.profile.skillRangeId ? [] : pick.profile.range);
+}
+
+function damageMultiplier(pick: EnginePick, encounter: EncounterContext): number {
   const profile = pick.profile;
-  const modeled = profile.metrics.cycleDps ?? profile.metrics.normalDps;
   const confidence = profile.confidence === "exact" ? 1 : profile.confidence === "partial" ? 0.9 : 0.75;
   if (profile.damageType === "heal") return 0;
-  if (profile.damageType === "arts") return modeled * Math.max(0.05, 1 - encounter.averageResistance / 100) * confidence;
+  if (profile.damageType === "arts") return Math.max(0.05, 1 - encounter.averageResistance / 100) * confidence;
   const interval = Math.max(0.1, profile.attributes.attackInterval * 100 / Math.max(1, profile.attributes.attackSpeed));
   const perHit = Math.max(profile.attributes.atk * 0.05, profile.attributes.atk - encounter.averageDefense);
-  return perHit / interval * modeled / Math.max(1, profile.metrics.normalDps) * confidence;
+  // Retain the existing base-ATK defense approximation for both phases, not an exact skill damage formula.
+  return perHit / interval / Math.max(1, profile.metrics.normalDps) * confidence;
 }
 
 function activeDeployments(script: BattleScript, picks: EnginePick[], timeline: DeploymentTimeline): { deployments: DeploymentPair[]; reasons: string[] } {
   const planned = new Map(timeline.deployments.map(item => [item.actionIndex, item]));
   const byName = new Map(picks.map(pick => [pick.name, pick]));
-  const active = new Map<string, string>();
+  const active = new Map<string, DeploymentPair>();
   const occupied = new Set<string>();
   const deployments: DeploymentPair[] = [];
   const reasons = new Set<string>();
   for (const [index, action] of script.actions.entries()) {
+    const target = action.location
+      ? [...active.values()].find(item => item.action.location?.[0] === action.location![0]
+        && item.action.location?.[1] === action.location![1])
+      : action.name ? active.get(action.name) : undefined;
+    if (action.type === "Skill" && target && Number.isFinite(timeline.actionTimes[index])) {
+      target.activationTimes.push(timeline.actionTimes[index]);
+    }
     if (action.type === "Retreat") {
-      const name = action.location
-        ? [...active].find(([, position]) => position === key(action.location![0], action.location![1]))?.[0]
-        : action.name;
-      const position = name ? active.get(name) : undefined;
-      if (position) occupied.delete(position);
-      if (name) active.delete(name);
+      if (target?.action.location) occupied.delete(key(...target.action.location));
+      if (target) active.delete(target.pick.name);
       continue;
     }
     if (action.type !== "Deploy" || action.cooling) continue;
@@ -63,9 +75,11 @@ function activeDeployments(script: BattleScript, picks: EnginePick[], timeline: 
     if (!pick || !action.location || !plannedAction?.affordable) continue;
     const position = key(action.location[0], action.location[1]);
     if (active.has(pick.name) || occupied.has(position)) reasons.add("deployment_position_conflict");
-    active.set(pick.name, position);
+    const deployment = { action, pick, time: plannedAction.time, endTime: plannedAction.endTime,
+      skillUsage: script.opers.find(operator => operator.name === pick.name)?.skill_usage ?? 1, activationTimes: [] };
+    active.set(pick.name, deployment);
     occupied.add(position);
-    deployments.push({ action, pick, time: plannedAction.time, endTime: plannedAction.endTime });
+    deployments.push(deployment);
   }
   return { deployments, reasons: [...reasons].sort() };
 }
@@ -80,16 +94,26 @@ function locationCell(row: number, col: number): TemporalCellPressure {
 
 // 敌人刚出生时还在行军途中，任何合理落点都够不着。窗口门槛的基数必须是「此刻实际打得到的敌人 HP」，
 // 而不是全场存量 HP，否则出生波会让每个候选都判定伤害不足。
+function phaseDamage(item: WindowDeployment): Array<{ damage: number; range: Array<[number, number]> }> {
+  return [{ damage: item.normalDamage, range: normalRange(item.deployment.pick) },
+    { damage: item.skillDamage, range: item.deployment.pick.profile.range }];
+}
+
+function damageInCells(item: WindowDeployment, cells: readonly TemporalCellPressure[], air: boolean): number {
+  if (air && !canTargetAir(item.deployment.pick)) return 0;
+  return phaseDamage(item).reduce((sum, phase) => sum + (cells.some(cell => (air ? cell.airHp : cell.groundHp) > 0
+    && covers(item.deployment.action, phase.range, cell)) ? phase.damage : 0), 0);
+}
+
 function reachableHp(
   cells: readonly TemporalCellPressure[],
-  available: readonly DeploymentPair[],
+  available: readonly WindowDeployment[],
   air: boolean
 ): number {
   return cells.reduce((sum, cell) => {
     const hp = air ? cell.airHp : cell.groundHp;
     if (hp <= 0) return sum;
-    const covered = available.some(deployment => (!air || canTargetAir(deployment.pick))
-      && covers(deployment.action, deployment.pick, cell));
+    const covered = available.some(item => damageInCells(item, [cell], air) > 0);
     return covered ? sum + hp : sum;
   }, 0);
 }
@@ -102,6 +126,7 @@ export function evaluateFeasibility(
   mapData: MapData
 ): FeasibilityResult {
   const timeline = planDeploymentTimeline(script, mapData.options);
+  const autoActivationUntil = script.actions.some(action => action.type === "SkillDaemon") ? Infinity : timeline.time;
   const active = activeDeployments(script, picks, timeline);
   const reasons = new Set([...timeline.reasons, ...active.reasons]);
   const coverageGaps = new Set([...facts.coverageGaps, ...encounter.coverageGaps]);
@@ -125,7 +150,21 @@ export function evaluateFeasibility(
     .map(route => [route.id, route]));
   const routeDamage = new Map<number, number>();
   const routePeakHp = new Map<number, number>();
-  const damageByPick = new Map(picks.map(pick => [pick.name, stageDps(pick, encounter)]));
+  const damageFactors = new Map(picks.map(pick => [pick.name, damageMultiplier(pick, encounter)]));
+  const windowDeployments = new Map<number, WindowDeployment[]>();
+  for (const bucket of encounter.temporalPressure.buckets) {
+    windowDeployments.set(bucket.time, active.deployments.filter(deployment => deployment.time < bucket.time + encounter.temporalPressure.bucketSeconds
+      && bucket.time < deployment.endTime).map(deployment => {
+      const estimate = estimateSkillWindow(deployment.pick.profile, { deployedAt: deployment.time,
+        windowStart: bucket.time, windowEnd: bucket.time + encounter.temporalPressure.bucketSeconds, activeUntil: deployment.endTime,
+        skillUsage: deployment.skillUsage, autoActivationUntil,
+        ...(deployment.skillUsage === 0 ? { activationTimes: deployment.activationTimes } : {}) });
+      for (const gap of estimate.coverageGaps) coverageGaps.add(gap);
+      if (!deployment.pick.profile.baseRange && deployment.pick.profile.skillRangeId) coverageGaps.add("base_attack_range_unknown");
+      const factor = damageFactors.get(deployment.pick.name) || 0;
+      return { ...estimate, normalDamage: estimate.normalDamage * factor, skillDamage: estimate.skillDamage * factor, deployment };
+    }));
+  }
   for (const bucket of encounter.temporalPressure.buckets) {
     const bucketHp = new Map<number, number>();
     for (const cell of bucket.cells) {
@@ -136,22 +175,21 @@ export function evaluateFeasibility(
       }
     }
     for (const [routeId, hp] of bucketHp) routePeakHp.set(routeId, Math.max(routePeakHp.get(routeId) || 0, hp));
-    for (const deployment of active.deployments) {
-      if (deployment.time > bucket.time || bucket.time >= deployment.endTime) continue;
-      const dps = damageByPick.get(deployment.pick.name) || 0;
-      if (dps <= 0) continue;
+    for (const item of windowDeployments.get(bucket.time) || []) for (const phase of phaseDamage(item)) {
+      if (phase.damage <= 0) continue;
+      const deployment = item.deployment;
       const coveredRoutes = new Set<number>();
       for (const cell of bucket.cells) {
-        if (!covers(deployment.action, deployment.pick, cell)) continue;
+        if (!covers(deployment.action, phase.range, cell)) continue;
         for (const routeId of cell.routeIds) {
           const route = goalRoutes.get(routeId);
           if (route && (route.motionMode === "fly"
             ? cell.airHp > 0 && canTargetAir(deployment.pick) : cell.groundHp > 0)) coveredRoutes.add(routeId);
         }
       }
-      // Split the available DPS across covered routes instead of crediting it in full to every lane.
+      // Split each phase's finite damage across covered routes; idle skills contribute neither range nor damage.
       for (const routeId of coveredRoutes) routeDamage.set(routeId, (routeDamage.get(routeId) || 0)
-        + dps * encounter.temporalPressure.bucketSeconds / coveredRoutes.size);
+        + phase.damage / coveredRoutes.size);
     }
   }
   for (const route of goalRoutes.values()) {
@@ -177,21 +215,16 @@ export function evaluateFeasibility(
     let groundHpSeconds = 0;
     let airHpSeconds = 0;
     for (const bucket of buckets) {
-      const available = active.deployments.filter(deployment => deployment.time <= bucket.time && bucket.time < deployment.endTime);
-      const attackers = available.filter(deployment => (damageByPick.get(deployment.pick.name) || 0) > 0);
-      const groundHp = reachableHp(bucket.cells, attackers, false);
-      const airHp = reachableHp(bucket.cells, attackers, true);
+      const windows = windowDeployments.get(bucket.time) || [];
+      const available = windows.map(item => item.deployment);
+      const groundHp = reachableHp(bucket.cells, windows, false);
+      const airHp = reachableHp(bucket.cells, windows, true);
       engageableGroundHp = Math.max(engageableGroundHp, groundHp);
       engageableAirHp = Math.max(engageableAirHp, airHp);
       groundHpSeconds += groundHp * encounter.temporalPressure.bucketSeconds;
       airHpSeconds += airHp * encounter.temporalPressure.bucketSeconds;
-      const groundDps = available.reduce((sum, deployment) => sum + (bucket.cells.some(cell => cell.groundHp > 0 && covers(deployment.action, deployment.pick, cell))
-        ? stageDps(deployment.pick, encounter) : 0), 0);
-      const airDps = available.reduce((sum, deployment) => sum + (canTargetAir(deployment.pick)
-        && bucket.cells.some(cell => cell.airHp > 0 && covers(deployment.action, deployment.pick, cell))
-        ? stageDps(deployment.pick, encounter) : 0), 0);
-      groundDamage += groundDps * encounter.temporalPressure.bucketSeconds;
-      airDamage += airDps * encounter.temporalPressure.bucketSeconds;
+      groundDamage += windows.reduce((sum, item) => sum + damageInCells(item, bucket.cells, false), 0);
+      airDamage += windows.reduce((sum, item) => sum + damageInCells(item, bucket.cells, true), 0);
       if (bucket.cells.some(cell => cell.groundHp > 0)) {
         hasBlockOrControl ||= available.some(deployment => deployment.pick.profile.position === "MELEE"
           || deployment.pick.profile.metrics.controlSeconds > 0);
@@ -200,9 +233,17 @@ export function evaluateFeasibility(
       const blockers = melee.filter(deployment => deployment.action.location && bucket.cells.some(cell => cell.groundHp > 0
         && cell.row === deployment.action.location![0] && cell.col === deployment.action.location![1]));
       if (bucket.cells.some(cell => cell.groundHp > 0) && blockers.length === 0) hasGroundPressureWithoutBlocker = true;
-      const healerCoverage = blockers.reduce((sum, target) => sum + available.reduce((healing, healer) => healing
-        + (healer.pick.profile.metrics.healingHps > 0 && target.action.location && covers(healer.action, healer.pick,
-          locationCell(target.action.location[0], target.action.location[1])) ? healer.pick.profile.metrics.healingHps : 0), 0), 0);
+      const healerCoverage = blockers.reduce((sum, target) => sum + windows.reduce((healing, item) => {
+        if (!target.action.location) return healing;
+        const metrics = item.deployment.pick.profile.metrics;
+        const legacyHealing = metrics.normalHps === undefined && metrics.skillHps === undefined;
+        const normalHps = legacyHealing ? metrics.healingHps : metrics.normalHps ?? 0;
+        const skillHps = legacyHealing ? metrics.healingHps : metrics.skillHps ?? 0;
+        const cell = locationCell(...target.action.location);
+        const healingAmount = (covers(item.deployment.action, normalRange(item.deployment.pick), cell) ? item.normalSeconds * normalHps : 0)
+          + (covers(item.deployment.action, item.deployment.pick.profile.range, cell) ? item.skillSeconds * skillHps : 0);
+        return healing + healingAmount / encounter.temporalPressure.bucketSeconds;
+      }, 0), 0);
       const durability = blockers.reduce((sum, deployment) => sum
         + (deployment.pick.profile.metrics.physicalEhp + deployment.pick.profile.metrics.artsEhp) / 2, 0);
       maximumSurvival = Math.max(maximumSurvival, durability + healerCoverage * 15);

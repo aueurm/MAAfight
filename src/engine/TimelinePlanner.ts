@@ -22,6 +22,7 @@ export interface PlannedDeployment {
 
 export interface DeploymentTimeline {
   deployments: PlannedDeployment[];
+  actionTimes: number[];
   reasons: string[];
   time: number;
   wallTime: number;
@@ -57,9 +58,11 @@ export function buildTimelineEvents(mapData: MapData, facts: StageFacts): Timeli
   return events.sort((left, right) => left.time - right.time || left.type.localeCompare(right.type));
 }
 
-export function planDeploymentTimeline(script: Pick<BattleScript, "actions">, options: MapOptions): DeploymentTimeline {
+export function planDeploymentTimeline(script: Pick<BattleScript, "actions">, options: MapOptions,
+  assumptions: { deploymentInteractionSeconds?: number } = {}): DeploymentTimeline {
   const tick = costTick(options);
   const deployments: PlannedDeployment[] = [];
+  const actionTimes: number[] = [];
   const active: Array<{ deployment: PlannedDeployment; location?: [number, number] }> = [];
   const reasons = new Set<string>();
   let time = 0;
@@ -107,7 +110,9 @@ export function planDeploymentTimeline(script: Pick<BattleScript, "actions">, op
     }
     // MAA 的 pre_delay 从原生条件满足后开始，pre/post/elapsed_time 均为真实毫秒。
     if (!blocked) advance((action.pre_delay || 0) / 1000);
+    actionTimes.push(blocked ? Number.POSITIVE_INFINITY : time);
     if (action.type === "Deploy") {
+      if (!blocked) advance(Math.max(0, assumptions.deploymentInteractionSeconds || 0));
       const cost = Math.max(0, action.costs || 0);
       const deployment = { actionIndex, name: action.name, time: blocked ? Number.POSITIVE_INFINITY : time,
         endTime: Number.POSITIVE_INFINITY, cost, affordable: !blocked && available >= cost };
@@ -128,5 +133,5 @@ export function planDeploymentTimeline(script: Pick<BattleScript, "actions">, op
     if (action.type === "SpeedUp") speedMultiplier = speedMultiplier === 1 ? 2 : 1;
     advance((action.post_delay || 0) / 1000);
   }
-  return { deployments, reasons: [...reasons].sort(), time, wallTime, speedMultiplier, stopwatchWallTime };
+  return { deployments, actionTimes, reasons: [...reasons].sort(), time, wallTime, speedMultiplier, stopwatchWallTime };
 }

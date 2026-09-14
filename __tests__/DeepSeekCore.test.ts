@@ -134,6 +134,9 @@ describe("DeepSeek core", () => {
     expect(systemPrompt).toContain("battleDsl");
     expect(systemPrompt).toContain("positionEffect");
     expect(systemPrompt).toContain("通关保证");
+    // The final instruction must agree with the compiler's explicit manual-skill gate.
+    expect(systemPrompt).toContain("operator 的 skillUsage=0");
+    expect(systemPrompt).not.toContain("skillUsage=2");
   });
 
   it("rejects missing keys and HTTP failures without including credentials", async () => {

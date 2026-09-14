@@ -1,5 +1,6 @@
 import type { BattleScript, MapOptions } from "../types";
 import { planDeploymentTimeline } from "./TimelinePlanner";
+import { estimateSkillWindow } from "./SkillWindow";
 import type { EncounterContext, EnginePick } from "./types";
 
 export type SkillStrategy = "daemon" | "opening" | "sustain" | "burst" | "boss" | "defense" | "emergency" | "passive";
@@ -56,7 +57,12 @@ export function planSkillActions(
       coverageGaps.add(`manual_skill_sp_unknown:${pick.operatorId}`);
       continue;
     }
-    const readyAt = deployment.time + Math.max(0, pick.profile.spCost - pick.profile.initSp);
+    const timing = estimateSkillWindow(pick.profile, { deployedAt: deployment.time, windowStart: deployment.time, windowEnd: deployment.time + 15 });
+    if (timing.firstReadyAt === null) {
+      coverageGaps.add(`manual_skill_sp_unknown:${pick.operatorId}`);
+      continue;
+    }
+    const readyAt = timing.firstReadyAt;
     const window = windows.find(candidate => candidate.start >= readyAt && candidate.start < deployment.endTime);
     if (!window) {
       coverageGaps.add(`manual_skill_window_unready:${pick.operatorId}`);
@@ -68,8 +74,14 @@ export function planSkillActions(
       continue;
     }
     const strategy = strategyFor(pick, window);
-    const benefit = Math.max(0, pick.profile.metrics.burstDps - pick.profile.metrics.normalDps)
-      + pick.profile.metrics.healingHps + pick.profile.metrics.controlSeconds * 100
+    const estimate = estimateSkillWindow(pick.profile, { deployedAt: deployment.time, activeUntil: deployment.endTime,
+      windowStart: window.start, windowEnd: window.end, skillUsage: 0, activationTimes: [window.start] });
+    for (const gap of estimate.coverageGaps) coverageGaps.add(`${gap}:${pick.operatorId}`);
+    const duration = Math.max(0, Math.min(window.end, deployment.endTime) - window.start);
+    const normalDps = pick.profile.subProfession === "liberator" || pick.profile.normalAttackSuppressed
+      ? 0 : pick.profile.metrics.normalDps;
+    const benefit = Math.max(0, estimate.totalDamage - normalDps * duration)
+      + pick.profile.metrics.healingHps * duration + pick.profile.metrics.controlSeconds * 100
       + window.bossWeight * 1_000;
     planned.push({
       action: { type: "Skill", name: pick.name, elapsed_time: Math.round((timeline.wallTime
